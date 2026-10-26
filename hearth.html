@@ -345,8 +345,8 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.1.0',HEARTH_DATE='2026-10-27';
-const DEFAULTS={apis:[],activeApi:null,temperature:0.9,maxTokens:600,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,memoryEvery:20,memoryWords:300,
+const HEARTH_VERSION='1.2.0',HEARTH_DATE='2026-10-27';
+const DEFAULTS={apis:[],activeApi:null,temperature:0.9,maxTokens:600,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
 const saveChars=()=>store.set('chars',S.chars);
@@ -401,6 +401,42 @@ async function updateMemory(chat,char,manual){
     const mem=stripThink(text||'').trim();if(!mem)throw new Error('The AI returned an empty memory. Try again.');
     chat.memory=mem;chat.memoryAt=chat.messages.length;await saveChat(chat);return mem;
   }finally{memBusy.delete(chat.id)}
+}
+// The scene right now: who is where, holding or wearing what, and what limits them (tied up, injured, asleep…). Updated after
+// each reply from the latest messages, and sent near the end of every request so characters only do what the scene allows.
+// A regenerated reply is applied to the state from before the reply it replaces (chat.scenePrev).
+const sceneBusy=new Set();
+const sceneApi=()=>{const a=activeApi();return a&&S.settings.sceneModel?.trim()?{...a,model:S.settings.sceneModel.trim()}:a};
+async function updateScene(chat,char,o={}){
+  if(sceneBusy.has(chat.id)){if(o.manual)throw new Error('Already updating, wait a moment');return null}
+  const api=sceneApi();if(!api){if(o.manual)throw new Error('Add an API / proxy in Settings first');return null}
+  const un=personaFor(chat)?.name||'You',cast=char.kind==='world'?membersOf(char).map(c=>c.name):[char.name];
+  const recent=chat.messages.filter(m=>txt(m).trim()).slice(-(o.rebuild?10:3));if(!recent.length)return null;
+  const base=o.rebuild?'':o.redo?chat.scenePrev??chat.scene:chat.scene;
+  const tr=recent.map(m=>`${m.role==='user'?un:char.kind==='world'?'Narrator':char.name}: ${macro(stripThink(txt(m)),char.name,un)}`).join('\n\n').slice(-12000);
+  sceneBusy.add(chat.id);
+  try{
+    const {text}=await callApi(api,[
+      {role:'system',content:'You keep track of the physical state of a roleplay scene. You are exact and brief.'},
+      {role:'user',content:`${char.kind==='world'?`A story set in ${char.name}. Main characters: ${cast.join(', ')}.`:`Characters: ${char.name} and ${un}.`} ${un} is the user.
+
+CURRENT STATE (may be out of date):
+${base?.trim()||'(none yet)'}
+
+LATEST MESSAGES:
+${tr}
+
+Write the state as it is now, after the latest messages. Facts only, short lines:
+Place and time: …
+Present: everyone in the scene right now
+Then one line per person present (${un} too, if they are in the scene): posture and where they are; what their hands are doing or holding; anything that limits them (tied up, handcuffed, gagged, blindfolded, injured, asleep, drunk, trapped); clothes only if different from usual.
+Objects: important things and where they are.
+Keep what is still true, change what the messages changed, and drop what is no longer true. At most 120 words. Reply with only the state.`}
+    ],undefined,()=>{},{stream:false,maxTokens:600});
+    const s=stripThink(text||'').trim();if(!s){if(o.manual)throw new Error('The AI returned an empty scene. Try again.');return null}
+    if(!o.redo&&!o.rebuild)chat.scenePrev=chat.scene||'';
+    chat.scene=s;await saveChat(chat,true);return s;
+  }finally{sceneBusy.delete(chat.id)}
 }
 async function deleteChat(id){chatCache.delete(id);await store.del('chat:'+id);S.chatIndex=S.chatIndex.filter(c=>c.id!==id);await saveIndex()}
 // Settings from before presets existed had one customPrompt: keep it as its own preset if it was changed.
@@ -1018,13 +1054,17 @@ function buildPrompt(chat,char,persona,history){
   if(ctx.chat.memory.trim())sys.push(`[Chat memory — important facts so far]\n${ctx.chat.memory.trim()}`);
   if(chat.researchNotes?.trim())sys.push(`[Canon facts looked up during this chat]\n${chat.researchNotes.trim()}`);
   if(st.webSearch&&!researchOn())sys.push(webNote(char));
+  sys.push('Physical continuity: keep track of where everyone is, what they hold and wear, and anything that limits them. A character can only do what their situation allows: someone whose hands are tied cannot pick up a spoon, someone gagged cannot speak clearly, someone who left the room is not there.');
+  // the current scene goes near the end, where models pay the most attention
+  const scene=chat.scene?.trim()?mac(`[The scene right now. Stay consistent with it unless the story changes it:\n${chat.scene.trim()}]`):'';
   const sysText=mac(sys.join('\n\n')),note=ctx.system_note?mac(ctx.system_note):'',reminder=char.reminder?.trim()?mac(`[Reminder: ${char.reminder.trim()}]`):'';
-  let budget=(+st.contextSize||16000)-(+st.maxTokens||0)-est(sysText)-est(note)-est(reminder)-est(lore.depth.map(d=>d.text).join(''))-50;
+  let budget=(+st.contextSize||16000)-(+st.maxTokens||0)-est(sysText)-est(note)-est(reminder)-est(scene)-est(lore.depth.map(d=>d.text).join(''))-50;
   const hist=[];
   for(let i=history.length-1;i>=0;i--){const c=mac(txt(history[i]));if(!c.trim())continue;const t=est(c)+4;if(budget-t<0&&hist.length)break;budget-=t;hist.unshift({role:history[i].role,content:c})}
   if(!hist.length||hist[0].role!=='user')hist.unshift({role:'user',content:'(The roleplay begins.)'});
   for(const d of [...lore.depth].reverse())hist.splice(Math.max(0,hist.length-d.depth),0,{role:'system',content:mac(d.text)});
   const messages=[{role:'system',content:sysText},...hist];
+  if(scene)messages.push({role:'system',content:scene});
   if(reminder)messages.push({role:'system',content:reminder});
   if(note)messages.push({role:'system',content:note});
   return {messages,ctx,errs,lore:lore.names};
@@ -2431,6 +2471,7 @@ async function vChat(id){
       const cut=aborted||/length|max_tokens/i.test(finish);if(cut||m.cut)(m.cut??=[])[m.sw]=cut}
     GEN=null;await saveChat(chat);
     if(curChat===chat){renderMsgs();const el=msgsEl();if(el)el.scrollTop=el.scrollHeight;updateSend()}
+    if(!failed&&S.settings.trackScene!==false)updateScene(chat,char,{redo:mode==='swipe'}).catch(e=>console.warn('Scene update failed:',e));
     if(!failed&&S.settings.autoMemory&&chat.messages.length-Math.min(chat.memoryAt||0,chat.messages.length)>=(+S.settings.memoryEvery||20))
       updateMemory(chat,char).then(m=>{if(m)toast('Chat memory updated')}).catch(e=>console.warn('Memory update failed:',e));
     if(failed)openSheet(`<h2 class="err">Couldn't get a reply</h2><div class="box pre small">${esc(failed.message)}</div><br><div class="row"><button class="btn ghost" data-act="close" style="flex:1">Close</button><button class="btn" data-act="settings" style="flex:1">Proxy settings</button></div>`,{settings:()=>go('#/settings')});
@@ -2622,7 +2663,10 @@ async function makeImagePrompt(chat,char,upto,opts){
     :panels>1?`a storyboard of ${panels} images that follow its story beats in order, ending at the last message`:'one image of the moment in the last message';
   const {j,usage}=await aiJson(SYS_NAI,`Turn the roleplay below into ${what}.
 ${opts.extra?`USER'S WISHES FOR THE IMAGE: ${opts.extra}\n`:''}
-${novelRules(chat,char,{text:opts.text,lore:sceneLore(chat,char,[scene,opts.extra])})}
+${novelRules(chat,char,{text:opts.text,lore:sceneLore(chat,char,[scene,opts.extra])})}${chat.scene?.trim()&&upto>=chat.messages.length-2?`
+THE SCENE RIGHT NOW (where everyone is, what they hold and wear, restraints and injuries; the picture must match it):
+${macro(chat.scene.trim(),char.name,p?.name||'You')}
+`:''}
 ROLEPLAY:
 ${scene}
 
@@ -3203,7 +3247,7 @@ function tokLine(m){
 }
 function chatMenu(chat,char,redraw){
   openSheet(`<h2>Chat options</h2><div class="menu">
-    <button data-act="memory">${I.brain} Chat memory</button><button data-act="persona">${I.user} Persona for this chat</button><button data-act="prompt">${I.edit} Prompt preset</button>
+    <button data-act="memory">${I.brain} Chat memory</button>${chat.mode==='image'?'':`<button data-act="scene">${I.user} The scene right now</button>`}<button data-act="persona">${I.user} Persona for this chat</button><button data-act="prompt">${I.edit} Prompt preset</button>
     <button data-act="vars">${I.code} Script variables</button><button data-act="lore">${I.tag} Lore used in last reply</button><button data-act="rename">${I.edit} Rename chat</button><button data-act="mvf">${I.folder} Move to folder${folders('chats').find(f=>f.id===chat.folder)?` (now: ${esc(folders('chats').find(f=>f.id===chat.folder).name)})`:''}</button>
     <button data-act="newchat">${I.plus} Start a new chat</button><button data-act="export">${I.exp} Export chat as text</button>
     ${chat.mode==='image'?`<button data-act="srole">${{observer:I.book,pov:I.img}[storyRole(chat)]||I.user} Your role: ${ROLE_LABEL[storyRole(chat)]}</button><button data-act="outline">${I.edit} Story outline</button><button data-act="ihist">${I.copy} All image prompts (${chat.images?.length||0})</button>`
@@ -3240,6 +3284,16 @@ function chatMenu(chat,char,redraw){
         ${S.settings.prompts.map(p=>`<div class="li ${cur===p.id?'on':''}" data-act="pick" data-id="${p.id}"><div class="lt"><b>${esc(p.name)}</b><span>${esc(p.text.slice(0,90))}</span></div></div>`).join('')}</div>
         <p class="hint">Edit or add presets in Settings → Prompt presets.</p>`,{
         pick:async b=>{chat.promptId=b.dataset.id;await saveChat(chat);closeSheet();redraw();toast('Prompt: '+promptFor(chat).name)}})},
+    scene:()=>{
+      const on=S.settings.trackScene!==false;
+      openSheet(`<h2>The scene right now</h2><p class="hint">Who is where, what they hold and wear, and anything that limits them (tied up, injured, asleep…). Sent with every message so characters only do what the scene allows. ${on?'Updated after each reply.':'Automatic updates are off (Settings → Chat memory).'} Fix anything wrong here.</p>
+        <textarea id="scn-t" rows="10" placeholder="Nothing tracked yet. Tap “Rebuild from the chat”.">${esc(chat.scene||'')}</textarea><div id="scn-msg" class="small" style="margin-top:6px"></div><br>
+        <div class="row"><button class="btn ghost" data-act="now" style="flex:1">${I.regen} Rebuild from the chat</button><button class="btn" data-act="ok" style="flex:1">Save</button></div>`,{
+        ok:async()=>{chat.scene=$('#scn-t').value.trim();chat.scenePrev=chat.scene;await saveChat(chat,true);closeSheet();toast('Scene saved')},
+        now:async b=>{const msg=$('#scn-msg');b.disabled=true;msg.className='small muted';msg.textContent='Reading the latest messages…';
+          try{$('#scn-t').value=await updateScene(chat,char,{manual:true,rebuild:true})||'';msg.className='small okc';msg.textContent='Rebuilt from the last messages. Edit it if anything is wrong, then tap Save.'}
+          catch(e){msg.className='small err';msg.textContent=e.message}finally{b.disabled=false}}
+      },{modal:true})},
     memory:()=>{
       const st=S.settings,since=chat.messages.length-Math.min(chat.memoryAt||0,chat.messages.length);
       openSheet(`<h2>Chat memory</h2><p class="hint">Facts the AI should always remember in this chat (relationships, events, promises). Sent with every message. ${st.autoMemory?`Updated automatically every ${+st.memoryEvery||20} messages (${since} new since the last update).`:'Automatic updates are off (Settings → Chat memory).'}</p>
@@ -3307,6 +3361,8 @@ function vSettings(){
     ${tg('hideThink','Hide &lt;think&gt; reasoning','Hides reasoning blocks from models like DeepSeek R1.')}
   </div></div>
   <div class="sec"><h3>Chat memory</h3><div class="box">
+    ${tg('trackScene','Track the scene','After each reply, your AI notes who is where, what they hold and wear, and things like being tied up or injured, so characters only do what the scene allows. See it in a chat under ⋮ → The scene right now. Uses one small extra request per reply.')}
+    <label class="f">Model for scene tracking<small>optional</small></label><input data-k="sceneModel" value="${esc(st.sceneModel||'')}" placeholder="empty = your chat model; a cheaper one works well" autocapitalize="off">
     ${tg('autoMemory','Update memory automatically','Every few messages your AI summarizes what happened into the chat memory, so old events aren\'t forgotten. Uses one extra API request each time.')}
     <div class="grid2"><div><label class="f">Every<small>messages</small></label><input type="number" data-k="memoryEvery" min="4" max="200" value="${st.memoryEvery}"></div>
     <div><label class="f">Max length<small>words</small></label><input type="number" data-k="memoryWords" min="100" max="1500" step="50" value="${st.memoryWords}"></div></div>
