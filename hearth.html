@@ -738,6 +738,8 @@ async function callApi(api,messages,signal,onText,o={}){
   if(!api?.url)throw new Error('No proxy URL set. Add one in Settings → API / Proxy.');
   const body={model:api.model,messages,temperature:+st.temperature,stream};
   if(o.tools)body.tools=o.tools;
+  // JSON mode makes most models send valid JSON; proxies or models that reject it are remembered and not asked again
+  if(o.json&&!api.noJson)body.response_format={type:'json_object'};
   if(maxT>0)body.max_tokens=maxT;
   if(+st.topP<1)body.top_p=+st.topP;
   // ask for token counts at the end of a stream; proxies that reject this are remembered and not asked again
@@ -750,6 +752,7 @@ async function callApi(api,messages,signal,onText,o={}){
     if(res.ok)break;
     const t=await res.text().catch(()=>'');
     if(body.stream_options&&/stream_options|include_usage/i.test(t)){delete body.stream_options;api.noUsage=true;saveSettings();continue}
+    if(body.response_format&&/response_format|json_object|json mode|structured output|requested parameters/i.test(t)){delete body.response_format;api.noJson=true;saveSettings();continue}
     let m=t;try{const j=JSON.parse(t);m=j.error?.message||j.error||j.message||j.detail||t;if(typeof m!=='string')m=JSON.stringify(m)}catch{}
     const err=new Error(`Proxy error ${res.status}: ${String(m||res.statusText).slice(0,1000)}`);err.status=res.status;throw err;
   }
@@ -1293,10 +1296,55 @@ function bestHit(hits,name){
   const n=name.toLowerCase().trim(),first=n.split(/\s+/)[0],main=hits.filter(h=>!h.title.includes('/')),t=h=>h.title.toLowerCase();
   return main.find(h=>t(h)===n)||main.find(h=>t(h).startsWith(n))||main.find(h=>t(h).split(/[\s(]/)[0]===first)||null;
 }
+// Reads the JSON object in an AI answer, repairing what models often get wrong: code fences and text around it, // comments,
+// trailing commas, raw line breaks inside strings, and an answer cut off midway (kept up to its last complete item; marked _cut).
+function repairJson(s){
+  const t=String(s||'').replace(/```(?:json)?/gi,''),start=t.indexOf('{');if(start<0)return null;
+  let out='',stack=[],inStr=false,esc=false,safe=-1,safeStack=[];
+  for(let k=start;k<t.length;k++){
+    const ch=t[k];
+    if(inStr){
+      if(esc){out+=ch;esc=false}else if(ch==='\\'){out+=ch;esc=true}else if(ch==='"'){out+=ch;inStr=false}
+      else if(ch==='\n')out+='\\n';else if(ch==='\t')out+='\\t';else if(ch!=='\r')out+=ch;
+      continue;
+    }
+    if(ch==='"'){inStr=true;out+=ch}
+    else if(ch==='/'&&t[k+1]==='/'){while(k<t.length&&t[k]!=='\n')k++}
+    else if(ch==='{'||ch==='['){stack.push(ch==='{'?'}':']');out+=ch}
+    else if(ch==='}'||ch===']'){out=out.replace(/,\s*$/,'')+ch;stack.pop();if(!stack.length)return {json:out,cut:false};safe=out.length;safeStack=[...stack]}
+    else if(ch===','){safe=out.length;safeStack=[...stack];out+=ch}
+    else out+=ch;
+  }
+  if(safe<0)return null; // cut off before anything was complete
+  return {json:out.slice(0,safe).replace(/[,:\s]+$/,'')+safeStack.reverse().join(''),cut:true};
+}
 function parseJsonLoose(s){
-  const t=s.replace(/```(?:json)?/gi,''),i=t.indexOf('{'),j=t.lastIndexOf('}');
-  if(i<0||j<=i)throw new Error("The AI didn't return a character. Try again, or try another model.");
-  try{return JSON.parse(t.slice(i,j+1))}catch{throw new Error("The AI's answer was cut off or not valid JSON. Try again, or try another model.")}
+  const r=repairJson(s);
+  if(!r)throw new Error("The AI didn't send a usable answer. Try again, or try another model.");
+  let j;try{j=JSON.parse(r.json)}catch{throw new Error("The AI's answer wasn't valid JSON. Try again, or try another model.")}
+  if(!j||typeof j!=='object')throw new Error("The AI didn't send a usable answer. Try again, or try another model.");
+  if(r.cut)Object.defineProperty(j,'_cut',{value:true});
+  return j;
+}
+// Asks for an answer as JSON. A cut-off answer is asked for once more with twice the room, an unreadable one is asked
+// to be sent again; if the second answer is still cut off, what arrived is used. usage adds up both tries.
+async function callJson(api,messages,signal,o={}){
+  let max=o.maxTokens||2000,usage={in:0,out:0,est:false},msgs=messages;
+  const words=m=>typeof m.content==='string'?m.content:(m.content||[]).map(p=>p.type==='text'?p.text:' [image] ').join(' ');
+  for(let attempt=0;;attempt++){
+    const r=await callApi(api,msgs,signal,()=>{},{stream:false,maxTokens:max,json:true});
+    const u=r.usage||{in:est(msgs.map(words).join('\n'))+(msgs.some(m=>Array.isArray(m.content))?1000:0),out:est(r.text)};
+    usage={in:usage.in+u.in,out:usage.out+u.out,est:usage.est||!r.usage};
+    const text=stripThink(r.text||''),cut=/^(length|max_tokens)$/.test(r.finish||'');
+    let j=null,err=null;try{j=parseJsonLoose(text)}catch(e){err=e}
+    if(j&&!cut&&!j._cut)return {j,text,usage};
+    if(attempt>=1){
+      if(j)return {j,text,usage,cut:true};
+      throw cut?new Error("The AI's answer was cut off twice, even with more room. Try asking for less (fewer images or shorter text), or try another model."):err;
+    }
+    if(cut||j?._cut)max=Math.min(16000,max*2);
+    else msgs=[...messages,{role:'assistant',content:text.slice(0,6000)},{role:'user',content:'Your answer could not be read as JSON. Send the same answer again as one valid JSON object only, with nothing before or after it.'}];
+  }
 }
 async function aiCharacter(inp,sources,signal){
   let ref='',left=28000;
@@ -1318,10 +1366,10 @@ Return one JSON object with exactly these keys:
 "reminder": 1 to 3 short lines about the traits and speech style that matter most for staying in character
 "uncertain": a short note on anything you were not sure about, or ""
 ${ref?`\nREFERENCE PAGES:${ref}`:''}`;
-  const {text}=await callApi(activeApi(),[
+  const {j}=await callJson(activeApi(),[
     {role:'system',content:'You are an expert character writer for AI roleplay. You write accurate, canon-faithful character definitions and reply with a single JSON object only.'},
-    {role:'user',content:prompt}],signal,()=>{},{stream:false,maxTokens:4000});
-  return parseJsonLoose(stripThink(text||''));
+    {role:'user',content:prompt}],signal,{maxTokens:4000});
+  return j;
 }
 async function readLinks(inp,sources,log){
   for(const url of inp.links){
@@ -1386,10 +1434,9 @@ Return one JSON object with exactly these keys:
 "main_characters": a list of the main characters' names
 ${own.length||inp.wrel?`"relationships": how ${own.length?'the user\'s characters':'the characters'} are connected to each other and to canon characters: every connection the user wrote, plus other pairs that matter, each {"a": "name", "b": "name", "text": "1 or 2 sentences"}\n`:''}"uncertain": a short note on anything you were not sure about, or ""
 ${ref?`\nREFERENCE PAGES:${ref}`:''}`;
-  const {text}=await callApi(activeApi(),[
+  const {j}=await callJson(activeApi(),[
     {role:'system',content:'You are an expert worldbuilder for AI group roleplay. You write accurate, canon-faithful settings and reply with a single JSON object only.'},
-    {role:'user',content:prompt}],signal,()=>{},{stream:false,maxTokens:5000});
-  const j=parseJsonLoose(stripThink(text||''));
+    {role:'user',content:prompt}],signal,{maxTokens:5000});
   // the characters the user picked, plus ones they already made whose name matches the main cast
   const cast=arr(j.main_characters).map(n=>String(n).toLowerCase().trim()).filter(Boolean);
   const members=[...new Set([...own.map(c=>c.id),...S.chars.filter(c=>c.kind!=='world'&&cast.some(n=>n===c.name.toLowerCase()||n.split(/\s+/)[0]===c.name.toLowerCase().split(/\s+/)[0])).map(c=>c.id)])];
@@ -1432,10 +1479,9 @@ Return one JSON object with exactly these keys:
 "image_tags": Danbooru-style appearance tags for image prompts (hair, eyes, body, usual clothes), comma separated
 "uncertain": a short note on important things you invented that the user may want to check, or ""
 ${ref?`\nREFERENCE PAGES:${ref}`:''}`;
-  const {text}=await callApi(activeApi(),[
+  const {j}=await callJson(activeApi(),[
     {role:'system',content:'You are an expert character writer for AI roleplay. You turn a user\'s ideas into a rich, consistent original character and reply with a single JSON object only.'},
-    {role:'user',content:prompt}],signal,()=>{},{stream:false,maxTokens:5000});
-  const j=parseJsonLoose(stripThink(text||''));
+    {role:'user',content:prompt}],signal,{maxTokens:5000});
   log('✓ Done','okc');
   const scenarios=arr(j.scenarios).filter(s=>s&&typeof s==='object'&&str(s.opening).trim()).map((s,i)=>newScn({name:str(s.name).trim()||scnName(s.opening,i),scenario:str(s.scenario).trim(),greetings:[str(s.opening).trim()]}));
   return {note:str(j.uncertain).trim(),char:{id:uid(),name:str(j.name).trim()||inp.name||'New character',tagline:str(j.tagline).trim(),
@@ -1470,10 +1516,9 @@ Return one JSON object with exactly these keys:
 "reminder": 1 to 3 short lines about what matters most to stay true to this world
 "uncertain": a short note on important things you invented that the user may want to check, or ""
 ${ref?`\nREFERENCE PAGES:${ref}`:''}`;
-  const {text}=await callApi(activeApi(),[
+  const {j}=await callJson(activeApi(),[
     {role:'system',content:'You are an expert worldbuilder for AI group roleplay. You turn a user\'s ideas into a rich, consistent original world and reply with a single JSON object only.'},
-    {role:'user',content:prompt}],signal,()=>{},{stream:false,maxTokens:8000});
-  const j=parseJsonLoose(stripThink(text||''));
+    {role:'user',content:prompt}],signal,{maxTokens:8000});
   const name=str(j.name).trim()||inp.name||'New world',book=newBook(`${name} lore`);
   book.entries=arr(j.lore).filter(x=>x&&typeof x==='object'&&str(x.content).trim()).map(x=>{const nm=str(x.name).trim(),keys=toArr(x.keys);
     return {...newEntry(),comment:nm,keys:keys.length?keys:[nm].filter(Boolean),content:str(x.content).trim(),look:str(x.look).trim(),constant:x.always===true||x.always==='true'}});
@@ -1730,8 +1775,8 @@ Return one JSON object with exactly these keys:
 "opening": ${openingRules(noun,len,world,name,obs)}`;
       b.disabled=true;msg.className='small muted';msg.textContent='Writing… (this can take a little while)';
       try{
-        const {text}=await callApi(api,[{role:'system',content:'You write vivid, in-character opening scenes for AI roleplay. Reply with a single JSON object only.'},{role:'user',content:prompt}],undefined,()=>{},{stream:false,maxTokens:1800});
-        const j=parseJsonLoose(stripThink(text||'')),opening=str(j.opening).trim();
+        const {j}=await callJson(api,[{role:'system',content:'You write vivid, in-character opening scenes for AI roleplay. Reply with a single JSON object only.'},{role:'user',content:prompt}],undefined,{maxTokens:1800});
+        const opening=str(j.opening).trim();
         if(!opening)throw new Error('The AI returned an empty opening. Try again.');
         if(!d.isConnected)return;
         if(keep){$('.s-vars',d).insertAdjacentHTML('beforeend',scnVarHTML(opening))}
@@ -2288,13 +2333,13 @@ async function vChat(id){
     let failed=null,ok=false;
     try{
       const history=chat.messages.slice(0,idx),prompt=imageStoryPrompt(chat,char,history,notes&&{...notes,prev:notes.sw!=null?{reply:m.swipes[notes.sw],img:m.imgs?.[notes.sw],story:m.story?.[notes.sw]}:null});
-      const r=await callApi(api,[{role:'system',content:SYS_STORY},{role:'user',content:prompt}],GEN.ctrl.signal,()=>{},{stream:false,maxTokens:Math.max(2500,+S.settings.maxTokens||0)});
-      const j=parseJsonLoose(stripThink(r.text||'')),img=j.image&&typeof j.image==='object'?finishPanel(cleanPanel(j.image),chat,char):null;
+      const r=await callJson(api,[{role:'system',content:SYS_STORY},{role:'user',content:prompt}],GEN.ctrl.signal,{maxTokens:Math.max(2500,+S.settings.maxTokens||0)});
+      const j=r.j,img=j.image&&typeof j.image==='object'?finishPanel(cleanPanel(j.image),chat,char):null;
       const reply=str(j.reply).trim();if(!reply&&!panelOk(img))throw new Error('The AI returned an empty answer. Try again.');
       m.swipes[m.sw]=reply||'Here it is.';
       (m.imgs??=[])[m.sw]=panelOk(img)?img:null;(m.next??=[])[m.sw]=str(j.next).trim();
       (m.story??=[])[m.sw]=panelOk(img)?str(j.story).trim():'';(m.remake??=[])[m.sw]=panelOk(img)&&(j.remake===true||j.remake==='true');
-      (m.usage??=[])[m.sw]=r.usage?{...r.usage,est:false}:{in:est(prompt),out:est(r.text),est:true};
+      (m.usage??=[])[m.sw]=r.usage;
       if(str(j.outline).trim())chat.storyOutline=str(j.outline).trim();
       if(panelOk(img))addImage(chat,[img],txt([...history].reverse().find(x=>x.role==='user')||{swipes:[''],sw:0}),'story',m.usage[m.sw]);
       ok=true;
@@ -2542,8 +2587,8 @@ function cleanPanels(j){
 }
 // returns the parsed JSON and the tokens used (estimated when the proxy doesn't report them)
 async function aiJson(sys,prompt,signal,maxTokens){
-  const r=await callApi(activeApi(),[{role:'system',content:sys},{role:'user',content:prompt}],signal,()=>{},{stream:false,maxTokens});
-  return {j:parseJsonLoose(stripThink(r.text||'')),usage:r.usage?{...r.usage,est:false}:{in:est(sys+prompt),out:est(r.text),est:true}};
+  const r=await callJson(activeApi(),[{role:'system',content:sys},{role:'user',content:prompt}],signal,{maxTokens});
+  return {j:r.j,usage:r.usage};
 }
 const usageText=u=>u?`${u.est?'≈ ':''}↑ ${Math.round(u.in).toLocaleString()} · ↓ ${Math.round(u.out).toLocaleString()} tokens`:'';
 // every prompt made in a chat is kept, newest last
@@ -3031,9 +3076,9 @@ ${swap}
 ${novelRules(chat,char,{fmt,text:'auto',noCast:!o.mine,lore:o.mine?sceneLore(chat,char,[o.note]):[]})}
 Return one JSON object only: ${split?`{"panels":[${one}, ...]} with one entry per panel`:one}`;
   const per=fmt==='onebox'?900:1800;
-  const r=await callApi(api,[{role:'system',content:SYS_NAI},{role:'user',content:[{type:'text',text:prompt},{type:'image_url',image_url:{url:img}}]}],o.signal,()=>{},{stream:false,maxTokens:split?Math.min(12000,per*8):per+(layout==='single'?0:1200)})
+  const r=await callJson(api,[{role:'system',content:SYS_NAI},{role:'user',content:[{type:'text',text:prompt},{type:'image_url',image_url:{url:img}}]}],o.signal,{maxTokens:split?Math.min(12000,per*8):per+(layout==='single'?0:1200)})
     .catch(e=>{if(e.status&&/image|vision|modalit|multimodal|content.*(array|type)/i.test(e.message))throw new Error(`${api.model} can't read images. Set a vision model in Settings → Image prompts. (${e.message.slice(0,160)})`);throw e});
-  const j=parseJsonLoose(stripThink(r.text||''));
+  const j=r.j;
   // keep each panel's story text next to its prompt
   const items=(Array.isArray(j.panels)?j.panels:[j]).filter(x=>x&&typeof x==='object').map(x=>({p:cleanPanel(x),story:str(x.story).trim()})).filter(x=>panelOk(x.p));
   if(!items.length)throw new Error('The AI returned an empty prompt. Try again.');
@@ -3048,7 +3093,7 @@ Return one JSON object only: ${split?`{"panels":[${one}, ...]} with one entry pe
     // the character's looks never belong in undesired, whether or not the people are the user's characters
     fixUndesired(p,cast);
   }
-  return {panels:items.map(x=>x.p),stories:items.map(x=>x.story),usage:r.usage?{...r.usage,est:false}:{in:est(prompt)+1500,out:est(r.text),est:true}};
+  return {panels:items.map(x=>x.p),stories:items.map(x=>x.story),usage:r.usage};
 }
 // in an image story each prompt becomes a message (with its story text), so the story can continue from it
 function addFromImage(chat,panels,request,usage,story,stories=[]){
@@ -3125,10 +3170,10 @@ Return one JSON object only: {"looks":"...","outfit":"...","missing":"..."}
 "looks": their permanent features, comma separated, in this order: their Danbooru character tag if they are a known canon character (like fern (sousou no frieren)); hair length; hair color (one exact color, plus streaked hair, gradient hair or two-tone hair if needed); hairstyle and bangs (like blunt bangs, sidelocks, hair over one eye, ponytail, twin braids, ahoge); hair accessories they always wear; eye color (and heterochromia if needed); eye shape if distinctive (tsurime, tareme, jitome); skin; face features (freckles, mole under eye, scar, fang); body (petite, tall, muscular, and breast size for women); non-human features (animal ears, tail, horns, wings, pointy ears). Use the most specific common Danbooru tag. No count tags like 1girl, no clothes, no vague words like beautiful.
 "outfit": their usual outfit piece by piece with colors, from top to bottom (like white shirt, black jacket, red necktie, pleated skirt, black thighhighs, loafers), then accessories they usually carry. "" if unknown.
 "missing": ${image?'""':'the looks the description does not say (like "eye color, hairstyle"), or ""'}${image?'':`\n\nDESCRIPTION:\n${desc.slice(0,5000)}${refs?`\n\nREFERENCE:\n${refs.slice(0,6000)}`:''}`}`;
-  const r=await callApi(api,[{role:'system',content:'You write precise Danbooru-style appearance tags for anime image models. Reply with a single JSON object only.'},
-    {role:'user',content:image?[{type:'text',text:prompt},{type:'image_url',image_url:{url:image}}]:prompt}],undefined,()=>{},{stream:false,maxTokens:800})
+  const r=await callJson(api,[{role:'system',content:'You write precise Danbooru-style appearance tags for anime image models. Reply with a single JSON object only.'},
+    {role:'user',content:image?[{type:'text',text:prompt},{type:'image_url',image_url:{url:image}}]:prompt}],undefined,{maxTokens:800})
     .catch(e=>{if(image&&e.status&&/image|vision|modalit|multimodal|content.*(array|type)/i.test(e.message))throw new Error(`${api.model} can't read images. Set a vision model in Settings → Image prompts.`);throw e});
-  const j=parseJsonLoose(stripThink(r.text||'')),clean=s=>[...new Map(tagsOf(str(s).replace(/\b\d+(girl|boy)s?\b,?/gi,'')).map(t=>[t,t])).values()].join(', ');
+  const j=r.j,clean=s=>[...new Map(tagsOf(str(s).replace(/\b\d+(girl|boy)s?\b,?/gi,'')).map(t=>[t,t])).values()].join(', ');
   const out={looks:clean(j.looks),outfit:clean(j.outfit),missing:str(j.missing).trim()};
   if(!out.looks&&!out.outfit)throw new Error('The AI returned no tags. Try again.');
   return out;
