@@ -18,8 +18,9 @@ button,input,textarea,select{font:inherit;color:inherit}
 a{color:inherit;text-decoration:none}
 svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex:none}
 #app{display:flex;flex-direction:column;height:100dvh;max-width:820px;margin:0 auto;position:relative}
-#tempbar{margin:8px 12px 0;padding:10px 12px;border:1px solid var(--q);border-radius:12px;background:color-mix(in srgb,var(--q) 12%,var(--panel));font-size:13px;flex:none}
-#tempbar .row{margin-top:8px;align-items:center}
+#tempbar,#updbar{margin:8px 12px 0;padding:10px 12px;border:1px solid var(--q);border-radius:12px;background:color-mix(in srgb,var(--q) 12%,var(--panel));font-size:13px;flex:none}
+#updbar{border-color:var(--accent2);background:color-mix(in srgb,var(--accent2) 14%,var(--panel))}
+#tempbar .row,#updbar .row{margin-top:8px;align-items:center}
 #view{flex:1;overflow-y:auto;overflow-x:hidden;position:relative}
 #tabs{display:flex;border-top:1px solid var(--line);background:var(--panel);padding-bottom:env(safe-area-inset-bottom)}
 #tabs a{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 0 6px;font-size:11px;color:var(--muted)}
@@ -240,6 +241,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 <body>
 <div id="app">
   <div id="tempbar" hidden></div>
+  <div id="updbar" hidden></div>
   <main id="view"></main>
   <nav id="tabs">
     <a href="#/home" data-tab="home"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="2"/><rect x="14" y="3" width="7" height="5" rx="2"/><rect x="14" y="12" width="7" height="9" rx="2"/><rect x="3" y="16" width="7" height="5" rx="2"/></svg>Characters</a>
@@ -342,6 +344,8 @@ const BUILTIN_PROMPTS=[
 - Describe the world vividly but keep replies focused: usually 2–5 paragraphs.
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
+// Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
+const HEARTH_VERSION='1.1.0',HEARTH_DATE='2026-10-27';
 const DEFAULTS={apis:[],activeApi:null,temperature:0.9,maxTokens:600,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -1148,6 +1152,20 @@ function showTempBar(){
   bar.innerHTML=`<div><b>Opened from a temporary link.</b> Refreshing won't work, and your data may not be kept. Back up, then give Hearth a fixed address.</div>
     <div class="row"><button class="btn sm" data-act="tb-backup">${I.exp} Back up now</button><button class="btn ghost sm" data-act="tb-how">How?</button><button class="ib" data-act="tb-hide" title="Hide until next time" style="margin-left:auto">${I.x}</button></div>`;
 }
+// A newer version on the web address: the browser may keep showing an older copy, so say so and offer a reload.
+const newerVersion=(a,b)=>{const p=s=>String(s).split('.').map(Number);const x=p(a),y=p(b);for(let i=0;i<3;i++){if((x[i]||0)!==(y[i]||0))return (x[i]||0)>(y[i]||0)}return false};
+async function checkUpdate(manual){
+  const say=t=>{const m=$('#upd-msg');if(m)m.textContent=t};
+  if(!/^https?:$/.test(location.protocol)){if(manual)say('Updates come from the web address. This copy is a file.');return}
+  if(manual)say('Checking…');
+  let latest=null;try{const t=await (await fetch(location.href.split('#')[0],{cache:'no-store'})).text();latest=(t.match(/HEARTH_VERSION='([^']+)'/)||[])[1]||null}catch{}
+  if(!latest){if(manual)say("Couldn't check right now.");return}
+  if(!newerVersion(latest,HEARTH_VERSION)){if(manual)say(`You have the latest version (${HEARTH_VERSION}).`);return}
+  if(manual)say(`Version ${latest} is available.`);
+  const bar=$('#updbar');bar.hidden=false;
+  bar.innerHTML=`<div><b>Hearth ${esc(latest)} is available</b> (you have ${HEARTH_VERSION}). Reload to get it; your data stays.</div><div class="row"><button class="btn sm" data-act="upd-reload">${I.regen} Reload now</button><button class="ib" data-act="upd-hide" title="Later" style="margin-left:auto">${I.x}</button></div>`;
+}
+Object.assign(G,{'upd-check':()=>checkUpdate(true),'upd-reload':()=>location.reload(),'upd-hide':()=>{$('#updbar').hidden=true}});
 Object.assign(G,{'tb-backup':()=>exportBackup(),'tb-how':()=>fixedAddressHelp(),'tb-hide':()=>{try{sessionStorage.setItem('hearth-tempbar','1')}catch{}$('#tempbar').hidden=true}});
 function openSheet(html,handlers={},o={}){SH={...handlers};const s=$('#sheet');$('.pn',s).innerHTML='<div class="grab"></div>'+html;$('.pn',s).scrollTop=0;s.classList.add('on');$('.bd',s).onclick=o.modal?null:closeSheet;return $('.pn',s)}
 function closeSheet(){$('#sheet').classList.remove('on');SH={}}
@@ -3351,7 +3369,9 @@ function vSettings(){
     ${tg('backupKeys','Include API keys in auto backups','Leave off if you might share backup files.')}
     <div class="row" style="margin-top:8px"><button class="btn ghost" data-act="backup" style="flex:1">${I.exp} Export backup</button><button class="btn ghost" data-act="restore" style="flex:1">${I.imp} Import backup</button></div>
     <br><button class="btn danger block" data-act="wipe">Delete all data</button></div></div>
-  <p class="hint" style="text-align:center;padding-bottom:30px">Hearth · ${store.ls?'localStorage':'IndexedDB'} storage</p>`;
+  <div class="sec"><h3>About</h3><div class="box"><b>Hearth ${HEARTH_VERSION}</b> <span class="muted small">· updated ${new Date(HEARTH_DATE+'T12:00').toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'})} · ${store.ls?'localStorage':'IndexedDB'} storage</span>
+    <div class="row" style="margin-top:8px"><button class="btn ghost sm" data-act="upd-check">${I.regen} Check for updates</button><span id="upd-msg" class="small muted"></span></div></div></div>
+  <div style="padding-bottom:30px"></div>`;
   const host=$('.scripts-host',view);
   const save=()=>{if(host.isConnected)S.settings.globalScripts=readScripts(host);saveSettings()};
   let tmr;const deb=()=>{clearTimeout(tmr);tmr=setTimeout(save,400)};
@@ -3481,7 +3501,7 @@ async function importBackup(j){
   if(ensurePrompts()|ensureImgPresets())await saveSettings();
   if(migrateChars())await saveChars();
   applyFont();
-  keepStorage(true);showTempBar();
+  keepStorage(true);showTempBar();setTimeout(()=>checkUpdate(false),4000);
   armAutoBackup();setInterval(armAutoBackup,30*60e3);
   addEventListener('hashchange',route);
   addEventListener('beforeunload',e=>{if(dirty||GEN){e.preventDefault();e.returnValue=''}});
