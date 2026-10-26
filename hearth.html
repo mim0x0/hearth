@@ -345,7 +345,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.3.0',HEARTH_DATE='2026-10-27';
+const HEARTH_VERSION='1.4.0',HEARTH_DATE='2026-10-27';
 const DEFAULTS={apis:[],activeApi:null,temperature:0.9,maxTokens:600,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -394,11 +394,12 @@ async function updateMemory(chat,char,manual){
     const un=personaFor(chat)?.name||'You',words=+S.settings.memoryWords||300;
     let tr=msgs.map(m=>`${m.role==='user'?un:char.name}: ${macro(stripThink(txt(m)),char.name,un)}`).join('\n\n');
     if(tr.length>24000)tr='…'+tr.slice(-24000);
-    const {text}=await callApi(api,[
+    const {text,usage}=await callApi(api,[
       {role:'system',content:'You maintain the long-term memory of an ongoing roleplay story. You are accurate and brief.'},
       {role:'user',content:`Characters: ${char.name} and ${un}.\n\nCURRENT MEMORY:\n${chat.memory?.trim()||'(empty)'}\n\nNEW MESSAGES:\n${tr}\n\nRewrite the memory so it holds everything important: keep still-true facts from the current memory, and add new events, decisions, relationship changes, promises, secrets, injuries, items and places. Drop details that no longer matter or are no longer true. Use short bullet points in past tense, oldest first. At most ${words} words. Reply with only the updated memory.`}
     ],undefined,()=>{},{stream:false,maxTokens:Math.round(words*2.5)+200});
     const mem=stripThink(text||'').trim();if(!mem)throw new Error('The AI returned an empty memory. Try again.');
+    if(usage?.cost)chat.costExtra=(chat.costExtra||0)+usage.cost; // counted in the chat's total, not under one message
     chat.memory=mem;chat.memoryAt=chat.messages.length;await saveChat(chat);return mem;
   }finally{memBusy.delete(chat.id)}
 }
@@ -416,7 +417,7 @@ async function updateScene(chat,char,o={}){
   const tr=recent.map(m=>`${m.role==='user'?un:char.kind==='world'?'Narrator':char.name}: ${macro(stripThink(txt(m)),char.name,un)}`).join('\n\n').slice(-12000);
   sceneBusy.add(chat.id);
   try{
-    const {text}=await callApi(api,[
+    const {text,usage}=await callApi(api,[
       {role:'system',content:'You keep track of the physical state of a roleplay scene. You are exact and brief.'},
       {role:'user',content:`${char.kind==='world'?`A story set in ${char.name}. Main characters: ${cast.join(', ')}.`:`Characters: ${char.name} and ${un}.`} ${un} is the user.
 
@@ -435,6 +436,9 @@ Keep what is still true, change what the messages changed, and drop what is no l
     ],undefined,()=>{},{stream:false,maxTokens:600});
     const s=stripThink(text||'').trim();if(!s){if(o.manual)throw new Error('The AI returned an empty scene. Try again.');return null}
     if(!o.redo&&!o.rebuild)chat.scenePrev=chat.scene||'';
+    // the tracking that followed a reply is part of that reply's cost; a manual rebuild counts for the chat
+    const lm=!o.manual&&[...chat.messages].reverse().find(m=>m.role==='assistant'),lu=lm?.usage?.[lm.sw];
+    if(usage?.cost!=null){if(lu)lu.sceneCost=(lu.sceneCost||0)+usage.cost;else chat.costExtra=(chat.costExtra||0)+usage.cost}
     chat.scene=s;await saveChat(chat,true);return s;
   }finally{sceneBusy.delete(chat.id)}
 }
@@ -783,6 +787,11 @@ function openBookEditor(book,{title,onSave,onDelete}){
 /* ---------- API / proxy ---------- */
 function endpoint(url){const u=(url||'').trim().replace(/\/+$/,'');return /\/chat\/completions$/i.test(u)?u:u+'/chat/completions'}
 const modelsUrl=url=>endpoint(url).replace(/\/chat\/completions$/i,'/models');
+// What requests cost in dollars: OpenRouter reports it exactly; other proxies use the prices set on the connection
+// (only for the model they were set for). addCost adds one request's cost into a running total.
+const priceCost=(api,i,o)=>api&&(+api.priceIn||+api.priceOut)&&api.model===api.priceModel?((+i||0)*(+api.priceIn||0)+(+o||0)*(+api.priceOut||0))/1e6:null;
+const addCost=(t,u)=>{if(u?.cost!=null){t.cost=(t.cost||0)+u.cost;if(u.costEst)t.costEst=true}return t};
+const fmtCost=c=>c==null?'':c<0.0001?'<$0.0001':'$'+(c<0.01?c.toFixed(4):c<1?c.toFixed(3):c.toFixed(2));
 async function callApi(api,messages,signal,onText,o={}){
   const st=S.settings,stream=o.stream??st.stream,maxT=o.maxTokens??+st.maxTokens;
   if(!api?.url)throw new Error('No proxy URL set. Add one in Settings → API / Proxy.');
@@ -794,6 +803,8 @@ async function callApi(api,messages,signal,onText,o={}){
   if(+st.topP<1)body.top_p=+st.topP;
   // ask for token counts at the end of a stream; proxies that reject this are remembered and not asked again
   if(stream&&!api.noUsage)body.stream_options={include_usage:true};
+  // OpenRouter adds the exact cost of the request to the token counts
+  if(/openrouter\.ai/i.test(api.url)&&!api.noCost)body.usage={include:true};
   const headers={'Content-Type':'application/json'};if(api.key)headers.Authorization='Bearer '+api.key.trim();
   let res;
   for(;;){
@@ -803,10 +814,15 @@ async function callApi(api,messages,signal,onText,o={}){
     const t=await res.text().catch(()=>'');
     if(body.stream_options&&/stream_options|include_usage/i.test(t)){delete body.stream_options;api.noUsage=true;saveSettings();continue}
     if(body.response_format&&/response_format|json_object|json mode|structured output|requested parameters/i.test(t)){delete body.response_format;api.noJson=true;saveSettings();continue}
+    if(body.usage&&/\busage\b/i.test(t)){delete body.usage;api.noCost=true;saveSettings();continue}
     let m=t;try{const j=JSON.parse(t);m=j.error?.message||j.error||j.message||j.detail||t;if(typeof m!=='string')m=JSON.stringify(m)}catch{}
     const err=new Error(`Proxy error ${res.status}: ${String(m||res.statusText).slice(0,1000)}`);err.status=res.status;throw err;
   }
-  const usageOf=u=>u&&(u.prompt_tokens!=null||u.input_tokens!=null)?{in:+(u.prompt_tokens??u.input_tokens)||0,out:+(u.completion_tokens??u.output_tokens)||0}:null;
+  const usageOf=u=>{
+    if(!u||(u.prompt_tokens==null&&u.input_tokens==null))return null;
+    const r={in:+(u.prompt_tokens??u.input_tokens)||0,out:+(u.completion_tokens??u.output_tokens)||0},c=u.cost??u.total_cost;
+    if(c!=null&&isFinite(+c))r.cost=+c;else{const p=priceCost(api,r.in,r.out);if(p!=null){r.cost=p;r.costEst=true}}
+    return r};
   const ct=res.headers.get('content-type')||'';
   if(!stream||!res.body||ct.includes('application/json')){
     const j=await res.json();if(j.error)throw new Error(j.error.message||JSON.stringify(j.error));
@@ -956,7 +972,8 @@ async function research(system,user,char,signal,onStatus,model){
     const useTools=!!tools&&round<(+S.settings.webRounds||3);let r;
     try{r=await callApi(api,msgs,signal,()=>{},{stream:false,maxTokens:900,...(useTools?{tools}:{})})}
     catch(e){if(useTools&&round===0&&(e.status===400||e.status===404||e.status===422||/tool|function/i.test(e.message))){tools=null;noTools.add(api.model);continue}throw e}
-    if(r.usage){usage.in+=r.usage.in;usage.out+=r.usage.out}else{usage.in+=est(msgs.map(m=>m.content||'').join(''));usage.out+=est(r.text);usage.est=true}
+    if(r.usage){usage.in+=r.usage.in;usage.out+=r.usage.out;addCost(usage,r.usage)}
+    else{const i=est(msgs.map(m=>m.content||'').join('')),o=est(r.text);usage.in+=i;usage.out+=o;usage.est=true;addCost(usage,{cost:priceCost(api,i,o),costEst:true})}
     if(!useTools||!r.toolCalls?.length)return {text:stripThink(r.text||'').trim(),labels,usage};
     msgs=[...msgs,{role:'assistant',content:r.text||null,tool_calls:r.toolCalls}];
     for(const tc of r.toolCalls){
@@ -1408,8 +1425,9 @@ async function callJson(api,messages,signal,o={}){
   const words=m=>typeof m.content==='string'?m.content:(m.content||[]).map(p=>p.type==='text'?p.text:' [image] ').join(' ');
   for(let attempt=0;;attempt++){
     const r=await callApi(api,msgs,signal,()=>{},{stream:false,maxTokens:max,json:true});
-    const u=r.usage||{in:est(msgs.map(words).join('\n'))+(msgs.some(m=>Array.isArray(m.content))?1000:0),out:est(r.text)};
-    usage={in:usage.in+u.in,out:usage.out+u.out,est:usage.est||!r.usage};
+    let u=r.usage;
+    if(!u){const i=est(msgs.map(words).join('\n'))+(msgs.some(m=>Array.isArray(m.content))?1000:0),o=est(r.text);u={in:i,out:o,cost:priceCost(api,i,o),costEst:true}}
+    usage=addCost({...usage,in:usage.in+u.in,out:usage.out+u.out,est:usage.est||!r.usage},u);
     const text=stripThink(r.text||''),cut=/^(length|max_tokens)$/.test(r.finish||'');
     let j=null,err=null;try{j=parseJsonLoose(text)}catch(e){err=e}
     if(j&&!cut&&!j._cut)return {j,text,usage};
@@ -2175,7 +2193,7 @@ function vEdit(id='new'){
             const m=getChar(id);msg.className='small muted';msg.textContent=`Checking ${m.name} (${n+1} of ${ids.length})…`;
             try{
               const {j,usage,haystack}=await checkMember(cur,m),hay=looseText(haystack);
-              if(usage){tok.in+=usage.in;tok.out+=usage.out;tok.est=tok.est||usage.est}
+              if(usage){tok.in+=usage.in;tok.out+=usage.out;tok.est=tok.est||usage.est;addCost(tok,usage)}
               for(const x of arr(j.issues)){
                 if(!x||!str(x.problem).trim())continue;
                 // keep it only if both sides really are in the texts
@@ -2445,7 +2463,8 @@ async function vChat(id){
     const onText=t=>{m.swipes[m.sw]=t;updateOne(idx)};
     // tokens for this reply, summed over web-lookup rounds; estimated when the proxy doesn't report them
     const tok={in:0,out:0,est:false};let sent=messages,finish='',aborted=false;
-    const count=r=>{if(r?.usage){tok.in+=r.usage.in;tok.out+=r.usage.out}else{tok.in+=est(sent.map(x=>x.content||'').join('\n'));tok.out+=est(r?r.text:m.swipes[m.sw]);tok.est=true}};
+    const count=r=>{if(r?.usage){tok.in+=r.usage.in;tok.out+=r.usage.out;addCost(tok,r.usage)}
+      else{const i=est(sent.map(x=>x.content||'').join('\n')),o=est(r?r.text:m.swipes[m.sw]);tok.in+=i;tok.out+=o;tok.est=true;addCost(tok,{cost:priceCost(api,i,o),costEst:true})}};
     try{
       // a separate research model looks things up first; the chat model then just writes
       // when: every reply, only when new names show up (default), or only when asked from the ⋮ menu
@@ -2454,7 +2473,7 @@ async function vChat(id){
         GEN.status=fresh.length?`Looking up ${fresh.slice(0,3).join(', ')}…`:'Researching…';updateOne(idx);
         try{
           const rr=await researchForReply(chat,char,chat.messages.slice(0,idx),GEN.ctrl.signal,s=>{GEN.status=s;updateOne(idx)},fresh.length?`new names in the story: ${fresh.join(', ')}`:'');
-          lookups.push(...rr.labels);tok.in+=rr.usage.in;tok.out+=rr.usage.out;tok.est=tok.est||rr.usage.est;
+          lookups.push(...rr.labels);tok.in+=rr.usage.in;tok.out+=rr.usage.out;tok.est=tok.est||rr.usage.est;addCost(tok,rr.usage);
           if(rr.notes){lookups.push(`notes by ${S.settings.researchModel}`);messages[0].content+=`\n\n[Canon facts just looked up]\n${rr.notes}`}
         }catch(e){if(e.name==='AbortError')throw e;toast('Research skipped: '+e.message,4500)}
         GEN.status='Writing reply…';updateOne(idx);
@@ -2492,7 +2511,7 @@ async function vChat(id){
       const cut=aborted||/length|max_tokens/i.test(finish);if(cut||m.cut)(m.cut??=[])[m.sw]=cut}
     GEN=null;await saveChat(chat);
     if(curChat===chat){renderMsgs();const el=msgsEl();if(el)el.scrollTop=el.scrollHeight;updateSend()}
-    if(!failed&&S.settings.trackScene!==false)updateScene(chat,char,{redo:mode==='swipe'}).catch(e=>console.warn('Scene update failed:',e));
+    if(!failed&&S.settings.trackScene!==false)updateScene(chat,char,{redo:mode==='swipe'}).then(s=>{if(s&&curChat===chat&&chat.messages[idx]===m)updateOne(idx)}).catch(e=>console.warn('Scene update failed:',e));
     if(!failed&&S.settings.autoMemory&&chat.messages.length-Math.min(chat.memoryAt||0,chat.messages.length)>=(+S.settings.memoryEvery||20))
       updateMemory(chat,char).then(m=>{if(m)toast('Chat memory updated')}).catch(e=>console.warn('Memory update failed:',e));
     if(failed)openSheet(`<h2 class="err">Couldn't get a reply</h2><div class="box pre small">${esc(failed.message)}</div><br><div class="row"><button class="btn ghost" data-act="close" style="flex:1">Close</button><button class="btn" data-act="settings" style="flex:1">Proxy settings</button></div>`,{settings:()=>go('#/settings')});
@@ -2673,7 +2692,7 @@ async function aiJson(sys,prompt,signal,maxTokens){
   const r=await callJson(activeApi(),[{role:'system',content:sys},{role:'user',content:prompt}],signal,{maxTokens});
   return {j:r.j,usage:r.usage};
 }
-const usageText=u=>u?`${u.est?'≈ ':''}↑ ${Math.round(u.in).toLocaleString()} · ↓ ${Math.round(u.out).toLocaleString()} tokens`:'';
+const usageText=u=>u?`${u.est?'≈ ':''}↑ ${Math.round(u.in).toLocaleString()} · ↓ ${Math.round(u.out).toLocaleString()} tokens${u.cost!=null?` · ${u.costEst?'≈ ':''}${fmtCost(u.cost)}`:''}`:'';
 // every prompt made in a chat is kept, newest last
 function addImage(chat,panels,request,from,usage){
   const e={id:uid(),at:Date.now(),request:request||'',panels,from:from||'',usage:usage||null};
@@ -2753,7 +2772,7 @@ function showImagePrompts(chat,char,entry,upto){
 function showImageHistory(chat,char,upto){
   const list=[...(chat.images||[])].reverse();
   openSheet(`<h2>Image prompt history</h2>${list.length?`<div class="list">${list.map(e=>`<div class="li" data-act="open" data-id="${e.id}"><div class="lt"><b>${esc(e.panels[0]?.caption||'Image')}${e.panels.length>1?` (+${e.panels.length-1} panels)`:''}</b><span>${esc(e.request||e.panels[0]?.base||e.panels[0]?.onebox||'')}</span>${e.usage?`<span class="tokl">${usageText(e.usage)}</span>`:''}</div><span class="muted small">${timeAgo(e.at)}</span></div>`).join('')}</div>
-    <p class="hint">Total: ${usageText((chat.images||[]).reduce((t,e)=>e.usage?{in:t.in+e.usage.in,out:t.out+e.usage.out,est:t.est||e.usage.est}:t,{in:0,out:0,est:false}))}</p>`:'<p class="muted">No image prompts yet.</p>'}
+    <p class="hint">Total: ${usageText((chat.images||[]).reduce((t,e)=>e.usage?addCost({...t,in:t.in+e.usage.in,out:t.out+e.usage.out,est:t.est||e.usage.est},e.usage):t,{in:0,out:0,est:false}))}</p>`:'<p class="muted">No image prompts yet.</p>'}
     <div class="sheet-foot row"><button class="btn ghost" data-act="close" style="flex:1">Close</button>${list.length?`<button class="btn ghost" data-act="all" style="flex:1">${I.copy} Copy all</button>`:''}</div>`,{
     open:b=>showImagePrompts(chat,char,chat.images.find(e=>e.id===b.dataset.id),upto),
     all:()=>copyText(chat.images.flatMap(e=>e.panels).map((p0,i)=>{const p=withPreset(p0);
@@ -3266,11 +3285,25 @@ Return one JSON object only: {"looks":"...","outfit":"...","missing":"..."}
 }
 function tokLine(m){
   const n=x=>Math.round(x).toLocaleString(),u=m.usage?.[m.sw];
-  return u?`<div class="tokl" title="↑ tokens sent to the AI for this reply · ↓ tokens the AI wrote${u.est?' (estimated: your proxy did not report them)':''}">${u.est?'≈ ':''}↑ ${n(u.in)} · ↓ ${n(u.out)} tokens</div>`
-    :`<div class="tokl">≈ ${n(est(txt(m)))} tokens</div>`;
+  if(!u)return `<div class="tokl">≈ ${n(est(txt(m)))} tokens</div>`;
+  // the reply's cost, plus the scene tracking that followed it
+  const total=u.cost!=null||u.sceneCost!=null?(u.cost||0)+(u.sceneCost||0):null;
+  const why=[u.cost!=null?`reply ${fmtCost(u.cost)}`:'',u.sceneCost!=null?`scene tracking ${fmtCost(u.sceneCost)}`:'',u.costEst?'estimated from the prices on your connection':''].filter(Boolean).join(' · ');
+  return `<div class="tokl" title="↑ tokens sent to the AI for this reply · ↓ tokens the AI wrote${u.est?' (estimated: your proxy did not report them)':''}${why?`\nCost: ${why}`:''}">${u.est?'≈ ':''}↑ ${n(u.in)} · ↓ ${n(u.out)} tokens${total!=null?` · ${u.costEst?'≈ ':''}${fmtCost(total)}`:''}</div>`;
+}
+// everything this chat has cost: replies (every version, with their scene tracking), image prompts kept only in the
+// prompt history, and background work like memory updates
+function chatCost(chat){
+  let t=null,est=false;const add=u=>{if(u?.cost==null&&u?.sceneCost==null)return;t=(t||0)+(u.cost||0)+(u.sceneCost||0);if(u.costEst)est=true};
+  for(const m of chat.messages)(m.usage||[]).forEach(add);
+  // story and quick-image prompts are already counted on their messages
+  for(const e of chat.images||[])if(!(chat.mode==='image'&&['story','quick','image'].includes(e.from)))add(e.usage);
+  if(chat.costExtra)t=(t||0)+chat.costExtra;
+  return t==null?null:{cost:t,est};
 }
 function chatMenu(chat,char,redraw){
-  openSheet(`<h2>Chat options</h2><div class="menu">
+  const spent=chatCost(chat);
+  openSheet(`<h2>Chat options</h2>${spent?`<p class="hint" style="margin:-6px 0 10px">This chat so far: <b>${spent.est?'≈ ':''}${fmtCost(spent.cost)}</b></p>`:''}<div class="menu">
     <button data-act="memory">${I.brain} Chat memory</button>${chat.mode==='image'?'':`<button data-act="scene">${I.user} The scene right now</button>`}${char.kind!=='world'&&S.chars.some(c=>c.kind==='world')?`<button data-act="cworld">${I.book} World for this chat: ${esc(chatWorld(chat,char)?.name||'none')}</button>`:''}<button data-act="persona">${I.user} Persona for this chat</button><button data-act="prompt">${I.edit} Prompt preset</button>
     <button data-act="vars">${I.code} Script variables</button><button data-act="lore">${I.tag} Lore used in last reply</button><button data-act="rename">${I.edit} Rename chat</button><button data-act="mvf">${I.folder} Move to folder${folders('chats').find(f=>f.id===chat.folder)?` (now: ${esc(folders('chats').find(f=>f.id===chat.folder).name)})`:''}</button>
     <button data-act="newchat">${I.plus} Start a new chat</button><button data-act="export">${I.exp} Export chat as text</button>
@@ -3521,6 +3554,9 @@ function editApi(a){
     <label class="f">API key<small>stored only on this device</small></label><input id="ak" type="password" value="${esc(w.key)}" placeholder="sk-…" autocomplete="off" autocapitalize="off">
     <label class="f">Model</label><input id="am" value="${esc(w.model)}" list="mlist" placeholder="e.g. deepseek/deepseek-chat-v3" autocapitalize="off"><datalist id="mlist"></datalist>
     <div class="row" style="margin-top:8px"><button class="btn ghost sm" data-act="models">Fetch models</button><button class="btn ghost sm" data-act="test">Test connection</button></div>
+    <div class="grid2"><div><label class="f">Price in<small>$ per 1M tokens</small></label><input id="api-pin" type="number" min="0" step="0.01" value="${w.priceIn||''}" placeholder="optional"></div>
+      <div><label class="f">Price out<small>$ per 1M tokens</small></label><input id="api-pout" type="number" min="0" step="0.01" value="${w.priceOut||''}" placeholder="optional"></div></div>
+    <div class="hint">Only for showing costs under messages. OpenRouter reports the exact cost of every request by itself, so leave these empty there. For other proxies, enter the model's prices; they're used only while this model is set.</div>
     <div id="ares" class="small" style="margin-top:8px"></div>
     <br><div class="row"><button class="btn" data-act="save" style="flex:2">Save${isNew?' & use':''}</button>${!isNew&&st.activeApi!==w.id?'<button class="btn ghost" data-act="use" style="flex:1">Use</button>':''}</div>
     ${!isNew?'<br><button class="btn danger block" data-act="del">Delete connection</button>':''}`,{
@@ -3529,6 +3565,7 @@ function editApi(a){
     test:async()=>{const r=$('#ares');r.textContent='Testing…';r.className='small';const t={...w,url:$('#au').value,key:$('#ak').value,model:$('#am').value.trim()};
       try{const {text:out}=await callApi(t,[{role:'user',content:'Reply with just the word OK.'}],undefined,()=>{},{stream:false,maxTokens:30});r.innerHTML=`<span class="okc">Connected!</span> Reply: “${esc(stripThink(out).slice(0,80))||'(empty)'}”`}catch(e){r.innerHTML=`<span class="err">${esc(e.message)}</span>`}},
     save:async()=>{w.name=$('#an').value.trim()||'Connection';w.url=$('#au').value.trim();w.key=$('#ak').value.trim();w.model=$('#am').value.trim();if(!w.url){toast('Enter the proxy URL');return}
+      w.priceIn=Math.max(0,+$('#api-pin').value||0);w.priceOut=Math.max(0,+$('#api-pout').value||0);w.priceModel=w.priceIn||w.priceOut?w.model:'';
       const i=st.apis.findIndex(x=>x.id===w.id);if(i<0){st.apis.push(w);st.activeApi=w.id}else st.apis[i]=w;if(!st.activeApi)st.activeApi=w.id;await saveSettings();closeSheet();vSettings()},
     use:async()=>{st.activeApi=w.id;await saveSettings();closeSheet();vSettings()},
     del:async()=>{if(!confirm('Delete this connection?'))return;st.apis=st.apis.filter(x=>x.id!==w.id);if(st.activeApi===w.id)st.activeApi=st.apis[0]?.id||null;await saveSettings();closeSheet();vSettings()}
