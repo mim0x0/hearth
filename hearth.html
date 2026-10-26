@@ -345,7 +345,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.5.0',HEARTH_DATE='2026-10-27';
+const HEARTH_VERSION='1.6.0',HEARTH_DATE='2026-10-27';
 const DEFAULTS={apis:[],activeApi:null,temperature:0.9,maxTokens:600,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -3410,6 +3410,22 @@ function editPersona(p,isNew){
 }
 
 /* ---------- settings ---------- */
+// Fetch models / Test next to every model box in Settings. Each box uses its own connection, and an empty box
+// falls back to another model (fallback) that the test then checks instead.
+const MODEL_FIELDS={
+  sceneModel:{conn:()=>activeApi(),fallback:()=>''},
+  visionModel:{conn:()=>S.settings.apis.find(a=>a.id===S.settings.visionApi)||activeApi(),fallback:()=>'',vision:true},
+  researchModel:{conn:()=>S.settings.apis.find(a=>a.id===S.settings.researchApi)||activeApi(),fallback:()=>''},
+  wizardResearchModel:{conn:()=>S.settings.apis.find(a=>a.id===S.settings.researchApi)||activeApi(),fallback:()=>S.settings.researchModel||''}
+};
+const modelTools=k=>`<datalist id="dl-${k}"></datalist><div class="row" style="margin-top:6px"><button class="btn ghost sm" data-act="mfetch" data-field="${k}">Fetch models</button><button class="btn ghost sm" data-act="mtest" data-field="${k}">Test</button></div><div class="small" id="mres-${k}" style="margin-top:4px"></div>`;
+// the models a connection offers (only image-capable ones when asked and the list says), remembered while the app is open
+async function listModels(api,vision){
+  const memo=(S.ui.models??={}),key=api.url+'|'+(api.key||'').slice(-6);
+  if(!memo[key]){const res=await fetch(modelsUrl(api.url),{headers:api.key?{Authorization:'Bearer '+api.key.trim()}:{}});if(!res.ok)throw new Error('HTTP '+res.status);const j=await res.json();memo[key]=(j.data||j.models||[]).map(m=>typeof m==='string'?{id:m}:m).filter(m=>m?.id||m?.name)}
+  const all=memo[key],known=all.some(m=>m.architecture?.input_modalities);
+  return all.filter(m=>!vision||!known||m.architecture?.input_modalities?.includes('image')).map(m=>m.id||m.name).sort();
+}
 function vSettings(){
   const st=S.settings,act=activeApi();
   const rng=(k,l,min,max,step,hint)=>`<label class="f">${l} <small id="v-${k}">${st[k]}</small></label><input type="range" data-k="${k}" min="${min}" max="${max}" step="${step}" value="${st[k]}">${hint?`<div class="hint">${hint}</div>`:''}`;
@@ -3427,7 +3443,7 @@ function vSettings(){
   </div></div>
   <div class="sec"><h3>Chat memory</h3><div class="box">
     ${tg('trackScene','Track the scene','After each reply, your AI notes who is where, what they hold and wear, and things like being tied up or injured, so characters only do what the scene allows. See it in a chat under ⋮ → The scene right now. Uses one small extra request per reply.')}
-    <label class="f">Model for scene tracking<small>optional</small></label><input data-k="sceneModel" value="${esc(st.sceneModel||'')}" placeholder="empty = your chat model; a cheaper one works well" autocapitalize="off">
+    <label class="f">Model for scene tracking<small>optional</small></label><input data-k="sceneModel" list="dl-sceneModel" value="${esc(st.sceneModel||'')}" placeholder="empty = your chat model; a cheaper one works well" autocapitalize="off">${modelTools('sceneModel')}
     ${tg('autoMemory','Update memory automatically','Every few messages your AI summarizes what happened into the chat memory, so old events aren\'t forgotten. Uses one extra API request each time.')}
     <div class="grid2"><div><label class="f">Every<small>messages</small></label><input type="number" data-k="memoryEvery" min="4" max="200" value="${st.memoryEvery}"></div>
     <div><label class="f">Max length<small>words</small></label><input type="number" data-k="memoryWords" min="100" max="1500" step="50" value="${st.memoryWords}"></div></div>
@@ -3445,9 +3461,10 @@ function vSettings(){
     <label class="f">Cartoonish faces<small>chibi, @_@, jitome, x_x…</small></label><select data-k="imgComic">${[['auto','Funny or absurd moments'],['often','Whenever the mood is light, and absurd moments'],['never','Never']].map(([v,l])=>`<option value="${v}" ${(st.imgComic||'auto')===v?'selected':''}>${l}</option>`).join('')}</select>
     <label class="f">Story text in image stories<small>shown in the Story view</small></label><select data-k="imgStoryText">${[['short','Short (2–4 sentences)'],['long','Longer (1–3 paragraphs)'],['off','Off']].map(([v,l])=>`<option value="${v}" ${(st.imgStoryText||'short')===v?'selected':''}>${l}</option>`).join('')}</select>
     <div class="hint">With each image the AI also writes the story of that moment, so the Story view reads like an illustrated novel. Short adds roughly 60–100 tokens per image, longer about 150–300.</div>
-    <label class="f">Vision model<small>for ⋮ → Prompt from image</small></label><input data-k="visionModel" id="vs-m" value="${esc(st.visionModel||'')}" placeholder="e.g. xiaomi/mimo-v2.6-flash (empty = your chat model)" autocapitalize="off">
+    <label class="f">Vision model<small>for ⋮ → Prompt from image</small></label><input data-k="visionModel" id="vs-m" list="dl-visionModel" value="${esc(st.visionModel||'')}" placeholder="e.g. xiaomi/mimo-v2.6-flash (empty = your chat model)" autocapitalize="off">
     <div class="chips"><span class="chip" data-act="vsm" data-m="xiaomi/mimo-v2.6-flash">mimo-v2.6-flash</span><span class="chip" data-act="vsm" data-m="google/gemini-3.1-flash-lite">gemini-3.1-flash-lite</span><span class="chip" data-act="vsm" data-m="qwen/qwen3-vl-30b-a3b-instruct">qwen3-vl-30b</span></div>
     ${st.apis.length>1?`<label class="f">Vision connection</label><select data-k="visionApi">${st.apis.map(a=>`<option value="${a.id}" ${(st.visionApi||activeApi()?.id)===a.id?'selected':''}>${esc(a.name||a.url)}</option>`).join('')}</select>`:''}
+    ${modelTools('visionModel')}
     <div class="hint">Only used for images without a saved prompt (NovelAI PNGs are read for free). The model must accept images: GLM 5.2 doesn't. On OpenRouter one image costs well under $0.01 with these models.</div>
     <label class="f">Presets<small>your fixed artist tags, base lines and undesired tags</small></label>
     <div class="list">${(st.imgPresets||[]).map(p=>`<div class="li ${p.id===imgPreset().id?'on':''}" data-act="ipr" data-id="${p.id}"><div class="lt"><b>${esc(p.name)}</b><span>${esc(joinTags(p.artist,p.footer.replace(/\n/g,' '),p.uc)||'Empty: tap to add your tags')}</span></div>${p.id===imgPreset().id?'<span class="tag">active</span>':''}</div>`).join('')}</div>
@@ -3461,13 +3478,13 @@ function vSettings(){
     <label class="f">Who looks things up</label><select data-k="researchMode"><option value="chat" ${st.researchMode!=='model'?'selected':''}>The chat model (needs tool calling)</option><option value="model" ${st.researchMode==='model'?'selected':''}>A separate research model</option></select>
     <div id="rs-box" ${st.researchMode==='model'?'':'hidden'}>
       <label class="f">Research connection</label><select data-k="researchApi">${st.apis.map(a=>`<option value="${a.id}" ${(st.researchApi||activeApi()?.id)===a.id?'selected':''}>${esc(a.name||a.url)}</option>`).join('')||'<option value="">Add a connection first</option>'}</select>
-      <label class="f">Research model</label><input data-k="researchModel" id="rs-m" value="${esc(st.researchModel||'')}" placeholder="e.g. perplexity/sonar" autocapitalize="off">
+      <label class="f">Research model</label><input data-k="researchModel" id="rs-m" list="dl-researchModel" value="${esc(st.researchModel||'')}" placeholder="e.g. perplexity/sonar" autocapitalize="off">${modelTools('researchModel')}
       <div class="chips"><span class="chip" data-act="rsm" data-m="deepseek/deepseek-v4.1-flash">deepseek-v4.1-flash (cheap, wiki tools)</span><span class="chip" data-act="rsm" data-m="perplexity/sonar">perplexity/sonar</span><span class="chip" data-act="rsm" data-m=":online">add :online</span></div>
       <div class="hint">A cheap tool-calling model searches Wikipedia / Fandom for free. perplexity/sonar searches the whole web (about $0.005 extra per search), and adding :online to a model ID turns on OpenRouter's web search (about $0.007 per request). Found facts are kept per chat (⋮ → Looked-up facts).</div>
       <label class="f">When to research</label><select data-k="researchWhen">${[['new','Only when new names appear'],['ask','Only when I ask (⋮ → Look something up)'],['every','Before every reply']].map(([v,l])=>`<option value="${v}" ${(st.researchWhen||'new')===v?'selected':''}>${l}</option>`).join('')}</select>
       <div class="hint">“New names” runs only when a capitalised name shows up that the chat hasn't had before, which keeps search fees low.</div>
     </div>
-    <label class="f">Wizard research model<small>optional, used once per new character</small></label><input data-k="wizardResearchModel" id="rs-w" value="${esc(st.wizardResearchModel||'')}" placeholder="e.g. perplexity/sonar (empty = same as the research model)" autocapitalize="off">
+    <label class="f">Wizard research model<small>optional, used once per new character</small></label><input data-k="wizardResearchModel" id="rs-w" list="dl-wizardResearchModel" value="${esc(st.wizardResearchModel||'')}" placeholder="e.g. perplexity/sonar (empty = same as the research model)" autocapitalize="off">${modelTools('wizardResearchModel')}
     <div class="chips"><span class="chip" data-act="rsw" data-m="perplexity/sonar">perplexity/sonar</span><span class="chip" data-act="rsw" data-m="">same as research model</span></div>
     <div class="hint">The character / world wizard asks this model once, on the research connection. A web-search model is worth it here, since it runs only once per character.</div>
     <label class="f">Page length limit<small>characters the AI reads per page</small></label><input type="number" data-k="webMaxChars" min="1000" step="1000" value="${st.webMaxChars}">
@@ -3514,6 +3531,32 @@ function vSettings(){
     'book-import':async()=>addGlobalBook(await pickBookFile()),
     'book-paste':()=>openPasteBook(addGlobalBook),
     ipr:b=>editImgPreset(st.imgPresets.find(p=>p.id===b.dataset.id)),
+    mfetch:async b=>{
+      const k=b.dataset.field,f=MODEL_FIELDS[k],api=f.conn(),r=$('#mres-'+k);r.className='small';
+      if(!api){r.innerHTML='<span class="err">Add a connection first.</span>';return}
+      r.textContent='Loading models…';b.disabled=true;
+      try{const ids=await listModels(api,f.vision);$('#dl-'+k).innerHTML=ids.map(i=>`<option value="${esc(i)}">`).join('');
+        r.innerHTML=`<span class="okc">${ids.length} models${f.vision?' that can see images':''} from ${esc(api.name||api.url)}.</span> Tap the box above to pick one.`}
+      catch(e){r.innerHTML=`<span class="err">Could not list models (${esc(e.message)}). Type the model name instead.</span>`}
+      finally{b.disabled=false}},
+    mtest:async b=>{
+      const k=b.dataset.field,f=MODEL_FIELDS[k],base=f.conn(),r=$('#mres-'+k);r.className='small';
+      if(!base){r.innerHTML='<span class="err">Add a connection first.</span>';return}
+      const typed=$(`[data-k=${k}]`,view).value.trim(),model=typed||f.fallback().trim()||base.model,api={...base,model};
+      r.textContent=`Testing ${model}${typed?'':' (the box is empty, so this is what gets used)'}…`;b.disabled=true;
+      try{
+        if(f.vision){
+          // a red square: a model that can't see images either errors or can't name the color
+          const c=document.createElement('canvas');c.width=c.height=32;const x=c.getContext('2d');x.fillStyle='#d22';x.fillRect(0,0,32,32);
+          const {text}=await callApi(api,[{role:'user',content:[{type:'text',text:'What color is this square? Reply with one word.'},{type:'image_url',image_url:{url:c.toDataURL('image/png')}}]}],undefined,()=>{},{stream:false,maxTokens:400});
+          const said=stripThink(text||'').trim().slice(0,40);
+          r.innerHTML=/red/i.test(said)?`<span class="okc">Works, and it can see images.</span> ${esc(model)} saw a “${esc(said)}” square.`:`<span class="err">${esc(model)} answered but didn't see the red square</span> (“${esc(said)||'empty'}”). Pick a model that can see images.`;
+        }else{
+          const {text}=await callApi(api,[{role:'user',content:'Reply with just the word OK.'}],undefined,()=>{},{stream:false,maxTokens:400});
+          r.innerHTML=`<span class="okc">Works.</span> ${esc(model)} replied “${esc(stripThink(text||'').trim().slice(0,60))||'(empty)'}”.`;
+        }
+      }catch(e){r.innerHTML=`<span class="err">${esc(model)}: ${esc(e.message)}</span>`}
+      finally{b.disabled=false}},
     vsm:b=>{const i=$('#vs-m');i.value=b.dataset.m;i.dispatchEvent(new Event('input',{bubbles:true}))},
     rsw:b=>{const i=$('#rs-w');i.value=b.dataset.m;i.dispatchEvent(new Event('input',{bubbles:true}))},
     rsm:b=>{const i=$('#rs-m'),m=b.dataset.m;i.value=m===':online'?(i.value.trim()?i.value.trim().replace(/:online$/,'')+':online':'openai/gpt-4o-mini:online'):m;i.dispatchEvent(new Event('input',{bubbles:true}))},
