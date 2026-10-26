@@ -345,7 +345,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.4.0',HEARTH_DATE='2026-10-27';
+const HEARTH_VERSION='1.5.0',HEARTH_DATE='2026-10-27';
 const DEFAULTS={apis:[],activeApi:null,temperature:0.9,maxTokens:600,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -3558,7 +3558,7 @@ function editApi(a){
       <div><label class="f">Price out<small>$ per 1M tokens</small></label><input id="api-pout" type="number" min="0" step="0.01" value="${w.priceOut||''}" placeholder="optional"></div></div>
     <div class="hint">Only for showing costs under messages. OpenRouter reports the exact cost of every request by itself, so leave these empty there. For other proxies, enter the model's prices; they're used only while this model is set.</div>
     <div id="ares" class="small" style="margin-top:8px"></div>
-    <br><div class="row"><button class="btn" data-act="save" style="flex:2">Save${isNew?' & use':''}</button>${!isNew&&st.activeApi!==w.id?'<button class="btn ghost" data-act="use" style="flex:1">Use</button>':''}</div>
+    <br><div class="row"><button class="btn" data-act="save" style="flex:2">Save${isNew?' & use':''}</button>${!isNew&&st.activeApi!==w.id?'<button class="btn ghost" data-act="use" style="flex:1">Use</button>':''}${!isNew?`<button class="btn ghost" data-act="dup" style="flex:1">${I.copy} Duplicate</button>`:''}</div>
     ${!isNew?'<br><button class="btn danger block" data-act="del">Delete connection</button>':''}`,{
     preset:b=>{$('#au').value=b.dataset.u;showUrl()},
     models:async()=>{const r=$('#ares');r.textContent='Loading models…';r.className='small';try{const k=$('#ak').value.trim();const res=await fetch(modelsUrl($('#au').value),{headers:k?{Authorization:'Bearer '+k}:{}});if(!res.ok)throw new Error('HTTP '+res.status);const j=await res.json();const ids=(j.data||j.models||[]).map(m=>m.id||m.name||m).filter(x=>typeof x==='string').sort();$('#mlist').innerHTML=ids.map(i=>`<option value="${esc(i)}">`).join('');r.innerHTML=`<span class="okc">${ids.length} models found.</span> Tap the model box to pick one.`}catch(e){r.innerHTML=`<span class="err">Could not list models (${esc(e.message)}). Type the model name instead.</span>`}},
@@ -3568,6 +3568,11 @@ function editApi(a){
       w.priceIn=Math.max(0,+$('#api-pin').value||0);w.priceOut=Math.max(0,+$('#api-pout').value||0);w.priceModel=w.priceIn||w.priceOut?w.model:'';
       const i=st.apis.findIndex(x=>x.id===w.id);if(i<0){st.apis.push(w);st.activeApi=w.id}else st.apis[i]=w;if(!st.activeApi)st.activeApi=w.id;await saveSettings();closeSheet();vSettings()},
     use:async()=>{st.activeApi=w.id;await saveSettings();closeSheet();vSettings()},
+    // a copy of this connection as it is in the form (same URL, key and prices), e.g. to keep one per model; opens the copy
+    dup:async()=>{
+      const pin=Math.max(0,+$('#api-pin').value||0),pout=Math.max(0,+$('#api-pout').value||0),model=$('#am').value.trim();
+      const c={...w,id:uid(),name:`${$('#an').value.trim()||w.name||'Connection'} (copy)`,url:$('#au').value.trim(),key:$('#ak').value.trim(),model,priceIn:pin,priceOut:pout,priceModel:pin||pout?model:''};
+      st.apis.push(c);await saveSettings();closeSheet();vSettings();toast('Copied. Change what you need, then tap Save.');editApi(c)},
     del:async()=>{if(!confirm('Delete this connection?'))return;st.apis=st.apis.filter(x=>x.id!==w.id);if(st.activeApi===w.id)st.activeApi=st.apis[0]?.id||null;await saveSettings();closeSheet();vSettings()}
   });
   const showUrl=()=>{const u=$('#au').value.trim();$('#aurl').textContent=u?'Requests go to: '+endpoint(u):''};$('#au').oninput=showUrl;showUrl();
