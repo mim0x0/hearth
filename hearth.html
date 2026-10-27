@@ -345,8 +345,8 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.8.0',HEARTH_DATE='2026-10-27';
-const DEFAULTS={apis:[],activeApi:null,temperature:0.9,maxTokens:600,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
+const HEARTH_VERSION='1.8.1',HEARTH_DATE='2026-10-27';
+const DEFAULTS={apis:[],activeApi:null,temperature:0.9,maxTokens:600,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
 const saveChars=()=>store.set('chars',S.chars);
@@ -791,6 +791,9 @@ const modelsUrl=url=>endpoint(url).replace(/\/chat\/completions$/i,'/models');
 // (only for the model they were set for). addCost adds one request's cost into a running total.
 const priceCost=(api,i,o)=>api&&(+api.priceIn||+api.priceOut)&&api.model===api.priceModel?((+i||0)*(+api.priceIn||0)+(+o||0)*(+api.priceOut||0))/1e6:null;
 const addCost=(t,u)=>{if(u?.cost!=null){t.cost=(t.cost||0)+u.cost;if(u.costEst)t.costEst=true}return t};
+// what a connection test got back; thinking models may think through a short test limit and write nothing, which is fine in chats
+const testSaid=(text,thought)=>{const s=stripThink(text||'').trim().slice(0,60);
+  return s?`replied “${esc(s)}”.`:thought?'is a thinking model: it thought but had no room left to write in this short test. That is fine: Hearth now gives it extra room in chats (Settings → Generation → Room for thinking).':'replied with nothing (empty). Check the model name, or try another model.'};
 const fmtCost=c=>c==null?'':c<0.0001?'<$0.0001':'$'+(c<0.01?c.toFixed(4):c<1?c.toFixed(3):c.toFixed(2));
 async function callApi(api,messages,signal,onText,o={}){
   const st=S.settings,stream=o.stream??st.stream,maxT=o.maxTokens??+st.maxTokens;
@@ -799,7 +802,11 @@ async function callApi(api,messages,signal,onText,o={}){
   if(o.tools)body.tools=o.tools;
   // JSON mode makes most models send valid JSON; proxies or models that reject it are remembered and not asked again
   if(o.json&&!api.noJson)body.response_format={type:'json_object'};
-  if(maxT>0)body.max_tokens=maxT;
+  // Thinking models spend part of max_tokens on hidden reasoning before they write. Models seen thinking get extra room
+  // on top of the reply limit, so the thinking can't use it all up (o.moreRoom: a retry after it did).
+  const thinker=!!st.thinkers?.[api.model];
+  if(maxT>0)body.max_tokens=maxT+(thinker?(+(st.thinkRoom??4000)||0)*(o.moreRoom?2:1):0);
+  if(/openrouter\.ai/i.test(api.url)&&st.thinkEffort&&!api.noEffort)body.reasoning={effort:st.thinkEffort};
   if(+st.topP<1)body.top_p=+st.topP;
   // ask for token counts at the end of a stream; proxies that reject this are remembered and not asked again
   if(stream&&!api.noUsage)body.stream_options={include_usage:true};
@@ -815,6 +822,7 @@ async function callApi(api,messages,signal,onText,o={}){
     if(body.stream_options&&/stream_options|include_usage/i.test(t)){delete body.stream_options;api.noUsage=true;saveSettings();continue}
     if(body.response_format&&/response_format|json_object|json mode|structured output|requested parameters/i.test(t)){delete body.response_format;api.noJson=true;saveSettings();continue}
     if(body.usage&&/\busage\b/i.test(t)){delete body.usage;api.noCost=true;saveSettings();continue}
+    if(body.reasoning&&/reasoning|effort/i.test(t)){delete body.reasoning;api.noEffort=true;saveSettings();continue}
     let m=t;try{const j=JSON.parse(t);m=j.error?.message||j.error||j.message||j.detail||t;if(typeof m!=='string')m=JSON.stringify(m)}catch{}
     const err=new Error(`Proxy error ${res.status}: ${String(m||res.statusText).slice(0,1000)}`);err.status=res.status;throw err;
   }
@@ -823,17 +831,20 @@ async function callApi(api,messages,signal,onText,o={}){
     const r={in:+(u.prompt_tokens??u.input_tokens)||0,out:+(u.completion_tokens??u.output_tokens)||0},c=u.cost??u.total_cost;
     if(c!=null&&isFinite(+c))r.cost=+c;else{const p=priceCost(api,r.in,r.out);if(p!=null){r.cost=p;r.costEst=true}}
     return r};
+  // remember models that think, so later requests give them room (see above)
+  const sawThinking=()=>{if(!thinker&&api.model){(st.thinkers??={})[api.model]=true;saveSettings()}};
   const ct=res.headers.get('content-type')||'';
   if(!stream||!res.body||ct.includes('application/json')){
     const j=await res.json();if(j.error)throw new Error(j.error.message||JSON.stringify(j.error));
     const msg=j.choices?.[0]?.message||{},t=msg.content??j.choices?.[0]?.text??'';if(t)onText(t);
-    return {text:t||'',toolCalls:msg.tool_calls||[],usage:usageOf(j.usage),finish:j.choices?.[0]?.finish_reason||j.stop_reason||''};
+    const thought=String(msg.reasoning||msg.reasoning_content||'').length;if(thought)sawThinking();
+    return {text:t||'',toolCalls:msg.tool_calls||[],usage:usageOf(j.usage),finish:j.choices?.[0]?.finish_reason||j.stop_reason||'',thought};
   }
   let usage=null,finish='';
   // streamed tool calls arrive in pieces; join them by index
   const calls=[],addCalls=tcs=>{for(const tc of tcs||[]){const i=tc.index??calls.length;const c=calls[i]||(calls[i]={id:'',type:'function',function:{name:'',arguments:''}});
     if(tc.id)c.id=tc.id;if(tc.function?.name&&!c.function.name)c.function.name=tc.function.name;if(tc.function?.arguments)c.function.arguments+=tc.function.arguments}};
-  const reader=res.body.getReader(),dec=new TextDecoder();let buf='',out='';
+  const reader=res.body.getReader(),dec=new TextDecoder();let buf='',out='',thought=0;
   for(;;){
     const {done,value}=await reader.read();if(done)break;
     buf+=dec.decode(value,{stream:true});const lines=buf.split('\n');buf=lines.pop();
@@ -841,13 +852,14 @@ async function callApi(api,messages,signal,onText,o={}){
       line=line.trim();if(!line.startsWith('data:'))continue;const d=line.slice(5).trim();if(!d||d==='[DONE]')continue;
       let j;try{j=JSON.parse(d)}catch{continue}
       if(j.error)throw new Error(j.error.message||JSON.stringify(j.error));
-      const t=j.choices?.[0]?.delta?.content??j.choices?.[0]?.text??'';
+      const dl=j.choices?.[0]?.delta||{},t=dl.content??j.choices?.[0]?.text??'',th=dl.reasoning||dl.reasoning_content||'';
+      if(th){if(!thought)sawThinking();thought+=th.length;o.onThink?.(thought)}
       if(t){out+=t;onText(out)}
-      addCalls(j.choices?.[0]?.delta?.tool_calls);
+      addCalls(dl.tool_calls);
       usage=usageOf(j.usage)||usage;finish=j.choices?.[0]?.finish_reason||finish;
     }
   }
-  return {text:out,toolCalls:calls.filter(Boolean).map((c,i)=>({...c,id:c.id||`call_${i}_${uid()}`})),usage,finish};
+  return {text:out,toolCalls:calls.filter(Boolean).map((c,i)=>({...c,id:c.id||`call_${i}_${uid()}`})),usage,finish,thought};
 }
 
 /* ---------- web lookups: the AI can search Wikipedia / Fandom wikis through tools ---------- */
@@ -2493,7 +2505,7 @@ async function vChat(id){
     let failed=null;const lookups=[];
     const onText=t=>{m.swipes[m.sw]=t;updateOne(idx)};
     // tokens for this reply, summed over web-lookup rounds; estimated when the proxy doesn't report them
-    const tok={in:0,out:0,est:false};let sent=messages,finish='',aborted=false;
+    const tok={in:0,out:0,est:false};let sent=messages,finish='',aborted=false,thought=0;
     const count=r=>{if(r?.usage){tok.in+=r.usage.in;tok.out+=r.usage.out;addCost(tok,r.usage)}
       else{const i=est(sent.map(x=>x.content||'').join('\n')),o=est(r?r.text:m.swipes[m.sw]);tok.in+=i;tok.out+=o;tok.est=true;addCost(tok,{cost:priceCost(api,i,o),costEst:true})}};
     try{
@@ -2509,15 +2521,18 @@ async function vChat(id){
         }catch(e){if(e.name==='AbortError')throw e;toast('Research skipped: '+e.message,4500)}
         GEN.status='Writing reply…';updateOne(idx);
       }
-      let tools=S.settings.webSearch&&!researchOn()?webTools(char):null,msgs=messages;
+      let tools=S.settings.webSearch&&!researchOn()?webTools(char):null,msgs=messages,moreRoom=false;
+      const onThink=()=>{if(!/^Thinking/.test(GEN.status)){GEN.status='Thinking…';updateOne(idx)}};
       for(let round=0;;round++){
         const useTools=!!tools&&round<(+S.settings.webRounds||3);let r;sent=msgs;
-        try{r=await callApi(api,msgs,GEN.ctrl.signal,onText,useTools?{tools}:{});count(r);finish=r.finish||''}
+        try{r=await callApi(api,msgs,GEN.ctrl.signal,onText,{...(useTools?{tools}:{}),onThink,moreRoom});count(r);finish=r.finish||'';thought=r.thought||0}
         catch(e){
           // proxies or models without tool support: answer without web lookups
           if(useTools&&round===0&&(e.status===400||e.status===422||/tool|function/i.test(e.message))){tools=null;toast("This model or proxy can't do web lookups. Replying without them.",4500);continue}
           throw e;
         }
+        // the model thought until it ran out of room and wrote nothing: once more with twice the thinking room
+        if(!stripThink(r.text).trim()&&!r.toolCalls.length&&r.thought&&!moreRoom){moreRoom=true;round--;GEN.status='Thinking used all the room. Trying again with more…';updateOne(idx);continue}
         if(!useTools||!r.toolCalls.length)break;
         msgs=[...msgs,{role:'assistant',content:r.text||null,tool_calls:r.toolCalls}];
         m.swipes[m.sw]='';
@@ -2536,7 +2551,9 @@ async function vChat(id){
     m.swipes[m.sw]=out;
     if(!stripThink(out).trim()){
       if(mode==='swipe'){m.swipes.pop();m.sw=m.swipes.length-1;m.lookups?.splice(m.swipes.length);m.usage?.splice(m.swipes.length);m.cut?.splice(m.swipes.length)}else chat.messages.splice(idx,1);
-      if(!failed&&GEN&&!GEN.ctrl.signal.aborted)failed=new Error('The proxy returned an empty reply. Try again, raise max tokens, or check the model name.');
+      if(!failed&&GEN&&!GEN.ctrl.signal.aborted)failed=new Error(thought
+        ?'The model spent all its room thinking and wrote no reply. In Settings → Generation, set Thinking effort to Low or raise Room for thinking.'
+        :'The proxy returned an empty reply. Try again, raise max tokens, or check the model name.');
     }else{chat.vars=ctx.vars;if(lookups.length||m.lookups){(m.lookups??=[])[m.sw]=lookups.length?lookups:null}(m.usage??=[])[m.sw]=tok;
       // stopped by the user or by the max-tokens limit: offer Continue
       const cut=aborted||/length|max_tokens/i.test(finish);if(cut||m.cut)(m.cut??=[])[m.sw]=cut}
@@ -3401,10 +3418,52 @@ function openSceneSetup(chat,char){
     ok:async()=>{chat.storySoFar=$('#ss-s').value.trim();chat.brief=$('#ss-b').value.trim();await saveChat(chat,true);closeSheet();toast('Saved')}
   },{modal:true});
 }
+// When a scene from a world chat is done: a short summary of it goes into the world chat's memory, so the world chat
+// knows what happened. Sending again replaces the earlier summary (if the memory still has it word for word).
+async function openSendBack(chat,char){
+  const o=chat.origin,w=getChar(o.worldId),wc=await loadChat(o.chatId);
+  if(!wc)return toast('The world chat this scene came from was deleted');
+  if(!chat.messages.some(m=>m.role==='user'))return toast('Play the scene first');
+  const again=!!o.sent&&(wc.memory||'').includes(o.sent);
+  openSheet(`<h2>Send back to the world chat</h2><p class="hint">Adds a short summary of this scene to the memory of the world chat${w?` in ${esc(w.name)}`:''}, so the characters there know what happened. Check it and fix anything before adding.${again?' <b>You sent this scene before:</b> the new summary replaces the old one.':''}</p>
+    <textarea id="sb-t" rows="10" placeholder="Writing the summary…"></textarea><div id="sb-msg" class="small" style="margin-top:6px"></div>
+    <button class="btn ghost block" data-act="redo" style="margin-top:8px">${I.regen} Write it again</button>
+    <div class="sheet-foot row"><button class="btn ghost" data-act="close" style="flex:1">Cancel</button><button class="btn" data-act="ok" style="flex:2">Add to its memory</button></div>`,{
+    redo:b=>write(b),
+    ok:async()=>{
+      const t=$('#sb-t').value.trim();if(!t)return toast('The summary is empty');
+      const block=`[${o.when==='past'?'Flashback':'Side scene'} with ${char.name}: ${chat.title}]\n${t}`,mem=wc.memory||'';
+      wc.memory=again?mem.replace(o.sent,block):(mem.trim()?mem.trimEnd()+'\n\n':'')+block;
+      o.sent=block;o.sentAt=chat.messages.length;await saveChat(wc,true);await saveChat(chat,true);closeSheet();toast('Added to the world chat\'s memory')}
+  },{modal:true});
+  const write=async b=>{
+    const msg=$('#sb-msg'),ta=$('#sb-t'),api=activeApi();if(!api){msg.className='small err';msg.textContent='Add an API / proxy in Settings first';return}
+    if(b)b.disabled=true;msg.className='small muted';msg.textContent='Reading the scene…';
+    try{
+      const un=personaFor(chat)?.name||'You',past=o.when==='past';
+      let tr=chat.messages.filter(m=>txt(m).trim()).map(m=>`${m.role==='user'?un:char.name}: ${macro(stripThink(txt(m)),char.name,un)}`).join('\n\n');
+      if(tr.length>24000)tr='…'+tr.slice(-24000);
+      const {text,usage}=await callApi(api,[
+        {role:'system',content:'You sum up a side scene of a roleplay story for the memory of the main story. You are accurate and brief.'},
+        {role:'user',content:`MAIN STORY: a story with several characters${w?` set in ${w.name}`:''}.
+SIDE SCENE: played one-on-one with ${char.name}${past?`, as a past event: ${o.what}`:''}. Messages from ${un} are the user${o.me?`, playing ${o.me}`:''}.
+${chat.brief?.trim()?`SCENE SETUP: ${macro(chat.brief.trim(),char.name,un)}\n`:''}
+THE SCENE:
+${tr}
+
+Write what the main story should now know from this scene, as short past-tense bullet points, oldest first, at most 150 words: ${past?'what really happened back then, who did what, and anything revealed that still matters':'what happened, decisions, promises, secrets, relationship changes, injuries and items'}. Use names, never "you". Reply with only the bullet points.`}
+      ],undefined,()=>{},{stream:false,maxTokens:600});
+      if(usage?.cost)chat.costExtra=(chat.costExtra||0)+usage.cost;
+      const s=stripThink(text||'').trim();if(!s)throw new Error('The AI returned an empty summary. Try again.');
+      if(!ta.isConnected)return;ta.value=s;sheetMeta.snap=sheetSnap(ta.closest('.pn')); // not a change of yours, so closing doesn't ask
+      msg.className='small okc';msg.textContent='Fix anything that\'s wrong, then tap Add to its memory.';
+    }catch(e){if(ta.isConnected){msg.className='small err';msg.textContent=e.message}}finally{if(b)b.disabled=false}};
+  write();
+}
 function chatMenu(chat,char,redraw){
   const spent=chatCost(chat);
   openSheet(`<h2>Chat options</h2>${spent?`<p class="hint" style="margin:-6px 0 10px">This chat so far: <b>${spent.est?'≈ ':''}${fmtCost(spent.cost)}</b></p>`:''}<div class="menu">
-    ${chat.origin?`<button data-act="setup">${I.book} Scene setup (from the world chat)</button>`:''}${char.kind==='world'&&chat.mode!=='image'?`<button data-act="wscene">${I.chat} Play a scene with one character</button>`:''}<button data-act="memory">${I.brain} Chat memory</button>${chat.mode==='image'?'':`<button data-act="scene">${I.user} The scene right now</button>`}${char.kind!=='world'&&S.chars.some(c=>c.kind==='world')?`<button data-act="cworld">${I.book} World for this chat: ${esc(chatWorld(chat,char)?.name||'none')}</button>`:''}<button data-act="persona">${I.user} Persona for this chat</button><button data-act="prompt">${I.edit} Prompt preset</button>
+    ${chat.origin?`<button data-act="setup">${I.book} Scene setup (from the world chat)</button><button data-act="sendback">${I.send} Send back to the world chat${chat.origin.sent?' (sent)':''}</button>`:''}${char.kind==='world'&&chat.mode!=='image'?`<button data-act="wscene">${I.chat} Play a scene with one character</button>`:''}<button data-act="memory">${I.brain} Chat memory</button>${chat.mode==='image'?'':`<button data-act="scene">${I.user} The scene right now</button>`}${char.kind!=='world'&&S.chars.some(c=>c.kind==='world')?`<button data-act="cworld">${I.book} World for this chat: ${esc(chatWorld(chat,char)?.name||'none')}</button>`:''}<button data-act="persona">${I.user} Persona for this chat</button><button data-act="prompt">${I.edit} Prompt preset</button>
     <button data-act="vars">${I.code} Script variables</button><button data-act="lore">${I.tag} Lore used in last reply</button><button data-act="rename">${I.edit} Rename chat</button><button data-act="mvf">${I.folder} Move to folder${folders('chats').find(f=>f.id===chat.folder)?` (now: ${esc(folders('chats').find(f=>f.id===chat.folder).name)})`:''}</button>
     <button data-act="newchat">${I.plus} Start a new chat</button><button data-act="export">${I.exp} Export chat as text</button>
     ${chat.mode==='image'?`<button data-act="srole">${{observer:I.book,pov:I.img}[storyRole(chat)]||I.user} Your role: ${ROLE_LABEL[storyRole(chat)]}</button><button data-act="outline">${I.edit} Story outline</button><button data-act="ihist">${I.copy} All image prompts (${chat.images?.length||0})</button>`
@@ -3479,6 +3538,7 @@ function chatMenu(chat,char,redraw){
     rename:async()=>{const t=prompt('Chat name',chat.title);if(t?.trim()){chat.title=t.trim();chat.titleSet=true;await saveChat(chat);closeSheet()}},
     wscene:()=>openWorldScene(chat,char,chat.messages.length-1),
     setup:()=>openSceneSetup(chat,char),
+    sendback:()=>openSendBack(chat,char),
     newchat:()=>{closeSheet();openStart(char,{personaId:chat.personaId,scenarioId:chat.scenarioId})},
     editchar:()=>go('#/edit/'+char.id),
     export:()=>{const p=personaFor(chat);download(safeName(chat.title)+'.txt',chat.messages.map(m=>`${m.role==='user'?p?.name||'You':char.name}: ${macro(txt(m),char.name,p?.name||'You')}`).join('\n\n'),'text/plain');closeSheet()},
@@ -3541,6 +3601,8 @@ function vSettings(){
     ${rng('temperature','Temperature',0,2,0.05,'Higher is more creative, lower is more focused.')}
     <label class="f">Max new tokens<small>reply length limit (0 = no limit)</small></label><input type="number" data-k="maxTokens" min="0" value="${st.maxTokens}">
     <label class="f">Context size<small>tokens of history sent each time</small></label><input type="number" data-k="contextSize" min="1000" step="1000" value="${st.contextSize}">
+    <label class="f">Thinking effort<small>for models that think before they reply, like GLM 5.3 or DeepSeek. Less thinking is faster and cheaper (OpenRouter)</small></label><select data-k="thinkEffort">${[['','Model default'],['low','Low'],['medium','Medium'],['high','High']].map(([v,l])=>`<option value="${v}" ${(st.thinkEffort||'')===v?'selected':''}>${l}</option>`).join('')}</select>
+    <label class="f">Room for thinking<small>extra tokens on top of Max new tokens for models seen thinking, so the thinking can't use up the reply</small></label><input type="number" data-k="thinkRoom" min="0" step="500" value="${st.thinkRoom??4000}">
     ${rng('topP','Top P',0.05,1,0.05)}
     ${tg('stream','Stream replies','Text appears as it is written. Turn off if your proxy has problems.')}
     ${tg('hideThink','Hide &lt;think&gt; reasoning','Hides reasoning blocks from models like DeepSeek R1.')}
@@ -3656,8 +3718,8 @@ function vSettings(){
           const said=stripThink(text||'').trim().slice(0,40);
           r.innerHTML=/red/i.test(said)?`<span class="okc">Works, and it can see images.</span> ${esc(model)} saw a “${esc(said)}” square.`:`<span class="err">${esc(model)} answered but didn't see the red square</span> (“${esc(said)||'empty'}”). Pick a model that can see images.`;
         }else{
-          const {text}=await callApi(api,[{role:'user',content:'Reply with just the word OK.'}],undefined,()=>{},{stream:false,maxTokens:400});
-          r.innerHTML=`<span class="okc">Works.</span> ${esc(model)} replied “${esc(stripThink(text||'').trim().slice(0,60))||'(empty)'}”.`;
+          const {text,thought}=await callApi(api,[{role:'user',content:'Reply with just the word OK.'}],undefined,()=>{},{stream:false,maxTokens:400});
+          r.innerHTML=`<span class="okc">Works.</span> ${esc(model)} ${testSaid(text,thought)}`;
         }
       }catch(e){r.innerHTML=`<span class="err">${esc(model)}: ${esc(e.message)}</span>`}
       finally{b.disabled=false}},
@@ -3710,7 +3772,7 @@ function editApi(a){
     preset:b=>{$('#au').value=b.dataset.u;showUrl()},
     models:async()=>{const r=$('#ares');r.textContent='Loading models…';r.className='small';try{const k=$('#ak').value.trim();const res=await fetch(modelsUrl($('#au').value),{headers:k?{Authorization:'Bearer '+k}:{}});if(!res.ok)throw new Error('HTTP '+res.status);const j=await res.json();const ids=(j.data||j.models||[]).map(m=>m.id||m.name||m).filter(x=>typeof x==='string').sort();$('#mlist').innerHTML=ids.map(i=>`<option value="${esc(i)}">`).join('');r.innerHTML=`<span class="okc">${ids.length} models found.</span> Tap the model box to pick one.`}catch(e){r.innerHTML=`<span class="err">Could not list models (${esc(e.message)}). Type the model name instead.</span>`}},
     test:async()=>{const r=$('#ares');r.textContent='Testing…';r.className='small';const t={...w,url:$('#au').value,key:$('#ak').value,model:$('#am').value.trim()};
-      try{const {text:out}=await callApi(t,[{role:'user',content:'Reply with just the word OK.'}],undefined,()=>{},{stream:false,maxTokens:30});r.innerHTML=`<span class="okc">Connected!</span> Reply: “${esc(stripThink(out).slice(0,80))||'(empty)'}”`}catch(e){r.innerHTML=`<span class="err">${esc(e.message)}</span>`}},
+      try{const {text:out,thought}=await callApi(t,[{role:'user',content:'Reply with just the word OK.'}],undefined,()=>{},{stream:false,maxTokens:30});r.innerHTML=`<span class="okc">Connected!</span> ${t.model?esc(t.model)+' ':''}${testSaid(out,thought)}`}catch(e){r.innerHTML=`<span class="err">${esc(e.message)}</span>`}},
     save:async()=>{w.name=$('#an').value.trim()||'Connection';w.url=$('#au').value.trim();w.key=$('#ak').value.trim();w.model=$('#am').value.trim();if(!w.url){toast('Enter the proxy URL');return}
       w.priceIn=Math.max(0,+$('#api-pin').value||0);w.priceOut=Math.max(0,+$('#api-pout').value||0);w.priceModel=w.priceIn||w.priceOut?w.model:'';
       const i=st.apis.findIndex(x=>x.id===w.id);if(i<0){st.apis.push(w);st.activeApi=w.id}else st.apis[i]=w;if(!st.activeApi)st.activeApi=w.id;await saveSettings();closeSheet();vSettings()},
