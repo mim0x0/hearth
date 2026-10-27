@@ -181,6 +181,8 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .scenelinks .chip,.fromworld{display:inline-flex;align-items:center;gap:6px;text-decoration:none;font-size:13px;padding:5px 12px}
 .fromworld{width:100%;justify-content:center;margin:2px 0 12px;background:var(--panel2);border:1px solid var(--line);border-radius:12px;color:var(--text);cursor:pointer}
 .fromworld svg{width:16px;height:16px}
+.rolebar{display:flex;align-items:center;gap:10px;margin:-4px 0 12px;padding:8px 12px;border:1px dashed var(--accent);border-radius:12px;font-size:13px;color:var(--muted)}
+.rolebar span{flex:1}
 .msg.flash .bubble{outline:2px solid var(--accent);outline-offset:2px;transition:outline-color 1s}
 .msgwrap{flex:1;min-height:0;display:flex;flex-direction:column}
 .msgwrap .msgs{flex:1}
@@ -352,7 +354,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.11.1',HEARTH_DATE='2026-10-27';
+const HEARTH_VERSION='1.12.0',HEARTH_DATE='2026-10-27';
 const DEFAULTS={apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -426,7 +428,7 @@ async function updateScene(chat,char,o={}){
   try{
     const {text,usage}=await callApi(api,[
       {role:'system',content:'You keep track of the physical state of a roleplay scene. You are exact and brief.'},
-      {role:'user',content:`${char.kind==='world'?`A story set in ${char.name}. Main characters: ${cast.join(', ')}.`:`Characters: ${char.name} and ${un}.`} ${un} is the user.
+      {role:'user',content:`${char.kind==='world'?`A story set in ${char.name}. Main characters: ${cast.join(', ')}.`:`Characters: ${char.name} and ${un}.`} ${userAway(chat)?`${un} is the user, who is not in the scene and only directs it: never list ${un} as present.`:`${un} is the user.`}
 
 CURRENT STATE (may be out of date):
 ${base?.trim()||'(none yet)'}
@@ -1101,7 +1103,7 @@ function buildPrompt(chat,char,persona,history){
     for(const r of refs){const room=Math.floor(left*3.6);if(room<200)break;let t=r.text.trim();if(t.length>room)t=t.slice(0,room)+'…';left-=est(t);parts.push(`[${r.title||r.url||'Notes'}]\n${t}`)}
     sys.push(`Reference material about ${cn} (canon facts; stay consistent with it):\n${parts.join('\n\n')}`);
   }
-  if(ctx.user.persona.trim())sys.push(`${userName}'s Persona: ${ctx.user.persona.trim()}`);
+  if(ctx.user.persona.trim()&&!userAway(chat))sys.push(`${userName}'s Persona: ${ctx.user.persona.trim()}`);
   if(lore.after.length)sys.push(lore.after.join('\n'));
   if(ctx.character.example_dialogs.trim())sys.push(`Example dialogue (style reference only):\n${ctx.character.example_dialogs.trim()}`);
   // a scene started from a world chat: what happened there
@@ -1121,6 +1123,7 @@ ${chat.storySoFar.trim()}`);
   for(const d of [...lore.depth].reverse())hist.splice(Math.max(0,hist.length-d.depth),0,{role:'system',content:mac(d.text)});
   const messages=[{role:'system',content:sysText},...hist];
   if(scene)messages.push({role:'system',content:scene});
+  const rn=roleNote(chat,userName);if(rn)messages.push({role:'system',content:rn});
   if(reminder)messages.push({role:'system',content:reminder});
   if(note)messages.push({role:'system',content:note});
   return {messages,ctx,errs,lore:lore.names};
@@ -2587,6 +2590,8 @@ async function vChat(id){
   const idxOf=b=>+b.closest('.msg,.rd-sec').dataset.i;
   H={
     toworld:()=>{S.ui.jumpTo=chat.origin.msgId;go('#/chat/'+chat.origin.chatId)},
+    join:async()=>{await setSceneRole(chat,chat.origin.me?'other':'me');draw();toast("You're in the scene now. Write how you arrive.");$('#inp')?.focus()},
+    srolex:()=>openSceneRole(chat,char,draw),
     send:async()=>{
       if(GEN&&GEN.chatId===chat.id){GEN.ctrl.abort();return}
       const inp=$('#inp'),t=inp.value.trim();
@@ -2736,7 +2741,7 @@ const LOOK_WORDS=/^(silver|white|black|brown|blonde|blond|red|blue|green|purple|
 const lookWords=c=>new Set(c?.imageTags?tagsOf(c.imageTags).flatMap(wordsOf).map(stemW):wordsOf(c?.personality||'').filter(w=>LOOK_WORDS.test(w)).map(stemW));
 // other members of the character's world who came up in the chat lately (their looks are needed if they're drawn)
 const worldCast=(chat,char)=>{const w=chatWorld(chat,char);return w?mentionedMembers(w,char,(chat?.messages||[]).slice(-6).map(txt)):[]};
-const castOf=(chat,char)=>[...(char.kind==='world'?membersOf(char):[char,...worldCast(chat,char)]),personaFor(chat)].filter(c=>c&&(c.imageTags||c!==personaFor(chat)));
+const castOf=(chat,char)=>[...(char.kind==='world'?membersOf(char):[char,...worldCast(chat,char)]),userAway(chat)?null:personaFor(chat)].filter(c=>c&&(c.imageTags||c!==personaFor(chat)));
 function fixUndesired(p,cast=[]){
   const first=n=>n.toLowerCase().split(/\s+/)[0];
   const byName=n=>n&&cast.find(c=>c.name.toLowerCase()===n.toLowerCase()||first(c.name)===first(n));
@@ -3390,7 +3395,7 @@ function sceneLinksHTML(chat,m){
 }
 function fromWorldHTML(chat){
   const o=chat.origin,x=o&&S.chatIndex.find(x=>x.id===o.chatId);
-  return x?`<button class="fromworld" data-act="toworld">${I.back} From the world chat: ${esc(x.title)}</button>`:'';
+  return (x?`<button class="fromworld" data-act="toworld">${I.back} From the world chat: ${esc(x.title)}</button>`:'')+roleBarHTML(chat);
 }
 // opening a chat at a message (S.ui.jumpTo, a message id) instead of at the bottom; it flashes briefly
 function jumpToMsg(chat){
@@ -3403,6 +3408,40 @@ async function linkScene(chat){
   o.msgId??=wc.messages[Math.min(o.upto,wc.messages.length-1)]?.id;
   if(!(wc.scenes||[]).some(s=>s.id===chat.id)){(wc.scenes??=[]).push({id:chat.id,msgId:o.msgId});await saveChat(wc,true);await saveChat(chat,true)}
 }
+// The user's place in a scene from a world chat: in it (as their persona, or someone they name), not there yet (their
+// messages direct the story until they join), or directing from outside the whole time.
+const SCENE_ROLES={me:['Myself','You play yourself, as in the world chat.'],other:['Someone else','You play someone else who is there.'],
+  later:['Not there yet','The scene starts without you. Your messages say what happens next until you join it.'],
+  direct:['Just directing','You stay out of the story: your messages say what happens, and the AI plays everyone.']};
+const sceneRole=chat=>chat?.origin?(chat.origin.role||(chat.origin.me?'other':'me')):null;
+const userAway=chat=>['later','direct'].includes(sceneRole(chat)); // the user isn't a character in the scene (yet)
+function roleNote(chat,un){
+  const r=sceneRole(chat),o=chat.origin;
+  if(r==='direct')return `[${un} is not a character in this story but its director. Each of ${un}'s messages says what should happen next: carry it out by writing the scene, playing every character in it. Never write ${un} into the story; no one talks to or about ${un}.]`;
+  if(r==='later')return `[${un} is not in this scene yet. Each of ${un}'s messages is a direction for what happens next: carry it out by writing the scene with the characters who are there. No one notices, talks to or mentions ${un}.]`;
+  // joined after giving directions: the earlier messages weren't things the user did
+  if(o?.joinedAt!=null&&chat.messages.slice(0,o.joinedAt).some(m=>m.role==='user')){const m=chat.messages[o.joinedAt];
+    return `[${un} was not in this scene at first: ${un}'s messages before ${m?`"${txt(m).slice(0,80)}"`:'now'} were directions for the story, not things ${un} did. ${m?'From that message on':'Now'}, ${un} is in the scene${o.me?` as ${o.me}`:''}.]`}
+  return '';
+}
+function roleBarHTML(chat){
+  const r=sceneRole(chat);
+  return r==='later'?`<div class="rolebar"><span>You're not in this scene yet. Your messages say what happens next.</span><button class="btn sm" data-act="join">Join the scene</button></div>`
+    :r==='direct'?`<div class="rolebar"><span>You're directing this scene: your messages say what happens.</span><button class="btn ghost sm" data-act="srolex">Change</button></div>`:'';
+}
+// switching the user's place in a scene; joining marks where the user's messages stop being directions
+async function setSceneRole(chat,r){
+  const o=chat.origin,was=userAway(chat);o.role=r;
+  if(was&&!userAway(chat))o.joinedAt=chat.messages.length;else if(!was&&userAway(chat))delete o.joinedAt;
+  await saveChat(chat,true);
+}
+function openSceneRole(chat,char,redraw){
+  const cur=sceneRole(chat),un=personaFor(chat)?.name||'You';
+  openSheet(`<h2>You in this scene</h2><div class="list">${Object.entries(SCENE_ROLES).map(([v,[l,h]])=>`<div class="li ${cur===v?'on':''}" data-act="pick" data-v="${v}"><div class="lt"><b>${v==='me'?`${l} (${esc(un)})`:v==='other'?`${l}${chat.origin.me?`: ${esc(chat.origin.me)}`:''}`:l}</b><span>${esc(h)}</span></div></div>`).join('')}</div>`,{
+    pick:async b=>{let v=b.dataset.v;
+      if(v==='other'){const who=prompt('Who do you play?',chat.origin.me||'');if(!who?.trim())return;chat.origin.me=who.trim()}else if(v==='me')chat.origin.me='';
+      await setSceneRole(chat,v);closeSheet();redraw();toast(userAway(chat)?'Your messages now direct the story':"You're in the scene now. Write how you arrive.")}});
+}
 // A one-on-one chat with one character from a world chat, knowing what happened there up to a message: to play out in
 // full a past event the world chat only summed up, or a private moment that branches off. It lives on the character's page.
 function openWorldScene(wc,world,upto){
@@ -3410,18 +3449,21 @@ function openWorldScene(wc,world,upto){
   if(!activeApi())return toast('Add an API / proxy in Settings first');
   const un=personaFor(wc)?.name||'You',msgs=wc.messages.slice(0,upto+1).filter(m=>txt(m).trim());
   const recent=msgs.slice(-3).map(txt).join(' ').toLowerCase();
-  let who=(members.find(m=>recent.includes(m.name.split(' ')[0].toLowerCase()))||members[0]).id,when='past';
+  let who=(members.find(m=>recent.includes(m.name.split(' ')[0].toLowerCase()))||members[0]).id,when='past',role='me';
   openSheet(`<h2>Play a scene with one character</h2><p class="hint">Starts a chat with just one character that knows everything that happened in this world chat${upto<wc.messages.length-1?' up to the message you picked':''}. Good for playing out in full something the world chat only summed up. It's saved with the character's chats.</p>
     <label class="f">With</label><div class="chips">${members.map(m=>`<button class="chip mem ${m.id===who?'on':''}" data-act="who" data-id="${m.id}"><img src="${esc(avatar(m))}" alt="">${esc(m.name)}</button>`).join('')}</div>
     <label class="f">When</label><div class="chips"><button class="chip on" data-act="when" data-v="past">A past event</button><button class="chip" data-act="when" data-v="now">Right now, from here</button></div>
     <label class="f">What is the scene?</label><textarea id="ws-what" rows="3" placeholder="e.g. The night they escaped Haven, the way it really happened"></textarea>
-    <label class="f">Who are you in it? <span class="muted">(optional)</span></label><input id="ws-me" placeholder="Empty = ${esc(un)}, as in the world chat">
+    <label class="f">You in this scene</label><div class="chips">${Object.entries(SCENE_ROLES).map(([v,[l]])=>`<button class="chip ${v==='me'?'on':''}" data-act="role" data-v="${v}">${v==='me'?`${l} (${esc(un)})`:l}</button>`).join('')}</div>
+    <input id="ws-me" placeholder="Who? e.g. Fern's old friend Kai" style="margin-top:8px" hidden><div class="hint" id="ws-rh">${SCENE_ROLES.me[1]}</div>
     <div id="ws-msg" class="small" style="margin-top:6px"></div>
     <div class="sheet-foot row"><button class="btn ghost" data-act="close" style="flex:1">Cancel</button><button class="btn" data-act="go" style="flex:2">${I.chat} Start the scene</button></div>`,{
     who:b=>{who=b.dataset.id;$$('#sheet [data-act=who]').forEach(x=>x.classList.toggle('on',x===b))},
     when:b=>{when=b.dataset.v;$$('#sheet [data-act=when]').forEach(x=>x.classList.toggle('on',x===b))},
+    role:b=>{role=b.dataset.v;$$('#sheet [data-act=role]').forEach(x=>x.classList.toggle('on',x===b));$('#ws-me').hidden=role!=='other';$('#ws-rh').textContent=SCENE_ROLES[role][1];if(role==='other')$('#ws-me').focus()},
     go:async b=>{
-      const c=getChar(who),what=$('#ws-what').value.trim(),me=$('#ws-me').value.trim(),msg=$('#ws-msg');
+      const c=getChar(who),what=$('#ws-what').value.trim(),me=role==='other'?$('#ws-me').value.trim():'',msg=$('#ws-msg'),away=role==='later'||role==='direct';
+      if(role==='other'&&!me){msg.className='small err';msg.textContent='Say who you play, e.g. "Fern\'s old friend Kai".';$('#ws-me').focus();return}
       if(when==='past'&&!what){msg.className='small err';msg.textContent='Say which past event, e.g. "the night they escaped Haven".';$('#ws-what').focus();return}
       b.disabled=true;msg.className='small muted';msg.textContent=`Reading the world chat and setting up the scene with ${c.name}…`;
       try{
@@ -3442,18 +3484,18 @@ THE WORLD CHAT SO FAR:
 ${tr||'(nothing yet)'}
 
 THE NEW SCENE: ${when==='past'?`a past event, played out in full: ${what}. Everything the world chat said about it is canon; fill in the rest so it fits.`:`it continues from the end of the world chat, as a one-on-one scene with ${c.name}${what?`: ${what}`:''}.`}
-THE USER PLAYS: ${me?`${me} (use {{user}} for this person)`:`themselves, ${un} ({{user}})${when==='past'?'. If they were not part of the event, make them someone who was there, and say who in the scenario':''}`}.
+THE USER'S PART: ${role==='direct'?`directs the story from outside and is never a character in it. Leave {{user}} out of the scenario and the opening.`:role==='later'?`${un} ({{user}}) is NOT in the scene when it starts and may arrive later. Leave {{user}} out of the scenario's starting situation and out of the opening.`:me?`plays ${me} (use {{user}} for this person).`:`plays themselves, ${un} ({{user}})${when==='past'?'. If they were not part of the event, make them someone who was there, and say who in the scenario':''}.`}
 
 Reply with JSON:
 {"title":"a short title for the new chat, at most 8 words",
 "story_so_far":"what happened in the world chat that matters for this scene, as short past-tense bullet points; keep names, places and who did what exactly as the world chat said. At most 250 words.",
-"scenario":"the setup for the AI that plays ${c.name}: when and where the scene happens${when==='past'?' (and how long before the world chat)':''}, who is there, what {{user}} is to ${c.name} in it, what each knows and wants, and the situation it starts in. 3-6 sentences. Use {{user}} for the user's character.",
-"opening":"the first message of the scene from ${c.name}'s side, in the same style as the world chat (actions in *asterisks*, speech in quotes), 80-200 words, ending where {{user}} can respond. Never write {{user}}'s words or actions."}`,undefined,2500);
+"scenario":"the setup for the AI that plays ${c.name}: when and where the scene happens${when==='past'?' (and how long before the world chat)':''}, who is there, ${away?'':`what {{user}} is to ${c.name} in it, `}what each knows and wants, and the situation it starts in. 3-6 sentences.${away?'':" Use {{user}} for the user's character."}",
+"opening":"the first message of the scene from ${c.name}'s side, in the same style as the world chat (actions in *asterisks*, speech in quotes), 80-200 words, ${away?'ending at a moment where the story can go on. Never mention or address {{user}}.':"ending where {{user}} can respond. Never write {{user}}'s words or actions."}"}`,undefined,2500);
         const scs=scenariosOf(c),sc=scs[0],opening=String(j.opening||'').trim();
         const chat={id:uid(),charId:c.id,scenarioId:sc.id,promptId:sc.promptId||'',personaId:wc.personaId||personaFor(wc)?.id,worldId:world.id,
           title:String(j.title||'').trim()||`${c.name} · ${what||'a scene'}`.slice(0,80),titleSet:true,created:Date.now(),memory:'',vars:{},
           brief:String(j.scenario||'').trim(),storySoFar:String(j.story_so_far||'').trim(),costExtra:usage?.cost||0,
-          origin:{chatId:wc.id,worldId:world.id,upto,msgId:wc.messages[upto]?.id,when,what,me},
+          origin:{chatId:wc.id,worldId:world.id,upto,msgId:wc.messages[upto]?.id,when,what,me,role},
           messages:opening?[{id:uid(),role:'assistant',greeting:true,swipes:[opening],sw:0,time:Date.now()}]:[]};
         (wc.scenes??=[]).push({id:chat.id,msgId:chat.origin.msgId});await saveChat(wc,true);
         c.lastUsed=Date.now();await saveChars();await saveChat(chat);closeSheet();go('#/chat/'+chat.id);toast(`Scene with ${c.name} started. ⋮ → Scene setup shows what it knows.`);
@@ -3500,7 +3542,7 @@ async function openSendBack(chat,char){
       const {text,usage}=await callApi(api,[
         {role:'system',content:'You sum up a side scene of a roleplay story for the memory of the main story. You are accurate and brief.'},
         {role:'user',content:`MAIN STORY: a story with several characters${w?` set in ${w.name}`:''}.
-SIDE SCENE: played one-on-one with ${char.name}${past?`, as a past event: ${o.what}`:''}. Messages from ${un} are the user${o.me?`, playing ${o.me}`:''}.
+SIDE SCENE: played one-on-one with ${char.name}${past?`, as a past event: ${o.what}`:''}. ${{direct:`Messages from ${un} are directions from the user, who was not in the scene.`,later:`Messages from ${un} are directions from the user, who was not in the scene.`}[sceneRole(chat)]||`Messages from ${un} are the user${o.me?`, playing ${o.me}`:''}${o.joinedAt!=null?`; until message ${o.joinedAt+1} they were directions, then the user joined the scene`:''}.`}
 ${chat.brief?.trim()?`SCENE SETUP: ${macro(chat.brief.trim(),char.name,un)}\n`:''}
 THE SCENE:
 ${tr}
@@ -3517,7 +3559,7 @@ Write what the main story should now know from this scene, as short past-tense b
 function chatMenu(chat,char,redraw){
   const spent=chatCost(chat);
   openSheet(`<h2>Chat options</h2>${spent?`<p class="hint" style="margin:-6px 0 10px">This chat so far: <b>${spent.est?'≈ ':''}${fmtCost(spent.cost)}</b></p>`:''}<div class="menu">
-    ${chat.origin?`<button data-act="setup">${I.book} Scene setup (from the world chat)</button><button data-act="sendback">${I.send} Send back to the world chat${chat.origin.sent?' (sent)':''}</button>`:''}${char.kind==='world'&&chat.mode!=='image'?`<button data-act="wscene">${I.chat} Play a scene with one character</button>${liveScenes(chat).length?`<button data-act="scenes">${I.book} Scenes from this chat (${liveScenes(chat).length})</button>`:''}`:''}<button data-act="memory">${I.brain} Chat memory</button>${chat.mode==='image'?'':`<button data-act="scene">${I.user} The scene right now</button>`}${char.kind!=='world'&&S.chars.some(c=>c.kind==='world')?`<button data-act="cworld">${I.book} World for this chat: ${esc(chatWorld(chat,char)?.name||'none')}</button>`:''}<button data-act="persona">${I.user} Persona for this chat</button><button data-act="prompt">${I.edit} Prompt preset</button>
+    ${chat.origin?`<button data-act="setup">${I.book} Scene setup (from the world chat)</button><button data-act="srolesc">${I.user} You in this scene: ${SCENE_ROLES[sceneRole(chat)][0]}</button><button data-act="sendback">${I.send} Send back to the world chat${chat.origin.sent?' (sent)':''}</button>`:''}${char.kind==='world'&&chat.mode!=='image'?`<button data-act="wscene">${I.chat} Play a scene with one character</button>${liveScenes(chat).length?`<button data-act="scenes">${I.book} Scenes from this chat (${liveScenes(chat).length})</button>`:''}`:''}<button data-act="memory">${I.brain} Chat memory</button>${chat.mode==='image'?'':`<button data-act="scene">${I.user} The scene right now</button>`}${char.kind!=='world'&&S.chars.some(c=>c.kind==='world')?`<button data-act="cworld">${I.book} World for this chat: ${esc(chatWorld(chat,char)?.name||'none')}</button>`:''}<button data-act="persona">${I.user} Persona for this chat</button><button data-act="prompt">${I.edit} Prompt preset</button>
     <button data-act="vars">${I.code} Script variables</button><button data-act="lore">${I.tag} Lore used in last reply</button><button data-act="rename">${I.edit} Rename chat</button><button data-act="mvf">${I.folder} Move to folder${folders('chats').find(f=>f.id===chat.folder)?` (now: ${esc(folders('chats').find(f=>f.id===chat.folder).name)})`:''}</button>
     <button data-act="newchat">${I.plus} Start a new chat</button><button data-act="export">${I.exp} Export chat as text</button>
     ${chat.mode==='image'?`<button data-act="srole">${{observer:I.book,pov:I.img}[storyRole(chat)]||I.user} Your role: ${ROLE_LABEL[storyRole(chat)]}</button><button data-act="outline">${I.edit} Story outline</button><button data-act="ihist">${I.copy} All image prompts (${chat.images?.length||0})</button>`
@@ -3594,6 +3636,7 @@ function chatMenu(chat,char,redraw){
     scenes:()=>openScenesList(chat),
     setup:()=>openSceneSetup(chat,char),
     sendback:()=>openSendBack(chat,char),
+    srolesc:()=>openSceneRole(chat,char,redraw),
     newchat:()=>{closeSheet();openStart(char,{personaId:chat.personaId,scenarioId:chat.scenarioId})},
     editchar:()=>go('#/edit/'+char.id),
     export:()=>{const p=personaFor(chat);download(safeName(chat.title)+'.txt',chat.messages.map(m=>`${m.role==='user'?p?.name||'You':char.name}: ${macro(txt(m),char.name,p?.name||'You')}`).join('\n\n'),'text/plain');closeSheet()},
