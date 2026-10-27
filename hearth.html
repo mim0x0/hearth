@@ -176,6 +176,8 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .okc{color:var(--ok)}
 .lookups{font-size:12px;color:var(--muted);margin-top:5px}
 .scenelinks{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.msg.hasscene .bubble{border-left:3px solid var(--accent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 35%,transparent)}
+.msg.hasscene .nm::after{content:'  ◆ scene';color:var(--accent);font-weight:400;font-size:11px}
 .scenelinks .chip,.fromworld{display:inline-flex;align-items:center;gap:6px;text-decoration:none;font-size:13px;padding:5px 12px}
 .fromworld{width:100%;justify-content:center;margin:2px 0 12px;background:var(--panel2);border:1px solid var(--line);border-radius:12px;color:var(--text);cursor:pointer}
 .fromworld svg{width:16px;height:16px}
@@ -350,8 +352,8 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.10.0',HEARTH_DATE='2026-10-27';
-const DEFAULTS={apis:[],activeApi:null,temperature:0.9,maxTokens:600,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
+const HEARTH_VERSION='1.11.0',HEARTH_DATE='2026-10-27';
+const DEFAULTS={apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
 const saveChars=()=>store.set('chars',S.chars);
@@ -2445,7 +2447,7 @@ async function vChat(id){
     if(!u)for(const mb of membersOf(char))body=body.replace(new RegExp(`<strong>(${escRx(esc(mb.name))}):?</strong>:?`,'g'),`<img class="spk" src="${esc(avatar(mb))}" alt=""><strong>$1:</strong>`);
     const canRegen=!u&&isLast&&!m.greeting;
     const sw=!u&&isLast&&(m.swipes.length>1||!m.greeting)?`<div class="swipes"><button data-act="swl" ${m.sw===0||GEN?'disabled':''}>‹</button><span>${m.sw+1}/${m.swipes.length}</span><button data-act="swr" ${GEN||(m.greeting&&m.sw>=m.swipes.length-1)?'disabled':''}>›</button></div>`:'';
-    return `<div class="msg ${u?'user':'bot'}" data-i="${i}"><img class="av" data-act="zoom" src="${esc(u?avatar(who):chatAvatar(chat,char,m))}" alt=""><div class="mw"><div class="nm">${esc(name)}</div><div class="bubble">${body}</div>${generating||!S.settings.showTokens?'':tokLine(m)}${lk?`<div class="lookups">Looked up: ${lk.map(esc).join(' · ')}</div>`:''}${sceneLinksHTML(chat,m)}
+    return `<div class="msg ${u?'user':'bot'}${hasScene(chat,m)?' hasscene':''}" data-i="${i}"><img class="av" data-act="zoom" src="${esc(u?avatar(who):chatAvatar(chat,char,m))}" alt=""><div class="mw"><div class="nm">${esc(name)}</div><div class="bubble">${body}</div>${generating||!S.settings.showTokens?'':tokLine(m)}${lk?`<div class="lookups">Looked up: ${lk.map(esc).join(' · ')}</div>`:''}${sceneLinksHTML(chat,m)}
       ${story&&!u&&!generating&&m.imgs?.[m.sw]?`${m.pics?.[m.sw]?.length?thumbs(m.pics[m.sw],'sview'):''}<div class="row" style="margin-top:6px"><button class="btn ghost sm" data-act="attach">${I.img} Attach picture</button></div>${m.story?.[m.sw]?`<div class="storytxt">${paras(macro(m.story[m.sw],char.name,p?.name||'You'))}</div>`:''}${storyCardsHTML(m.imgs[m.sw],i)}`:''}
       ${story&&!u&&isLast&&!generating&&m.next?.[m.sw]?`<div class="nextsug"><div><b>Next:</b> ${esc(m.next[m.sw])}</div><button class="btn sm" data-act="usenext" ${GEN?'disabled':''}>Use this ›</button></div>`:''}
       ${!story&&!u&&isLast&&!generating&&m.cut?.[m.sw]?`<div class="controw"><button class="btn ghost sm" data-act="cont" ${GEN?'disabled':''}>Continue ›</button><span>This reply was cut off.</span></div>`:''}
@@ -2494,21 +2496,28 @@ async function vChat(id){
     if(curChat===chat){renderMsgs(true);updateSend()}
     if(failed)openSheet(`<h2 class="err">Couldn't build the prompts</h2><div class="box pre small">${esc(failed.message)}</div><br><button class="btn ghost block" data-act="close">Close</button>`);
   }
-  async function generate(mode){
+  // left: how many more times a reply cut off by the token limit is continued automatically (Settings → Generation)
+  async function generate(mode,left=+(S.settings.autoContinue??2)||0){
     if(story)return storyGenerate(mode==='continue'?'new':mode);
     const api=activeApi();if(!api){toast('Add an API / proxy in Settings first',4000);return}
     if(GEN){toast('Already generating a reply');return}
-    let idx,m;
-    if(mode==='swipe'){idx=chat.messages.length-1;m=chat.messages[idx];m.swipes.push('');m.sw=m.swipes.length-1}
+    let idx,m,base=null;
+    // continue: the rest is added onto the last reply, so a long reply reads as one message
+    const lastM=chat.messages.at(-1);if(mode==='continue'&&!(lastM?.role==='assistant'&&txt(lastM).trim()))mode='new';
+    if(mode==='continue'){idx=chat.messages.length-1;m=lastM;base=m.swipes[m.sw]}
+    else if(mode==='swipe'){idx=chat.messages.length-1;m=chat.messages[idx];m.swipes.push('');m.sw=m.swipes.length-1}
     else{m={id:uid(),role:'assistant',swipes:[''],sw:0,time:Date.now(),av:char.avatarMode==='reply'?pickAv(char):undefined};chat.messages.push(m);idx=chat.messages.length-1}
-    const {messages,ctx,errs,lore}=buildPrompt(chat,char,personaFor(chat),chat.messages.slice(0,idx));
-    // continue: the cut-off reply is already the last message in the history; ask for the rest as a new message
+    const {messages,ctx,errs,lore}=buildPrompt(chat,char,personaFor(chat),chat.messages.slice(0,base!=null?idx+1:idx));
+    // continue: the cut-off reply is the last message in the history; the model writes the rest, which is joined onto it
     if(mode==='continue')messages.push({role:'system',content:'[Your last message was cut off. Continue it seamlessly from the exact point where it stopped, even mid-sentence. Do not repeat or summarize anything already written, do not restart the scene, and do not add a title or preface.]'});
     lastLore.set(chat.id,lore);
     if(errs.length)toast('Script error — '+errs[0],5000);
     GEN={chatId:chat.id,idx,ctrl:new AbortController(),status:''};renderMsgs(true);updateSend();
     let failed=null;const lookups=[];
-    const onText=t=>{m.swipes[m.sw]=t;updateOne(idx)};
+    // the continuation picks up mid-sentence (no gap), after a word (a space) or after a finished sentence (a new paragraph)
+    const join=t=>{if(base==null)return t;const b=base.trimEnd();
+      return b+(!t||/^[\s.,!?;:…'"’”)\]—-]/.test(t)||/[\s(\[“—-]$/.test(base)?'':/[.!?…"”*)]$/.test(b)?'\n\n':' ')+t};
+    const onText=t=>{m.swipes[m.sw]=join(t);updateOne(idx)};
     // tokens for this reply, summed over web-lookup rounds; estimated when the proxy doesn't report them
     const tok={in:0,out:0,est:false};let sent=messages,finish='',aborted=false,thought=0;
     const count=r=>{if(r?.usage){tok.in+=r.usage.in;tok.out+=r.usage.out;addCost(tok,r.usage)}
@@ -2552,18 +2561,24 @@ async function vChat(id){
     }
     catch(e){if(e.name!=='AbortError')failed=e;else{count(null);aborted=true}}
     let out=m.swipes[m.sw]||'';
+    if(base!=null){out=out.slice(base.trimEnd().length);if(!stripThink(out).trim())out=''} // only the new part
     out=out.replace(new RegExp('^\\s*'+char.name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+':\\s*'),'').trimEnd();
-    m.swipes[m.sw]=out;
-    if(!stripThink(out).trim()){
+    m.swipes[m.sw]=base!=null?(out?join(out.trimStart()):base):out;
+    if(base!=null&&!out){if(!failed&&GEN&&!GEN.ctrl.signal.aborted)failed=new Error('The model wrote nothing more. Try again, or regenerate the reply.')}
+    else if(!stripThink(out).trim()){
       if(mode==='swipe'){m.swipes.pop();m.sw=m.swipes.length-1;m.lookups?.splice(m.swipes.length);m.usage?.splice(m.swipes.length);m.cut?.splice(m.swipes.length)}else chat.messages.splice(idx,1);
       if(!failed&&GEN&&!GEN.ctrl.signal.aborted)failed=new Error(thought
         ?'The model spent all its room thinking and wrote no reply. In Settings → Generation, set Thinking effort to Low or raise Room for thinking.'
         :'The proxy returned an empty reply. Try again, raise max tokens, or check the model name.');
-    }else{chat.vars=ctx.vars;if(lookups.length||m.lookups){(m.lookups??=[])[m.sw]=lookups.length?lookups:null}(m.usage??=[])[m.sw]=tok;
+    }else{chat.vars=ctx.vars;if(lookups.length){(m.lookups??=[])[m.sw]=[...(base!=null&&m.lookups?.[m.sw]||[]),...lookups]}else if(base==null&&m.lookups)m.lookups[m.sw]=null;
+      // a continued reply adds its tokens and cost to the reply's own
+      const pu=base!=null&&m.usage?.[m.sw];(m.usage??=[])[m.sw]=pu?addCost({in:pu.in+tok.in,out:pu.out+tok.out,est:pu.est||tok.est,cost:pu.cost,costEst:pu.costEst},tok):tok;
       // stopped by the user or by the max-tokens limit: offer Continue
       const cut=aborted||/length|max_tokens/i.test(finish);if(cut||m.cut)(m.cut??=[])[m.sw]=cut}
+    const more=!failed&&!aborted&&left>0&&/length|max_tokens/i.test(finish)&&m.cut?.[m.sw];
     GEN=null;await saveChat(chat);
     if(curChat===chat){renderMsgs();const el=msgsEl();if(el)el.scrollTop=el.scrollHeight;updateSend()}
+    if(more)return generate('continue',left-1); // scene and memory update after the last part
     if(!failed&&S.settings.trackScene!==false)updateScene(chat,char,{redo:mode==='swipe'}).then(s=>{if(s&&curChat===chat&&chat.messages[idx]===m)updateOne(idx)}).catch(e=>console.warn('Scene update failed:',e));
     if(!failed&&S.settings.autoMemory&&chat.messages.length-Math.min(chat.memoryAt||0,chat.messages.length)>=(+S.settings.memoryEvery||20))
       updateMemory(chat,char).then(m=>{if(m)toast('Chat memory updated')}).catch(e=>console.warn('Memory update failed:',e));
@@ -3358,8 +3373,19 @@ function chatCost(chat){
 }
 // Scenes started from a world chat link both ways: the world chat shows each scene under the message it started from,
 // and the scene shows a way back to that message.
+const liveScenes=chat=>(chat.scenes||[]).filter(s=>S.chatIndex.some(x=>x.id===s.id));
+const hasScene=(chat,m)=>liveScenes(chat).some(s=>s.msgId===m.id);
+// every scene of a world chat, in story order, to open or to find its message
+function openScenesList(chat){
+  const ls=liveScenes(chat).map(s=>({s,x:S.chatIndex.find(x=>x.id===s.id),i:chat.messages.findIndex(m=>m.id===s.msgId)})).sort((a,b)=>(a.i<0?1e9:a.i)-(b.i<0?1e9:b.i));
+  const un=personaFor(chat)?.name||'You';
+  openSheet(`<h2>Scenes from this chat</h2><p class="hint">One-on-one scenes started from messages here. Tap one to open it, or Find to see where it starts.</p><div class="list">${ls.map(({s,x,i})=>{const c=getChar(x.charId),m=chat.messages[i];
+    return `<div class="li" data-act="open" data-id="${x.id}"><img src="${esc(avatar(c))}" alt=""><div class="lt"><b>${esc(c?.name||'')}: ${esc(x.title)}</b><span>${m?`Message ${i+1}: ${esc(macro(stripThink(txt(m)),getChar(chat.charId)?.name||'',un).replace(/[*_#>`~]/g,'').slice(0,90))}`:'Its message was deleted'}</span></div>${m?`<button class="btn ghost sm" data-act="find" data-m="${esc(s.msgId)}">Find</button>`:''}</div>`}).join('')}</div>`,{
+    open:b=>{closeSheet();go('#/chat/'+b.dataset.id)},
+    find:b=>{closeSheet();S.ui.jumpTo=b.dataset.m;jumpToMsg(chat)}});
+}
 function sceneLinksHTML(chat,m){
-  const ls=(chat.scenes||[]).filter(s=>s.msgId===m.id).map(s=>S.chatIndex.find(x=>x.id===s.id)).filter(Boolean);
+  const ls=liveScenes(chat).filter(s=>s.msgId===m.id).map(s=>S.chatIndex.find(x=>x.id===s.id));
   return ls.length?`<div class="scenelinks">${ls.map(x=>`<a class="chip" href="#/chat/${x.id}">${I.chat} ${esc(getChar(x.charId)?.name||'')}: ${esc(x.title)}</a>`).join('')}</div>`:'';
 }
 function fromWorldHTML(chat){
@@ -3491,7 +3517,7 @@ Write what the main story should now know from this scene, as short past-tense b
 function chatMenu(chat,char,redraw){
   const spent=chatCost(chat);
   openSheet(`<h2>Chat options</h2>${spent?`<p class="hint" style="margin:-6px 0 10px">This chat so far: <b>${spent.est?'≈ ':''}${fmtCost(spent.cost)}</b></p>`:''}<div class="menu">
-    ${chat.origin?`<button data-act="setup">${I.book} Scene setup (from the world chat)</button><button data-act="sendback">${I.send} Send back to the world chat${chat.origin.sent?' (sent)':''}</button>`:''}${char.kind==='world'&&chat.mode!=='image'?`<button data-act="wscene">${I.chat} Play a scene with one character</button>`:''}<button data-act="memory">${I.brain} Chat memory</button>${chat.mode==='image'?'':`<button data-act="scene">${I.user} The scene right now</button>`}${char.kind!=='world'&&S.chars.some(c=>c.kind==='world')?`<button data-act="cworld">${I.book} World for this chat: ${esc(chatWorld(chat,char)?.name||'none')}</button>`:''}<button data-act="persona">${I.user} Persona for this chat</button><button data-act="prompt">${I.edit} Prompt preset</button>
+    ${chat.origin?`<button data-act="setup">${I.book} Scene setup (from the world chat)</button><button data-act="sendback">${I.send} Send back to the world chat${chat.origin.sent?' (sent)':''}</button>`:''}${char.kind==='world'&&chat.mode!=='image'?`<button data-act="wscene">${I.chat} Play a scene with one character</button>${liveScenes(chat).length?`<button data-act="scenes">${I.book} Scenes from this chat (${liveScenes(chat).length})</button>`:''}`:''}<button data-act="memory">${I.brain} Chat memory</button>${chat.mode==='image'?'':`<button data-act="scene">${I.user} The scene right now</button>`}${char.kind!=='world'&&S.chars.some(c=>c.kind==='world')?`<button data-act="cworld">${I.book} World for this chat: ${esc(chatWorld(chat,char)?.name||'none')}</button>`:''}<button data-act="persona">${I.user} Persona for this chat</button><button data-act="prompt">${I.edit} Prompt preset</button>
     <button data-act="vars">${I.code} Script variables</button><button data-act="lore">${I.tag} Lore used in last reply</button><button data-act="rename">${I.edit} Rename chat</button><button data-act="mvf">${I.folder} Move to folder${folders('chats').find(f=>f.id===chat.folder)?` (now: ${esc(folders('chats').find(f=>f.id===chat.folder).name)})`:''}</button>
     <button data-act="newchat">${I.plus} Start a new chat</button><button data-act="export">${I.exp} Export chat as text</button>
     ${chat.mode==='image'?`<button data-act="srole">${{observer:I.book,pov:I.img}[storyRole(chat)]||I.user} Your role: ${ROLE_LABEL[storyRole(chat)]}</button><button data-act="outline">${I.edit} Story outline</button><button data-act="ihist">${I.copy} All image prompts (${chat.images?.length||0})</button>`
@@ -3565,6 +3591,7 @@ function chatMenu(chat,char,redraw){
     lore:()=>{const l=lastLore.get(chat.id);openSheet(`<h2>Lore used in last reply</h2>${!l?'<p class="muted">Send or regenerate a message first.</p>':l.length?`<div class="list">${l.map(n=>`<div class="box small">${esc(n)}</div>`).join('')}</div>`:'<p class="muted">No lorebook entries were triggered.</p>'}<br><button class="btn ghost block" data-act="close">Close</button>`)},
     rename:async()=>{const t=prompt('Chat name',chat.title);if(t?.trim()){chat.title=t.trim();chat.titleSet=true;await saveChat(chat);closeSheet()}},
     wscene:()=>openWorldScene(chat,char,chat.messages.length-1),
+    scenes:()=>openScenesList(chat),
     setup:()=>openSceneSetup(chat,char),
     sendback:()=>openSendBack(chat,char),
     newchat:()=>{closeSheet();openStart(char,{personaId:chat.personaId,scenarioId:chat.scenarioId})},
@@ -3628,6 +3655,7 @@ function vSettings(){
   <div class="sec"><h3>Generation</h3><div class="box">
     ${rng('temperature','Temperature',0,2,0.05,'Higher is more creative, lower is more focused.')}
     <label class="f">Max new tokens<small>reply length limit (0 = no limit)</small></label><input type="number" data-k="maxTokens" min="0" value="${st.maxTokens}">
+    <label class="f">Continue cut-off replies<small>when a reply hits Max new tokens, Hearth asks for the rest this many times by itself and joins it on (0 = only when you tap Continue)</small></label><input type="number" data-k="autoContinue" min="0" max="5" value="${st.autoContinue??2}">
     <label class="f">Context size<small>tokens of history sent each time</small></label><input type="number" data-k="contextSize" min="1000" step="1000" value="${st.contextSize}">
     <label class="f">Thinking effort<small>for models that think before they reply, like GLM 5.3 or DeepSeek. Less thinking is faster and cheaper (OpenRouter)</small></label><select data-k="thinkEffort">${[['','Model default'],['low','Low'],['medium','Medium'],['high','High']].map(([v,l])=>`<option value="${v}" ${(st.thinkEffort||'')===v?'selected':''}>${l}</option>`).join('')}</select>
     <label class="f">Room for thinking<small>extra tokens on top of Max new tokens for models seen thinking, so the thinking can't use up the reply</small></label><input type="number" data-k="thinkRoom" min="0" step="500" value="${st.thinkRoom??4000}">
