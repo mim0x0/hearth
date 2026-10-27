@@ -354,7 +354,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.12.0',HEARTH_DATE='2026-10-27';
+const HEARTH_VERSION='1.13.0',HEARTH_DATE='2026-10-27';
 const DEFAULTS={apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -2454,7 +2454,7 @@ async function vChat(id){
       ${story&&!u&&!generating&&m.imgs?.[m.sw]?`${m.pics?.[m.sw]?.length?thumbs(m.pics[m.sw],'sview'):''}<div class="row" style="margin-top:6px"><button class="btn ghost sm" data-act="attach">${I.img} Attach picture</button></div>${m.story?.[m.sw]?`<div class="storytxt">${paras(macro(m.story[m.sw],char.name,p?.name||'You'))}</div>`:''}${storyCardsHTML(m.imgs[m.sw],i)}`:''}
       ${story&&!u&&isLast&&!generating&&m.next?.[m.sw]?`<div class="nextsug"><div><b>Next:</b> ${esc(m.next[m.sw])}</div><button class="btn sm" data-act="usenext" ${GEN?'disabled':''}>Use this ›</button></div>`:''}
       ${!story&&!u&&isLast&&!generating&&m.cut?.[m.sw]?`<div class="controw"><button class="btn ghost sm" data-act="cont" ${GEN?'disabled':''}>Continue ›</button><span>This reply was cut off.</span></div>`:''}
-      <div class="mact"><button data-act="medit">${I.edit}Edit</button><button data-act="mcopy">${I.copy}Copy</button>${story?'':`<button data-act="mimg">${I.img}Image</button>`}${!story&&char.kind==='world'&&txt(m).trim()?`<button data-act="mscene">${I.chat}Scene</button>`:''}${canRegen?`<button data-act="regen">${I.regen}${story?'Try again':'Regenerate'}</button>`:''}${story&&canRegen?`<button data-act="redonotes">${I.wand}Redo with notes</button>`:''}${story&&!u&&m.imgs?.[m.sw]?`<button data-act="rwrite">${I.book}Rewrite story</button>`:''}${!story&&!u&&isLast?`<button data-act="cont">${I.send}Continue</button>`:''}<button data-act="mdel">${I.trash}Delete</button></div>${sw}</div></div>`;
+      <div class="mact"><button data-act="medit">${I.edit}Edit</button><button data-act="mcopy">${I.copy}Copy</button>${story?'':`<button data-act="mimg">${I.img}Image</button>`}${!story&&char.kind==='world'&&txt(m).trim()?`<button data-act="mscene">${I.chat}Scene</button>`:''}${canRegen?`<button data-act="regen">${I.regen}${story?'Try again':'Regenerate'}</button>`:''}${canRegen?`<button data-act="redonotes">${I.wand}Redo with notes</button>`:''}${story&&!u&&m.imgs?.[m.sw]?`<button data-act="rwrite">${I.book}Rewrite story</button>`:''}${!story&&!u&&isLast?`<button data-act="cont">${I.send}Continue</button>`:''}<button data-act="mdel">${I.trash}Delete</button></div>${sw}</div></div>`;
   }
   // Show "↑ Start of …" while the message filling the top of the screen began above it.
   function updateJump(){
@@ -2500,7 +2500,8 @@ async function vChat(id){
     if(failed)openSheet(`<h2 class="err">Couldn't build the prompts</h2><div class="box pre small">${esc(failed.message)}</div><br><button class="btn ghost block" data-act="close">Close</button>`);
   }
   // left: how many more times a reply cut off by the token limit is continued automatically (Settings → Generation)
-  async function generate(mode,left=+(S.settings.autoContinue??2)||0){
+  // notes (swipe only): {want, avoid, keep, sw} from "Redo with notes": a new version of reply version sw that follows them
+  async function generate(mode,left=+(S.settings.autoContinue??2)||0,notes=null){
     if(story)return storyGenerate(mode==='continue'?'new':mode);
     const api=activeApi();if(!api){toast('Add an API / proxy in Settings first',4000);return}
     if(GEN){toast('Already generating a reply');return}
@@ -2513,6 +2514,8 @@ async function vChat(id){
     const {messages,ctx,errs,lore}=buildPrompt(chat,char,personaFor(chat),chat.messages.slice(0,base!=null?idx+1:idx));
     // continue: the cut-off reply is the last message in the history; the model writes the rest, which is joined onto it
     if(mode==='continue')messages.push({role:'system',content:'[Your last message was cut off. Continue it seamlessly from the exact point where it stopped, even mid-sentence. Do not repeat or summarize anything already written, do not restart the scene, and do not add a title or preface.]'});
+    if(mode==='swipe'&&notes){const prev=stripThink(m.swipes[notes.sw]||'').trim(),un=personaFor(chat)?.name||'You';
+      messages.push({role:'system',content:`[${un} is redoing your reply to their last message.${prev?` Your previous version:\n"""\n${macro(prev,char.name,un)}\n"""`:''}\n${notes.want?`They want: ${notes.want}\n`:''}${notes.avoid?`They don't want: ${notes.avoid}\n`:''}${prev&&notes.keep?'Write a new version of that reply that follows these wishes. Change only what the wishes need: keep everything else (what happens, what is said, the tone and the length) as close to the previous version as you can.':'Write a fresh reply that follows these wishes.'} Reply with the new version only, without mentioning these notes.]`})}
     lastLore.set(chat.id,lore);
     if(errs.length)toast('Script error — '+errs[0],5000);
     GEN={chatId:chat.id,idx,ctrl:new AbortController(),status:''};renderMsgs(true);updateSend();
@@ -2649,6 +2652,9 @@ async function vChat(id){
         SH.use=async()=>{const m=chat.messages[i];(m.story??=[])[m.sw]=r.text;await saveChat(chat);closeSheet();renderMsgs();toast('Story text updated')}})},
     // the whole reply again (prompts and story text), steered by the user's wishes
     redonotes:()=>{if(GEN)return toast('Wait for the reply to finish');
+      if(!story)return wishSheet('Redo with notes','Makes a new version of this reply that follows your notes. The current one stays: swipe back to compare.',async(w,pn)=>{
+        const sw=chat.messages.at(-1).sw;closeSheet();await generate('swipe',undefined,{...w,keep:$('#ws-keep',pn).checked,sw})},
+        `<label class="small" style="display:flex;gap:8px;align-items:center;margin-top:12px"><input type="checkbox" id="ws-keep" checked style="width:auto;margin:0"> Keep the rest of the reply as it is</label>`);
       wishSheet('Redo with notes','Makes a new version of this reply (prompts and story text). Swipe back to compare with the earlier ones.',async w=>{closeSheet();await storyGenerate('swipe',{...w,sw:chat.messages.at(-1).sw})})} // sw: the version being redone
   };
   draw();
@@ -3010,10 +3016,10 @@ Return one JSON object only: {"story":"..."}`,undefined,long?1200:600);
   return {text:t,usage};
 }
 // the "want / don't want" sheet both redo buttons use
-function wishSheet(title,hint,run){
+function wishSheet(title,hint,run,extra=''){
   const pn=openSheet(`<h2>${title}</h2><p class="hint">${hint}</p>
     <label class="f">What you want<small>optional</small></label><textarea id="ws-w" rows="3" placeholder="e.g. more dialogue, she teases him, a funny ending"></textarea>
-    <label class="f">What you don't want<small>optional</small></label><textarea id="ws-a" rows="2" placeholder="e.g. no crying, don't mention the sword"></textarea>
+    <label class="f">What you don't want<small>optional</small></label><textarea id="ws-a" rows="2" placeholder="e.g. no crying, don't mention the sword"></textarea>${extra}
     <div id="ws-out"></div><div id="ws-msg" class="small" style="margin-top:6px"></div>
     <div class="sheet-foot row"><button class="btn ghost" data-act="close" style="flex:1">Cancel</button><button class="btn" data-act="go" style="flex:2">${I.regen} Redo</button></div>`,{
     go:async b=>{const want=$('#ws-w',pn).value.trim(),avoid=$('#ws-a',pn).value.trim(),msg=$('#ws-msg',pn);
