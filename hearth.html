@@ -345,7 +345,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.7.0',HEARTH_DATE='2026-10-27';
+const HEARTH_VERSION='1.8.0',HEARTH_DATE='2026-10-27';
 const DEFAULTS={apis:[],activeApi:null,temperature:0.9,maxTokens:600,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -1043,7 +1043,7 @@ function buildPrompt(chat,char,persona,history){
   const scs=scenariosOf(char),scn=scs.find(s=>s.id===chat.scenarioId)||scs[0]; // chats from before scenarios use the first one
   const lastUser=[...history].reverse().find(m=>m.role==='user');
   const ctx={
-    character:{name:char.name,personality:char.personality||'',scenario:scn.scenario||'',example_dialogs:char.exampleDialogs||'',first_message:scn.greetings[0]||''},
+    character:{name:char.name,personality:char.personality||'',scenario:chat.brief?.trim()||scn.scenario||'',example_dialogs:char.exampleDialogs||'',first_message:scn.greetings[0]||''},
     user:{name:userName,persona:persona?.description||''},
     chat:{last_message:lastUser?txt(lastUser):'',message_count:history.length,messages:history.map(m=>({role:m.role,text:txt(m)})),memory:chat.memory||''},
     vars:clone(chat.vars||{}),system_note:''
@@ -1085,6 +1085,9 @@ function buildPrompt(chat,char,persona,history){
   if(ctx.user.persona.trim())sys.push(`${userName}'s Persona: ${ctx.user.persona.trim()}`);
   if(lore.after.length)sys.push(lore.after.join('\n'));
   if(ctx.character.example_dialogs.trim())sys.push(`Example dialogue (style reference only):\n${ctx.character.example_dialogs.trim()}`);
+  // a scene started from a world chat: what happened there
+  if(chat.storySoFar?.trim())sys.push(`[The story so far, from the world chat${getChar(chat.origin?.worldId)?` in ${getChar(chat.origin.worldId).name}`:''}. This scene follows on from it; keep every detail consistent]
+${chat.storySoFar.trim()}`);
   if(ctx.chat.memory.trim())sys.push(`[Chat memory — important facts so far]\n${ctx.chat.memory.trim()}`);
   if(chat.researchNotes?.trim())sys.push(`[Canon facts looked up during this chat]\n${chat.researchNotes.trim()}`);
   if(st.webSearch&&!researchOn())sys.push(webNote(char));
@@ -2429,7 +2432,7 @@ async function vChat(id){
       ${story&&!u&&!generating&&m.imgs?.[m.sw]?`${m.pics?.[m.sw]?.length?thumbs(m.pics[m.sw],'sview'):''}<div class="row" style="margin-top:6px"><button class="btn ghost sm" data-act="attach">${I.img} Attach picture</button></div>${m.story?.[m.sw]?`<div class="storytxt">${paras(macro(m.story[m.sw],char.name,p?.name||'You'))}</div>`:''}${storyCardsHTML(m.imgs[m.sw],i)}`:''}
       ${story&&!u&&isLast&&!generating&&m.next?.[m.sw]?`<div class="nextsug"><div><b>Next:</b> ${esc(m.next[m.sw])}</div><button class="btn sm" data-act="usenext" ${GEN?'disabled':''}>Use this ›</button></div>`:''}
       ${!story&&!u&&isLast&&!generating&&m.cut?.[m.sw]?`<div class="controw"><button class="btn ghost sm" data-act="cont" ${GEN?'disabled':''}>Continue ›</button><span>This reply was cut off.</span></div>`:''}
-      <div class="mact"><button data-act="medit">${I.edit}Edit</button><button data-act="mcopy">${I.copy}Copy</button>${story?'':`<button data-act="mimg">${I.img}Image</button>`}${canRegen?`<button data-act="regen">${I.regen}${story?'Try again':'Regenerate'}</button>`:''}${story&&canRegen?`<button data-act="redonotes">${I.wand}Redo with notes</button>`:''}${story&&!u&&m.imgs?.[m.sw]?`<button data-act="rwrite">${I.book}Rewrite story</button>`:''}${!story&&!u&&isLast?`<button data-act="cont">${I.send}Continue</button>`:''}<button data-act="mdel">${I.trash}Delete</button></div>${sw}</div></div>`;
+      <div class="mact"><button data-act="medit">${I.edit}Edit</button><button data-act="mcopy">${I.copy}Copy</button>${story?'':`<button data-act="mimg">${I.img}Image</button>`}${!story&&char.kind==='world'&&txt(m).trim()?`<button data-act="mscene">${I.chat}Scene</button>`:''}${canRegen?`<button data-act="regen">${I.regen}${story?'Try again':'Regenerate'}</button>`:''}${story&&canRegen?`<button data-act="redonotes">${I.wand}Redo with notes</button>`:''}${story&&!u&&m.imgs?.[m.sw]?`<button data-act="rwrite">${I.book}Rewrite story</button>`:''}${!story&&!u&&isLast?`<button data-act="cont">${I.send}Continue</button>`:''}<button data-act="mdel">${I.trash}Delete</button></div>${sw}</div></div>`;
   }
   // Show "↑ Start of …" while the message filling the top of the screen began above it.
   function updateJump(){
@@ -2562,6 +2565,7 @@ async function vChat(id){
     swr:()=>{const m=chat.messages.at(-1);if(m.sw<m.swipes.length-1){m.sw++;saveChat(chat);renderMsgs()}else if(!m.greeting)generate('swipe')},
     mcopy:b=>copyText(txt(chat.messages[idxOf(b)])),
     mimg:b=>{b.closest('.msg').classList.remove('open');openImageSheet(chat,char,idxOf(b))},
+    mscene:b=>{b.closest('.msg').classList.remove('open');openWorldScene(chat,char,idxOf(b))},
     icp:b=>copyText(JSON.parse(b.closest('.storycards').dataset.texts)[+b.dataset.i]),
     // keep the picture NovelAI made for this prompt next to it, and in the character's gallery
     attach:async b=>{const i=idxOf(b),m=chat.messages[i],ids=await addPictures(char,'gallery',chat.id);if(!ids.length)return;
@@ -3329,10 +3333,78 @@ function chatCost(chat){
   if(chat.costExtra)t=(t||0)+chat.costExtra;
   return t==null?null:{cost:t,est};
 }
+// A one-on-one chat with one character from a world chat, knowing what happened there up to a message: to play out in
+// full a past event the world chat only summed up, or a private moment that branches off. It lives on the character's page.
+function openWorldScene(wc,world,upto){
+  const members=membersOf(world);if(!members.length)return toast('This world has no characters yet');
+  if(!activeApi())return toast('Add an API / proxy in Settings first');
+  const un=personaFor(wc)?.name||'You',msgs=wc.messages.slice(0,upto+1).filter(m=>txt(m).trim());
+  const recent=msgs.slice(-3).map(txt).join(' ').toLowerCase();
+  let who=(members.find(m=>recent.includes(m.name.split(' ')[0].toLowerCase()))||members[0]).id,when='past';
+  openSheet(`<h2>Play a scene with one character</h2><p class="hint">Starts a chat with just one character that knows everything that happened in this world chat${upto<wc.messages.length-1?' up to the message you picked':''}. Good for playing out in full something the world chat only summed up. It's saved with the character's chats.</p>
+    <label class="f">With</label><div class="chips">${members.map(m=>`<button class="chip mem ${m.id===who?'on':''}" data-act="who" data-id="${m.id}"><img src="${esc(avatar(m))}" alt="">${esc(m.name)}</button>`).join('')}</div>
+    <label class="f">When</label><div class="chips"><button class="chip on" data-act="when" data-v="past">A past event</button><button class="chip" data-act="when" data-v="now">Right now, from here</button></div>
+    <label class="f">What is the scene?</label><textarea id="ws-what" rows="3" placeholder="e.g. The night they escaped Haven, the way it really happened"></textarea>
+    <label class="f">Who are you in it? <span class="muted">(optional)</span></label><input id="ws-me" placeholder="Empty = ${esc(un)}, as in the world chat">
+    <div id="ws-msg" class="small" style="margin-top:6px"></div>
+    <div class="sheet-foot row"><button class="btn ghost" data-act="close" style="flex:1">Cancel</button><button class="btn" data-act="go" style="flex:2">${I.chat} Start the scene</button></div>`,{
+    who:b=>{who=b.dataset.id;$$('#sheet [data-act=who]').forEach(x=>x.classList.toggle('on',x===b))},
+    when:b=>{when=b.dataset.v;$$('#sheet [data-act=when]').forEach(x=>x.classList.toggle('on',x===b))},
+    go:async b=>{
+      const c=getChar(who),what=$('#ws-what').value.trim(),me=$('#ws-me').value.trim(),msg=$('#ws-msg');
+      if(when==='past'&&!what){msg.className='small err';msg.textContent='Say which past event, e.g. "the night they escaped Haven".';$('#ws-what').focus();return}
+      b.disabled=true;msg.className='small muted';msg.textContent=`Reading the world chat and setting up the scene with ${c.name}…`;
+      try{
+        const scn=chatScn(wc,world)||scenariosOf(world).find(s=>s.id===wc.scenarioId),note=castNote(scn,c.id);
+        let tr=msgs.map(m=>`${m.role==='user'?un:'Narrator'}: ${macro(stripThink(txt(m)),world.name,un)}`).join('\n\n');
+        if(tr.length>20000)tr='…'+tr.slice(-20000);
+        const cut=s=>(s||'').trim().slice(0,2500);
+        const {j,usage}=await aiJson('You set up a new one-on-one roleplay scene that branches off an ongoing story. You keep every detail the story already established. Reply with a single JSON object only.',
+`WORLD: ${world.name}
+${cut(macro(world.personality||'',world.name,un))}
+${scn?.scenario?.trim()?`\nSCENARIO OF THE WORLD CHAT: ${cut(macro(scn.scenario,world.name,un))}\n`:''}
+THE CHARACTER: ${c.name}
+${cut(macro(c.personality||'',c.name,un))}${note?`\n${c.name} in this world chat's scenario (wins over the description): ${note}`:''}
+${ownLinks(world,c).length?`\n${c.name}'s relationships:\n${ownLinks(world,c).join('\n')}\n`:''}
+THE USER: ${un}${personaFor(wc)?.description?.trim()?` (${cut(personaFor(wc).description).slice(0,600)})`:''}
+${wc.memory?.trim()&&(wc.memoryAt||0)<=upto+1?`\nWORLD CHAT MEMORY:\n${wc.memory.trim()}\n`:''}${wc.scene?.trim()&&upto>=wc.messages.length-1?`\nTHE SCENE IN THE WORLD CHAT RIGHT NOW:\n${wc.scene.trim()}\n`:''}
+THE WORLD CHAT SO FAR:
+${tr||'(nothing yet)'}
+
+THE NEW SCENE: ${when==='past'?`a past event, played out in full: ${what}. Everything the world chat said about it is canon; fill in the rest so it fits.`:`it continues from the end of the world chat, as a one-on-one scene with ${c.name}${what?`: ${what}`:''}.`}
+THE USER PLAYS: ${me?`${me} (use {{user}} for this person)`:`themselves, ${un} ({{user}})${when==='past'?'. If they were not part of the event, make them someone who was there, and say who in the scenario':''}`}.
+
+Reply with JSON:
+{"title":"a short title for the new chat, at most 8 words",
+"story_so_far":"what happened in the world chat that matters for this scene, as short past-tense bullet points; keep names, places and who did what exactly as the world chat said. At most 250 words.",
+"scenario":"the setup for the AI that plays ${c.name}: when and where the scene happens${when==='past'?' (and how long before the world chat)':''}, who is there, what {{user}} is to ${c.name} in it, what each knows and wants, and the situation it starts in. 3-6 sentences. Use {{user}} for the user's character.",
+"opening":"the first message of the scene from ${c.name}'s side, in the same style as the world chat (actions in *asterisks*, speech in quotes), 80-200 words, ending where {{user}} can respond. Never write {{user}}'s words or actions."}`,undefined,2500);
+        const scs=scenariosOf(c),sc=scs[0],opening=String(j.opening||'').trim();
+        const chat={id:uid(),charId:c.id,scenarioId:sc.id,promptId:sc.promptId||'',personaId:wc.personaId||personaFor(wc)?.id,worldId:world.id,
+          title:String(j.title||'').trim()||`${c.name} · ${what||'a scene'}`.slice(0,80),titleSet:true,created:Date.now(),memory:'',vars:{},
+          brief:String(j.scenario||'').trim(),storySoFar:String(j.story_so_far||'').trim(),costExtra:usage?.cost||0,
+          origin:{chatId:wc.id,worldId:world.id,upto,when,what,me},
+          messages:opening?[{id:uid(),role:'assistant',greeting:true,swipes:[opening],sw:0,time:Date.now()}]:[]};
+        c.lastUsed=Date.now();await saveChars();await saveChat(chat);closeSheet();go('#/chat/'+chat.id);toast(`Scene with ${c.name} started. ⋮ → Scene setup shows what it knows.`);
+      }catch(e){msg.className='small err';msg.textContent=e.message;b.disabled=false}}
+  },{modal:true});
+}
+// what a scene started from a world chat knows: editable, with a way back to the world chat
+function openSceneSetup(chat,char){
+  const o=chat.origin,w=getChar(o.worldId),there=S.chatIndex.some(x=>x.id===o.chatId);
+  openSheet(`<h2>Scene setup</h2><p class="hint">This chat started from a world chat${w?` in ${esc(w.name)}`:''}. Both parts below are sent with every message. Fix anything that's wrong.</p>
+    <label class="f">The story so far (from the world chat)</label><textarea id="ss-s" rows="8">${esc(chat.storySoFar||'')}</textarea>
+    <label class="f">This scene</label><textarea id="ss-b" rows="6">${esc(chat.brief||'')}</textarea>
+    ${there?`<button class="btn ghost block" data-act="open" style="margin-top:10px">${I.back} Open the world chat</button>`:'<p class="small muted">The world chat it came from was deleted.</p>'}
+    <div class="sheet-foot row"><button class="btn ghost" data-act="close" style="flex:1">Cancel</button><button class="btn" data-act="ok" style="flex:2">Save</button></div>`,{
+    open:()=>{closeSheet();go('#/chat/'+o.chatId)},
+    ok:async()=>{chat.storySoFar=$('#ss-s').value.trim();chat.brief=$('#ss-b').value.trim();await saveChat(chat,true);closeSheet();toast('Saved')}
+  },{modal:true});
+}
 function chatMenu(chat,char,redraw){
   const spent=chatCost(chat);
   openSheet(`<h2>Chat options</h2>${spent?`<p class="hint" style="margin:-6px 0 10px">This chat so far: <b>${spent.est?'≈ ':''}${fmtCost(spent.cost)}</b></p>`:''}<div class="menu">
-    <button data-act="memory">${I.brain} Chat memory</button>${chat.mode==='image'?'':`<button data-act="scene">${I.user} The scene right now</button>`}${char.kind!=='world'&&S.chars.some(c=>c.kind==='world')?`<button data-act="cworld">${I.book} World for this chat: ${esc(chatWorld(chat,char)?.name||'none')}</button>`:''}<button data-act="persona">${I.user} Persona for this chat</button><button data-act="prompt">${I.edit} Prompt preset</button>
+    ${chat.origin?`<button data-act="setup">${I.book} Scene setup (from the world chat)</button>`:''}${char.kind==='world'&&chat.mode!=='image'?`<button data-act="wscene">${I.chat} Play a scene with one character</button>`:''}<button data-act="memory">${I.brain} Chat memory</button>${chat.mode==='image'?'':`<button data-act="scene">${I.user} The scene right now</button>`}${char.kind!=='world'&&S.chars.some(c=>c.kind==='world')?`<button data-act="cworld">${I.book} World for this chat: ${esc(chatWorld(chat,char)?.name||'none')}</button>`:''}<button data-act="persona">${I.user} Persona for this chat</button><button data-act="prompt">${I.edit} Prompt preset</button>
     <button data-act="vars">${I.code} Script variables</button><button data-act="lore">${I.tag} Lore used in last reply</button><button data-act="rename">${I.edit} Rename chat</button><button data-act="mvf">${I.folder} Move to folder${folders('chats').find(f=>f.id===chat.folder)?` (now: ${esc(folders('chats').find(f=>f.id===chat.folder).name)})`:''}</button>
     <button data-act="newchat">${I.plus} Start a new chat</button><button data-act="export">${I.exp} Export chat as text</button>
     ${chat.mode==='image'?`<button data-act="srole">${{observer:I.book,pov:I.img}[storyRole(chat)]||I.user} Your role: ${ROLE_LABEL[storyRole(chat)]}</button><button data-act="outline">${I.edit} Story outline</button><button data-act="ihist">${I.copy} All image prompts (${chat.images?.length||0})</button>`
@@ -3405,6 +3477,8 @@ function chatMenu(chat,char,redraw){
       reset:async()=>{if(!confirm('Reset all variables?'))return;chat.vars={};await saveChat(chat);closeSheet()}})},
     lore:()=>{const l=lastLore.get(chat.id);openSheet(`<h2>Lore used in last reply</h2>${!l?'<p class="muted">Send or regenerate a message first.</p>':l.length?`<div class="list">${l.map(n=>`<div class="box small">${esc(n)}</div>`).join('')}</div>`:'<p class="muted">No lorebook entries were triggered.</p>'}<br><button class="btn ghost block" data-act="close">Close</button>`)},
     rename:async()=>{const t=prompt('Chat name',chat.title);if(t?.trim()){chat.title=t.trim();chat.titleSet=true;await saveChat(chat);closeSheet()}},
+    wscene:()=>openWorldScene(chat,char,chat.messages.length-1),
+    setup:()=>openSceneSetup(chat,char),
     newchat:()=>{closeSheet();openStart(char,{personaId:chat.personaId,scenarioId:chat.scenarioId})},
     editchar:()=>go('#/edit/'+char.id),
     export:()=>{const p=personaFor(chat);download(safeName(chat.title)+'.txt',chat.messages.map(m=>`${m.role==='user'?p?.name||'You':char.name}: ${macro(txt(m),char.name,p?.name||'You')}`).join('\n\n'),'text/plain');closeSheet()},
