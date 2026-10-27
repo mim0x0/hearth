@@ -354,7 +354,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.14.0',HEARTH_DATE='2026-10-27';
+const HEARTH_VERSION='1.15.0',HEARTH_DATE='2026-10-27';
 const DEFAULTS={apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -804,7 +804,68 @@ const addCost=(t,u)=>{if(u?.cost!=null){t.cost=(t.cost||0)+u.cost;if(u.costEst)t
 const testSaid=(text,thought)=>{const s=stripThink(text||'').trim().slice(0,60);
   return s?`replied “${esc(s)}”.`:thought?'is a thinking model: it thought but had no room left to write in this short test. That is fine: Hearth now gives it extra room in chats (Settings → Generation → Room for thinking).':'replied with nothing (empty). Check the model name, or try another model.'};
 const fmtCost=c=>c==null?'':c<0.0001?'<$0.0001':'$'+(c<0.01?c.toFixed(4):c<1?c.toFixed(3):c.toFixed(2));
+/* ---------- usage log: every request's tokens and cost, by what it was for (Settings → Usage and cost) ---------- */
+// What a request was for, from its instructions. Quiet kinds already show their cost where they happen (under the
+// reply, in the image prompt) or run in the background; the others show a short note when they finish.
+const USE_KINDS=[[/physical state of a roleplay scene/,'Scene tracking',1],[/long-term memory of an ongoing roleplay/,'Chat memory'],
+  [/research assistant for a roleplay/,'Research for replies',1],[/You research anime/,'Wizard research'],[/reference pages into compact/,'Reading reference pages'],
+  [/expert character writer|expert worldbuilder/,'Character and world wizard'],[/opening scenes for AI roleplay/,'Opening messages'],
+  [/continuity editor/,'Check characters'],[/expert editor of AI roleplay/,'Fix characters'],[/relationships between roleplay characters/,'World relationships'],
+  [/roleplay character notes/,'Character notes'],[/storyboard partner/,'Image stories',1],[/illustrated novel/,'Image story text',1],
+  [/Danbooru-style appearance tags/,'Looks tags'],[/NovelAI Diffusion prompt writer/,'Image prompts',1],[/new one-on-one roleplay scene/,'Scene setup'],
+  [/sum up a side scene/,'Scene summaries'],[/^(Reply with just the word OK|What color is this square)/,'Connection tests']];
+const textOf=m=>typeof m.content==='string'?m.content:(m.content||[]).map(p=>p.type==='text'?p.text:'').join(' ');
+function useKind(messages,o){
+  if(o.what)return [o.what,!!o.quiet];
+  const s=textOf(messages[0]||{});const k=USE_KINDS.find(([rx])=>rx.test(s));
+  return k?[k[1],!!k[2]]:['Chat replies',true]; // replies show their cost under the message
+}
+let usageLog=null,usageSaveT=0;const usageNote={};
+const usageList=async()=>usageLog??=((await store.get('usage'))||[]);
+async function logUsage(api,messages,r,o){
+  const [k,quiet]=useKind(messages,o);let u=r.usage;
+  if(!u){const i=est(messages.map(textOf).join('\n')),out=est(r.text||'');u={in:i,out,est:true};const p=priceCost(api,i,out);if(p!=null){u.cost=p;u.costEst=true}}
+  const log=await usageList();log.push({t:Date.now(),k,m:api.model||'',i:Math.round(u.in||0),o:Math.round(u.out||0),c:u.cost??null,ce:!!u.costEst,e:!!u.est});
+  if(log.length>5000)log.splice(0,log.length-5000);
+  clearTimeout(usageSaveT);usageSaveT=setTimeout(()=>store.set('usage',usageLog),1500);
+  if(quiet)return;
+  // one note per kind, summed over the requests that come close together (a wizard makes several)
+  const n=usageNote[k]??={n:0,in:0,out:0,est:false};n.n++;n.in+=u.in||0;n.out+=u.out||0;n.est=n.est||u.est;addCost(n,u);
+  clearTimeout(n.t);n.t=setTimeout(()=>{delete usageNote[k];toast(`${k}: ${n.n>1?`${n.n} requests · `:''}${usageText(n)}`,4500)},1200);
+}
+// totals for a list of log entries: tokens, cost (≈ when any part is estimated) and a short text
+function usageSum(list){
+  const t={n:list.length,in:0,out:0,est:false,cost:null,costEst:false};
+  for(const e of list){t.in+=e.i;t.out+=e.o;t.est=t.est||e.e;if(e.c!=null){t.cost=(t.cost||0)+e.c;t.costEst=t.costEst||e.ce}}
+  t.text=t.n?`${t.cost!=null?`${t.costEst?'≈ ':''}${fmtCost(t.cost)} · `:''}${(t.in+t.out).toLocaleString()} tokens · ${t.n} request${t.n===1?'':'s'}`:'nothing yet';
+  return t;
+}
+function openUsage(){
+  let span='day';
+  const draw=async()=>{
+    const log=await usageList(),d=new Date(),day=new Date(d.getFullYear(),d.getMonth(),d.getDate()).getTime();
+    const from={day,week:day-6*864e5,month:day-29*864e5,all:0}[span],list=log.filter(e=>e.t>=from),sum=usageSum(list);
+    const kinds={};for(const e of list)(kinds[e.k]??=[]).push(e);
+    const rows=Object.entries(kinds).map(([k,l])=>[k,usageSum(l)]).sort((a,b)=>(b[1].cost??0)-(a[1].cost??0)||(b[1].in+b[1].out)-(a[1].in+a[1].out));
+    const when=t=>new Date(t).toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+    $('#use-body').innerHTML=`<div class="box" style="margin:10px 0"><b style="font-size:17px">${sum.cost!=null?`${sum.costEst?'≈ ':''}${fmtCost(sum.cost)}`:'No cost reported'}</b><div class="small muted">${sum.text}</div></div>
+      ${rows.length?`<label class="f">By what it was for</label><div class="list">${rows.map(([k,t])=>`<div class="li"><div class="lt"><b>${esc(k)}</b><span>${t.text} · ↑ ${Math.round(t.in).toLocaleString()} · ↓ ${Math.round(t.out).toLocaleString()}</span></div></div>`).join('')}</div>
+      <label class="f">Latest requests</label><div class="list">${list.slice(-40).reverse().map(e=>`<div class="li"><div class="lt"><b>${esc(e.k)}</b><span>${when(e.t)} · ${esc(e.m)} · ${e.e?'≈ ':''}↑ ${e.i.toLocaleString()} · ↓ ${e.o.toLocaleString()}${e.c!=null?` · ${e.ce?'≈ ':''}${fmtCost(e.c)}`:''}</span></div></div>`).join('')}</div>`:'<p class="hint">No requests in this time.</p>'}`;
+  };
+  openSheet(`<h2>Usage and cost</h2><div class="chips">${[['day','Today'],['week','7 days'],['month','30 days'],['all','All']].map(([v,l])=>`<button class="chip ${v===span?'on':''}" data-act="span" data-v="${v}">${l}</button>`).join('')}</div>
+    <div id="use-body"><p class="hint">Adding up…</p></div>
+    <p class="hint">≈ means estimated: the proxy didn't report it, so Hearth counted the text or used the connection's prices. Costs only show for OpenRouter or connections with prices set.</p>
+    <div class="sheet-foot row"><button class="btn ghost" data-act="clear" style="flex:1">Clear history</button><button class="btn" data-act="close" style="flex:1">Close</button></div>`,{
+    span:b=>{span=b.dataset.v;$$('#sheet [data-act=span]').forEach(x=>x.classList.toggle('on',x===b));draw()},
+    clear:async()=>{if(!confirm('Clear the usage history? Chats keep their own cost lines.'))return;usageLog=[];await store.set('usage',[]);draw()}});
+  draw();
+}
 async function callApi(api,messages,signal,onText,o={}){
+  const r=await callApiRaw(api,messages,signal,onText,o);
+  logUsage(api,messages,r,o).catch(e=>console.warn('Usage log failed:',e));
+  return r;
+}
+async function callApiRaw(api,messages,signal,onText,o={}){
   const st=S.settings,stream=o.stream??st.stream,maxT=o.maxTokens??+st.maxTokens;
   if(!api?.url)throw new Error('No proxy URL set. Add one in Settings → API / Proxy.');
   const body={model:api.model,messages,temperature:+st.temperature,stream};
@@ -3793,6 +3854,9 @@ function vSettings(){
     ${tg('backupKeys','Include API keys in auto backups','Leave off if you might share backup files.')}
     <div class="row" style="margin-top:8px"><button class="btn ghost" data-act="backup" style="flex:1">${I.exp} Export backup</button><button class="btn ghost" data-act="restore" style="flex:1">${I.imp} Import backup</button></div>
     <br><button class="btn danger block" data-act="wipe">Delete all data</button></div></div>
+  <div class="sec"><h3>Usage and cost</h3><div class="box"><div id="use-sum" class="small">Adding up…</div>
+    <div class="row" style="margin-top:8px"><button class="btn ghost sm" data-act="usage">${I.brain} See everything</button></div>
+    <div class="hint">Every request Hearth sends is counted here: replies, scene tracking, memory, research, wizards, image prompts, scene setups and tests. Costs with ≈ are estimates from the connection's prices.</div></div></div>
   <div class="sec"><h3>About</h3><div class="box"><b>Hearth ${HEARTH_VERSION}</b> <span class="muted small">· updated ${new Date(HEARTH_DATE+'T12:00').toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'})} · ${store.ls?'localStorage':'IndexedDB'} storage</span>
     <div class="row" style="margin-top:8px"><button class="btn ghost sm" data-act="upd-check">${I.regen} Check for updates</button><span id="upd-msg" class="small muted"></span></div></div></div>
   <div style="padding-bottom:30px"></div>`;
@@ -3810,7 +3874,9 @@ function vSettings(){
     el.innerHTML=`<b>Where:</b> ${tempLink()?'<span class="err">a temporary link</span>: refreshing won\'t work and the data may not be kept. <a href="#" data-act="tb-how" style="color:var(--accent)">How to fix</a>':location.protocol==='file:'?'a file on this device (keep opening the same file)':esc(location.host)}
       <br><b>Kept permanently:</b> ${p===true?'<span class="okc">yes</span>, the browser won\'t clear it to free space':p===false?`not yet <button class="btn ghost sm" data-act="st-keep">Ask the browser</button>`:'unknown (this browser doesn\'t say)'}${use}`;
   })();
-  H={api:b=>editApi(st.apis.find(a=>a.id===b.dataset.id)),'api-new':()=>editApi(null),
+  usageList().then(log=>{const el=$('#use-sum');if(!el)return;const d=new Date(),day=new Date(d.getFullYear(),d.getMonth(),d.getDate()).getTime(),mon=new Date(d.getFullYear(),d.getMonth(),1).getTime();
+    el.innerHTML=`Today: <b>${usageSum(log.filter(e=>e.t>=day)).text}</b><br>This month: <b>${usageSum(log.filter(e=>e.t>=mon)).text}</b>`});
+  H={usage:()=>openUsage(),api:b=>editApi(st.apis.find(a=>a.id===b.dataset.id)),'api-new':()=>editApi(null),
     'st-keep':async()=>{const p=await keepStorage(true);toast(p?'The browser will keep Hearth\'s data.':'The browser said no for now. It usually agrees once Hearth is added to the home screen, or after you use it for a while.',6000);vSettings()},
     book:b=>{const bk=S.lorebooks.find(x=>x.id===b.dataset.id);openBookEditor(bk,{title:'Lorebook',onSave:async nb=>{Object.assign(bk,nb);await saveBooks();vSettings()},onDelete:async()=>{S.lorebooks=S.lorebooks.filter(x=>x.id!==bk.id);await saveBooks();vSettings()}})},
     'book-new':()=>openBookEditor(newBook('New lorebook'),{title:'New lorebook',onSave:async nb=>{S.lorebooks.push(nb);await saveBooks();vSettings()}}),
