@@ -152,7 +152,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 #sheet{position:fixed;inset:0;z-index:20;display:none}
 #sheet.on{display:block}
 #sheet .bd{position:absolute;inset:0;background:#0009}
-#sheet .pn{position:absolute;left:0;right:0;bottom:0;max-height:88dvh;overflow:auto;background:var(--panel);border-radius:20px 20px 0 0;padding:6px 16px calc(18px + env(safe-area-inset-bottom));max-width:820px;margin:0 auto;animation:up .18s ease-out}
+#sheet .pn{position:absolute;left:0;right:0;bottom:0;max-height:88dvh;overflow:auto;overscroll-behavior:contain;background:var(--panel);border-radius:20px 20px 0 0;padding:6px 16px calc(18px + env(safe-area-inset-bottom));max-width:820px;margin:0 auto;animation:up .18s ease-out}
 #sheet .grab{width:40px;height:4px;border-radius:4px;background:var(--line);margin:6px auto 10px}
 #sheet h2{font-size:18px;margin:4px 0 8px}
 @keyframes up{from{transform:translateY(30px);opacity:.5}}
@@ -345,7 +345,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.6.0',HEARTH_DATE='2026-10-27';
+const HEARTH_VERSION='1.7.0',HEARTH_DATE='2026-10-27';
 const DEFAULTS={apis:[],activeApi:null,temperature:0.9,maxTokens:600,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -1241,8 +1241,36 @@ async function checkUpdate(manual){
 }
 Object.assign(G,{'upd-check':()=>checkUpdate(true),'upd-reload':()=>location.reload(),'upd-hide':()=>{$('#updbar').hidden=true}});
 Object.assign(G,{'tb-backup':()=>exportBackup(),'tb-how':()=>fixedAddressHelp(),'tb-hide':()=>{try{sessionStorage.setItem('hearth-tempbar','1')}catch{}$('#tempbar').hidden=true}});
-function openSheet(html,handlers={},o={}){SH={...handlers};const s=$('#sheet');$('.pn',s).innerHTML='<div class="grab"></div>'+html;$('.pn',s).scrollTop=0;s.classList.add('on');$('.bd',s).onclick=o.modal?null:closeSheet;return $('.pn',s)}
+// Every sheet closes with Cancel, a tap outside it, or a swipe down. Sheets with a form (modal) ask first if something was changed.
+let sheetMeta={},sheetTok=0;
+const sheetSnap=pn=>JSON.stringify([...pn.querySelectorAll('input,textarea,select')].map(e=>/^(checkbox|radio)$/.test(e.type)?e.checked:e.value));
+function openSheet(html,handlers={},o={}){
+  SH={...handlers};sheetTok++;const s=$('#sheet'),pn=$('.pn',s);
+  pn.innerHTML='<div class="grab"></div>'+html;
+  if(![...pn.querySelectorAll('button')].some(b=>b.dataset.act==='close'||/^\s*(cancel|close)\s*$/i.test(b.textContent))){
+    const foot=pn.lastElementChild?.classList.contains('sheet-foot')?pn.lastElementChild:null;
+    if(foot?.classList.contains('row'))foot.insertAdjacentHTML('afterbegin','<button class="btn ghost" data-act="close" style="flex:1">Cancel</button>');
+    else (foot||pn).insertAdjacentHTML('beforeend','<button class="btn ghost block" data-act="close" style="margin-top:10px">Cancel</button>');
+  }
+  pn.style.transition=pn.style.transform='';pn.scrollTop=0;s.classList.add('on');
+  sheetMeta={modal:!!o.modal,snap:sheetSnap(pn)};$('.bd',s).onclick=()=>dismissSheet();return pn}
 function closeSheet(){$('#sheet').classList.remove('on');SH={}}
+function dismissSheet(){
+  const pn=$('#sheet .pn');pn.style.transition='transform .18s ease-out';
+  if(sheetMeta.modal&&sheetSnap(pn)!==sheetMeta.snap&&!confirm('Discard your changes?')){pn.style.transform='';return false}
+  const tok=++sheetTok;pn.style.transform='translateY(100%)';setTimeout(()=>{if(tok===sheetTok)closeSheet()},180);return true}
+(()=>{ // swipe a sheet down to close it (from its top, or from anywhere once it's scrolled to the top)
+  const pn=$('#sheet .pn');let y0=null,x0=0,dy=0,drag=false,t0=0;
+  pn.addEventListener('touchstart',e=>{y0=null;if(e.touches.length>1)return;const grab=e.target.closest('.grab,h2');
+    if(!grab&&(pn.scrollTop>0||e.target.closest('textarea,input,select,[contenteditable]')))return;
+    y0=e.touches[0].clientY;x0=e.touches[0].clientX;dy=0;drag=false},{passive:true});
+  pn.addEventListener('touchmove',e=>{if(y0==null)return;const t=e.touches[0],d=t.clientY-y0,dx=t.clientX-x0;
+    if(!drag){if(Math.abs(dx)>10&&Math.abs(dx)>Math.abs(d)||d<-8){y0=null;return}if(d<8)return;drag=true;y0=t.clientY;t0=Date.now();pn.style.transition='none'}
+    dy=Math.max(0,t.clientY-y0);pn.style.transform=`translateY(${dy}px)`;e.preventDefault()},{passive:false});
+  const end=()=>{if(y0==null||!drag)return(y0=null);y0=null;drag=false;
+    if(dy>Math.min(140,pn.offsetHeight*.3)||dy>40&&dy/(Date.now()-t0)>.5){if(dismissSheet())return}
+    pn.style.transition='transform .18s ease-out';pn.style.transform=''};
+  pn.addEventListener('touchend',end);pn.addEventListener('touchcancel',end)})();
 
 /* ---------- folders: the user's own groups on the Characters and Chats pages ---------- */
 // kind 'chars' or 'chats'; a character keeps its folder id in c.folder, a chat in chat.folder (copied to its index entry)
@@ -3352,8 +3380,9 @@ function chatMenu(chat,char,redraw){
     scene:()=>{
       const on=S.settings.trackScene!==false;
       openSheet(`<h2>The scene right now</h2><p class="hint">Who is where, what they hold and wear, and anything that limits them (tied up, injured, asleep…). Sent with every message so characters only do what the scene allows. ${on?'Updated after each reply.':'Automatic updates are off (Settings → Chat memory).'} Fix anything wrong here.</p>
-        <textarea id="scn-t" rows="10" placeholder="Nothing tracked yet. Tap “Rebuild from the chat”.">${esc(chat.scene||'')}</textarea><div id="scn-msg" class="small" style="margin-top:6px"></div><br>
-        <div class="row"><button class="btn ghost" data-act="now" style="flex:1">${I.regen} Rebuild from the chat</button><button class="btn" data-act="ok" style="flex:1">Save</button></div>`,{
+        <textarea id="scn-t" rows="10" placeholder="Nothing tracked yet. Tap “Rebuild from the chat”.">${esc(chat.scene||'')}</textarea><div id="scn-msg" class="small" style="margin-top:6px"></div>
+        <button class="btn ghost block" data-act="now" style="margin-top:8px">${I.regen} Rebuild from the chat</button>
+        <div class="sheet-foot row"><button class="btn ghost" data-act="close" style="flex:1">Cancel</button><button class="btn" data-act="ok" style="flex:2">Save</button></div>`,{
         ok:async()=>{chat.scene=$('#scn-t').value.trim();chat.scenePrev=chat.scene;await saveChat(chat,true);closeSheet();toast('Scene saved')},
         now:async b=>{const msg=$('#scn-msg');b.disabled=true;msg.className='small muted';msg.textContent='Reading the latest messages…';
           try{$('#scn-t').value=await updateScene(chat,char,{manual:true,rebuild:true})||'';msg.className='small okc';msg.textContent='Rebuilt from the last messages. Edit it if anything is wrong, then tap Save.'}
@@ -3362,8 +3391,9 @@ function chatMenu(chat,char,redraw){
     memory:()=>{
       const st=S.settings,since=chat.messages.length-Math.min(chat.memoryAt||0,chat.messages.length);
       openSheet(`<h2>Chat memory</h2><p class="hint">Facts the AI should always remember in this chat (relationships, events, promises). Sent with every message. ${st.autoMemory?`Updated automatically every ${+st.memoryEvery||20} messages (${since} new since the last update).`:'Automatic updates are off (Settings → Chat memory).'}</p>
-        <textarea id="mem" rows="10">${esc(chat.memory||'')}</textarea><div id="memmsg" class="small" style="margin-top:6px"></div><br>
-        <div class="row"><button class="btn ghost" data-act="now" style="flex:1">${I.brain} Update now</button><button class="btn" data-act="ok" style="flex:1">Save memory</button></div>`,{
+        <textarea id="mem" rows="10">${esc(chat.memory||'')}</textarea><div id="memmsg" class="small" style="margin-top:6px"></div>
+        <button class="btn ghost block" data-act="now" style="margin-top:8px">${I.brain} Update now</button>
+        <div class="sheet-foot row"><button class="btn ghost" data-act="close" style="flex:1">Cancel</button><button class="btn" data-act="ok" style="flex:2">Save memory</button></div>`,{
         ok:async()=>{chat.memory=$('#mem').value;await saveChat(chat);closeSheet();toast('Memory saved')},
         now:async b=>{const msg=$('#memmsg');chat.memory=$('#mem').value;b.disabled=true;msg.className='small muted';msg.textContent='Summarizing the new messages…';
           try{$('#mem').value=await updateMemory(chat,char,true);msg.className='small okc';msg.textContent='Updated. Edit it if anything is wrong, then tap Save.'}
