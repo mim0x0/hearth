@@ -175,6 +175,11 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .err{color:var(--danger)}
 .okc{color:var(--ok)}
 .lookups{font-size:12px;color:var(--muted);margin-top:5px}
+.scenelinks{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.scenelinks .chip,.fromworld{display:inline-flex;align-items:center;gap:6px;text-decoration:none;font-size:13px;padding:5px 12px}
+.fromworld{width:100%;justify-content:center;margin:2px 0 12px;background:var(--panel2);border:1px solid var(--line);border-radius:12px;color:var(--text);cursor:pointer}
+.fromworld svg{width:16px;height:16px}
+.msg.flash .bubble{outline:2px solid var(--accent);outline-offset:2px;transition:outline-color 1s}
 .msgwrap{flex:1;min-height:0;display:flex;flex-direction:column}
 .msgwrap .msgs{flex:1}
 .jump{position:absolute;right:12px;bottom:12px;z-index:3;width:38px;height:38px;padding:0;display:flex;align-items:center;justify-content:center;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:50%;box-shadow:0 4px 16px #0008;cursor:pointer;opacity:.92}
@@ -345,7 +350,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.9.0',HEARTH_DATE='2026-10-27';
+const HEARTH_VERSION='1.10.0',HEARTH_DATE='2026-10-27';
 const DEFAULTS={apis:[],activeApi:null,temperature:0.9,maxTokens:600,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -2422,7 +2427,7 @@ async function vChat(id){
     ${story?`<div class="vtabs"><button data-act="vmode" data-v="" class="${reader()?'':'on'}">${I.code} Prompts</button><button data-act="vmode" data-v="story" class="${reader()?'on':''}">${I.book} Story</button></div>`:''}
     <div class="msgwrap"><div class="msgs" id="msgs"></div><button class="jump" id="jump" data-act="jump" hidden></button></div>
     <div class="composer" ${reader()?'hidden':''}><textarea id="inp" rows="1" placeholder="${story?'Describe a scene, ask for a change, or say next…':`Message ${esc(char.name)}…`}"></textarea><button class="btn" id="sendbtn" data-act="send">${I.send}</button></div></div>`;
-    renderMsgs(true);
+    renderMsgs(true);jumpToMsg(chat);if(chat.origin&&!chat.origin.msgId)linkScene(chat).then(()=>curChat===chat&&renderMsgs());
     let jt=0;$('#msgs').addEventListener('scroll',()=>{clearTimeout(jt);jt=setTimeout(updateJump,60)},{passive:true});
     updateJump();
     const inp=$('#inp');inp.oninput=()=>autosize(inp,window.innerHeight*.4);
@@ -2440,7 +2445,7 @@ async function vChat(id){
     if(!u)for(const mb of membersOf(char))body=body.replace(new RegExp(`<strong>(${escRx(esc(mb.name))}):?</strong>:?`,'g'),`<img class="spk" src="${esc(avatar(mb))}" alt=""><strong>$1:</strong>`);
     const canRegen=!u&&isLast&&!m.greeting;
     const sw=!u&&isLast&&(m.swipes.length>1||!m.greeting)?`<div class="swipes"><button data-act="swl" ${m.sw===0||GEN?'disabled':''}>‹</button><span>${m.sw+1}/${m.swipes.length}</span><button data-act="swr" ${GEN||(m.greeting&&m.sw>=m.swipes.length-1)?'disabled':''}>›</button></div>`:'';
-    return `<div class="msg ${u?'user':'bot'}" data-i="${i}"><img class="av" data-act="zoom" src="${esc(u?avatar(who):chatAvatar(chat,char,m))}" alt=""><div class="mw"><div class="nm">${esc(name)}</div><div class="bubble">${body}</div>${generating||!S.settings.showTokens?'':tokLine(m)}${lk?`<div class="lookups">Looked up: ${lk.map(esc).join(' · ')}</div>`:''}
+    return `<div class="msg ${u?'user':'bot'}" data-i="${i}"><img class="av" data-act="zoom" src="${esc(u?avatar(who):chatAvatar(chat,char,m))}" alt=""><div class="mw"><div class="nm">${esc(name)}</div><div class="bubble">${body}</div>${generating||!S.settings.showTokens?'':tokLine(m)}${lk?`<div class="lookups">Looked up: ${lk.map(esc).join(' · ')}</div>`:''}${sceneLinksHTML(chat,m)}
       ${story&&!u&&!generating&&m.imgs?.[m.sw]?`${m.pics?.[m.sw]?.length?thumbs(m.pics[m.sw],'sview'):''}<div class="row" style="margin-top:6px"><button class="btn ghost sm" data-act="attach">${I.img} Attach picture</button></div>${m.story?.[m.sw]?`<div class="storytxt">${paras(macro(m.story[m.sw],char.name,p?.name||'You'))}</div>`:''}${storyCardsHTML(m.imgs[m.sw],i)}`:''}
       ${story&&!u&&isLast&&!generating&&m.next?.[m.sw]?`<div class="nextsug"><div><b>Next:</b> ${esc(m.next[m.sw])}</div><button class="btn sm" data-act="usenext" ${GEN?'disabled':''}>Use this ›</button></div>`:''}
       ${!story&&!u&&isLast&&!generating&&m.cut?.[m.sw]?`<div class="controw"><button class="btn ghost sm" data-act="cont" ${GEN?'disabled':''}>Continue ›</button><span>This reply was cut off.</span></div>`:''}
@@ -2458,7 +2463,7 @@ async function vChat(id){
   }
   function renderMsgs(toBottom){const el=msgsEl();if(!el)return;
     if(reader()){el.innerHTML=readerHTML(chat,char);if(toBottom)el.scrollTop=el.scrollHeight;updateJump();hydrate(el);return}
-    el.innerHTML=chat.messages.length?chat.messages.map(msgHTML).join(''):`<div class="empty">Say something to start the story.</div>`;if(toBottom)el.scrollTop=el.scrollHeight;updateJump();hydrate(el)}
+    el.innerHTML=fromWorldHTML(chat)+(chat.messages.length?chat.messages.map(msgHTML).join(''):`<div class="empty">Say something to start the story.</div>`);if(toBottom)el.scrollTop=el.scrollHeight;updateJump();hydrate(el)}
   function updateOne(i){const el=msgsEl();if(!el||curChat!==chat)return;if(reader())return renderMsgs();const near=el.scrollHeight-el.scrollTop-el.clientHeight<120;const node=$(`.msg[data-i="${i}"]`,el);if(node)node.outerHTML=msgHTML(chat.messages[i],i);else renderMsgs();if(near)el.scrollTop=el.scrollHeight;hydrate(el)}
   function updateSend(){const b=$('#sendbtn');if(!b)return;const g=GEN&&GEN.chatId===chat.id;b.innerHTML=g?I.stop:I.send;b.classList.toggle('stop',!!g)}
   // image story turn: one JSON reply with a message, maybe an image, and a suggested next scene
@@ -2566,6 +2571,7 @@ async function vChat(id){
   }
   const idxOf=b=>+b.closest('.msg,.rd-sec').dataset.i;
   H={
+    toworld:()=>{S.ui.jumpTo=chat.origin.msgId;go('#/chat/'+chat.origin.chatId)},
     send:async()=>{
       if(GEN&&GEN.chatId===chat.id){GEN.ctrl.abort();return}
       const inp=$('#inp'),t=inp.value.trim();
@@ -3350,6 +3356,27 @@ function chatCost(chat){
   if(chat.costExtra)t=(t||0)+chat.costExtra;
   return t==null?null:{cost:t,est};
 }
+// Scenes started from a world chat link both ways: the world chat shows each scene under the message it started from,
+// and the scene shows a way back to that message.
+function sceneLinksHTML(chat,m){
+  const ls=(chat.scenes||[]).filter(s=>s.msgId===m.id).map(s=>S.chatIndex.find(x=>x.id===s.id)).filter(Boolean);
+  return ls.length?`<div class="scenelinks">${ls.map(x=>`<a class="chip" href="#/chat/${x.id}">${I.chat} ${esc(getChar(x.charId)?.name||'')}: ${esc(x.title)}</a>`).join('')}</div>`:'';
+}
+function fromWorldHTML(chat){
+  const o=chat.origin,x=o&&S.chatIndex.find(x=>x.id===o.chatId);
+  return x?`<button class="fromworld" data-act="toworld">${I.back} From the world chat: ${esc(x.title)}</button>`:'';
+}
+// opening a chat at a message (S.ui.jumpTo, a message id) instead of at the bottom; it flashes briefly
+function jumpToMsg(chat){
+  const id=S.ui.jumpTo;delete S.ui.jumpTo;const i=id?chat.messages.findIndex(m=>m.id===id):-1;if(i<0)return;
+  const n=$(`.msg[data-i="${i}"]`);if(!n)return;n.scrollIntoView({block:'center'});n.classList.add('flash');setTimeout(()=>n.classList.remove('flash'),1600);
+}
+// scenes made before the links existed: listed on their world chat the first time they're opened
+async function linkScene(chat){
+  const o=chat.origin;if(!o)return;const wc=await loadChat(o.chatId);if(!wc)return;
+  o.msgId??=wc.messages[Math.min(o.upto,wc.messages.length-1)]?.id;
+  if(!(wc.scenes||[]).some(s=>s.id===chat.id)){(wc.scenes??=[]).push({id:chat.id,msgId:o.msgId});await saveChat(wc,true);await saveChat(chat,true)}
+}
 // A one-on-one chat with one character from a world chat, knowing what happened there up to a message: to play out in
 // full a past event the world chat only summed up, or a private moment that branches off. It lives on the character's page.
 function openWorldScene(wc,world,upto){
@@ -3400,8 +3427,9 @@ Reply with JSON:
         const chat={id:uid(),charId:c.id,scenarioId:sc.id,promptId:sc.promptId||'',personaId:wc.personaId||personaFor(wc)?.id,worldId:world.id,
           title:String(j.title||'').trim()||`${c.name} · ${what||'a scene'}`.slice(0,80),titleSet:true,created:Date.now(),memory:'',vars:{},
           brief:String(j.scenario||'').trim(),storySoFar:String(j.story_so_far||'').trim(),costExtra:usage?.cost||0,
-          origin:{chatId:wc.id,worldId:world.id,upto,when,what,me},
+          origin:{chatId:wc.id,worldId:world.id,upto,msgId:wc.messages[upto]?.id,when,what,me},
           messages:opening?[{id:uid(),role:'assistant',greeting:true,swipes:[opening],sw:0,time:Date.now()}]:[]};
+        (wc.scenes??=[]).push({id:chat.id,msgId:chat.origin.msgId});await saveChat(wc,true);
         c.lastUsed=Date.now();await saveChars();await saveChat(chat);closeSheet();go('#/chat/'+chat.id);toast(`Scene with ${c.name} started. ⋮ → Scene setup shows what it knows.`);
       }catch(e){msg.className='small err';msg.textContent=e.message;b.disabled=false}}
   },{modal:true});
