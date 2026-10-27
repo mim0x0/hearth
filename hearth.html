@@ -354,7 +354,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.13.0',HEARTH_DATE='2026-10-27';
+const HEARTH_VERSION='1.14.0',HEARTH_DATE='2026-10-27';
 const DEFAULTS={apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -3448,6 +3448,21 @@ function openSceneRole(chat,char,redraw){
       if(v==='other'){const who=prompt('Who do you play?',chat.origin.me||'');if(!who?.trim())return;chat.origin.me=who.trim()}else if(v==='me')chat.origin.me='';
       await setSceneRole(chat,v);closeSheet();redraw();toast(userAway(chat)?'Your messages now direct the story':"You're in the scene now. Write how you arrive.")}});
 }
+// The text of the scenes already started from this world chat at or before a message, for a new scene to build on:
+// the details a short summary leaves out (a letter one character wrote) still reach the next scene. Long scenes keep
+// their summary (if sent back) and their latest part.
+async function earlierScenes(wc,upto,room=18000){
+  const at=id=>wc.messages.findIndex(m=>m.id===id),un=personaFor(wc)?.name||'You',parts=[];
+  const list=liveScenes(wc).map(s=>({s,i:at(s.msgId)})).filter(x=>x.i>=0&&x.i<=upto).sort((a,b)=>a.i-b.i);
+  for(const {s} of list){
+    const sc=await loadChat(s.id),c=sc&&getChar(sc.charId);if(!sc||!c)continue;
+    const o=sc.origin||{},away=userAway(sc),each=Math.max(2000,Math.floor(room/list.length));
+    let tr=sc.messages.filter(m=>txt(m).trim()).map(m=>`${m.role==='user'?(away?`${un} (directions)`:o.me||un):c.name}: ${macro(stripThink(txt(m)),c.name,un)}`).join('\n\n');
+    if(tr.length>each)tr='…'+tr.slice(-each);
+    parts.push(`### ${o.when==='past'?'Flashback':'Side scene'} with ${c.name}: ${sc.title}${o.what?` (${o.what})`:''}\n${o.sent?`Summary: ${o.sent.split('\n').slice(1).join(' ')}\n`:''}${tr}`);
+  }
+  return parts.join('\n\n');
+}
 // A one-on-one chat with one character from a world chat, knowing what happened there up to a message: to play out in
 // full a past event the world chat only summed up, or a private moment that branches off. It lives on the character's page.
 function openWorldScene(wc,world,upto){
@@ -3476,7 +3491,7 @@ function openWorldScene(wc,world,upto){
         const scn=chatScn(wc,world)||scenariosOf(world).find(s=>s.id===wc.scenarioId),note=castNote(scn,c.id);
         let tr=msgs.map(m=>`${m.role==='user'?un:'Narrator'}: ${macro(stripThink(txt(m)),world.name,un)}`).join('\n\n');
         if(tr.length>20000)tr='…'+tr.slice(-20000);
-        const cut=s=>(s||'').trim().slice(0,2500);
+        const cut=s=>(s||'').trim().slice(0,2500),earlier=await earlierScenes(wc,upto);
         const {j,usage}=await aiJson('You set up a new one-on-one roleplay scene that branches off an ongoing story. You keep every detail the story already established. Reply with a single JSON object only.',
 `WORLD: ${world.name}
 ${cut(macro(world.personality||'',world.name,un))}
@@ -3488,13 +3503,13 @@ THE USER: ${un}${personaFor(wc)?.description?.trim()?` (${cut(personaFor(wc).des
 ${wc.memory?.trim()&&(wc.memoryAt||0)<=upto+1?`\nWORLD CHAT MEMORY:\n${wc.memory.trim()}\n`:''}${wc.scene?.trim()&&upto>=wc.messages.length-1?`\nTHE SCENE IN THE WORLD CHAT RIGHT NOW:\n${wc.scene.trim()}\n`:''}
 THE WORLD CHAT SO FAR:
 ${tr||'(nothing yet)'}
-
+${earlier?`\nEARLIER ONE-ON-ONE SCENES FROM THIS WORLD CHAT (they really happened; their details are canon, even small ones like a letter written or an item hidden):\n${earlier}\n`:''}
 THE NEW SCENE: ${when==='past'?`a past event, played out in full: ${what}. Everything the world chat said about it is canon; fill in the rest so it fits.`:`it continues from the end of the world chat, as a one-on-one scene with ${c.name}${what?`: ${what}`:''}.`}
 THE USER'S PART: ${role==='direct'?`directs the story from outside and is never a character in it. Leave {{user}} out of the scenario and the opening.`:role==='later'?`${un} ({{user}}) is NOT in the scene when it starts and may arrive later. Leave {{user}} out of the scenario's starting situation and out of the opening.`:me?`plays ${me} (use {{user}} for this person).`:`plays themselves, ${un} ({{user}})${when==='past'?'. If they were not part of the event, make them someone who was there, and say who in the scenario':''}.`}
 
 Reply with JSON:
 {"title":"a short title for the new chat, at most 8 words",
-"story_so_far":"what happened in the world chat that matters for this scene, as short past-tense bullet points; keep names, places and who did what exactly as the world chat said. At most 250 words.",
+"story_so_far":"what happened in the world chat${earlier?' and the earlier scenes':''} that matters for this scene, as short past-tense bullet points; keep names, places and who did what exactly as told.${earlier?` Include things from the earlier scenes that could come up here, even small ones (letters, messages, gifts, things hidden or moved, secrets told), and say when ${c.name} doesn't know about one yet.`:''} At most ${earlier?350:250} words.",
 "scenario":"the setup for the AI that plays ${c.name}: when and where the scene happens${when==='past'?' (and how long before the world chat)':''}, who is there, ${away?'':`what {{user}} is to ${c.name} in it, `}what each knows and wants, and the situation it starts in. 3-6 sentences.${away?'':" Use {{user}} for the user's character."}",
 "opening":"the first message of the scene from ${c.name}'s side, in the same style as the world chat (actions in *asterisks*, speech in quotes), 80-200 words, ${away?'ending at a moment where the story can go on. Never mention or address {{user}}.':"ending where {{user}} can respond. Never write {{user}}'s words or actions."}"}`,undefined,2500);
         const scs=scenariosOf(c),sc=scs[0],opening=String(j.opening||'').trim();
@@ -3553,8 +3568,8 @@ ${chat.brief?.trim()?`SCENE SETUP: ${macro(chat.brief.trim(),char.name,un)}\n`:'
 THE SCENE:
 ${tr}
 
-Write what the main story should now know from this scene, as short past-tense bullet points, oldest first, at most 150 words: ${past?'what really happened back then, who did what, and anything revealed that still matters':'what happened, decisions, promises, secrets, relationship changes, injuries and items'}. Use names, never "you". Reply with only the bullet points.`}
-      ],undefined,()=>{},{stream:false,maxTokens:600});
+Write what the main story should now know from this scene, as short past-tense bullet points, oldest first, at most 220 words: ${past?'what really happened back then, who did what, and anything revealed that still matters':'what happened, decisions, promises, secrets, relationship changes, injuries and items'}. Also keep small things that someone else could find out about or run into later, such as letters or messages written, gifts, things hidden, moved or taken, and secrets told, and say who knows something the others don't. Use names, never "you". Reply with only the bullet points.`}
+      ],undefined,()=>{},{stream:false,maxTokens:900});
       if(usage?.cost)chat.costExtra=(chat.costExtra||0)+usage.cost;
       const s=stripThink(text||'').trim();if(!s)throw new Error('The AI returned an empty summary. Try again.');
       if(!ta.isConnected)return;ta.value=s;sheetMeta.snap=sheetSnap(ta.closest('.pn')); // not a change of yours, so closing doesn't ask
