@@ -352,7 +352,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.11.0',HEARTH_DATE='2026-10-27';
+const HEARTH_VERSION='1.11.1',HEARTH_DATE='2026-10-27';
 const DEFAULTS={apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -2504,7 +2504,7 @@ async function vChat(id){
     let idx,m,base=null;
     // continue: the rest is added onto the last reply, so a long reply reads as one message
     const lastM=chat.messages.at(-1);if(mode==='continue'&&!(lastM?.role==='assistant'&&txt(lastM).trim()))mode='new';
-    if(mode==='continue'){idx=chat.messages.length-1;m=lastM;base=m.swipes[m.sw]}
+    if(mode==='continue'){idx=chat.messages.length-1;m=lastM;base=m.swipes[m.sw];if((chat.memoryAt||0)>idx)chat.memoryAt=idx} // the memory reads the grown reply again
     else if(mode==='swipe'){idx=chat.messages.length-1;m=chat.messages[idx];m.swipes.push('');m.sw=m.swipes.length-1}
     else{m={id:uid(),role:'assistant',swipes:[''],sw:0,time:Date.now(),av:char.avatarMode==='reply'?pickAv(char):undefined};chat.messages.push(m);idx=chat.messages.length-1}
     const {messages,ctx,errs,lore}=buildPrompt(chat,char,personaFor(chat),chat.messages.slice(0,base!=null?idx+1:idx));
