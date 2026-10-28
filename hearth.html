@@ -238,6 +238,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .rd-act svg{width:14px;height:14px}
 .storytxt{margin-top:8px;padding:8px 12px 2px;border-left:3px solid var(--accent2);background:var(--panel2);border-radius:8px;font-size:14.5px;line-height:1.6}
 .controw{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px;color:var(--muted)}
+.thumbs img.picked{outline:3px solid var(--accent);outline-offset:-3px;opacity:.85}
 .ig-pad{position:relative;width:min(100%,240px);margin:8px auto 0;background:var(--panel2);border:1px solid var(--line);border-radius:10px;touch-action:pan-y}
 .ig-pad.live{touch-action:none;cursor:crosshair}
 .ig-pad .g5{position:absolute;inset:0;border-radius:10px;background-image:linear-gradient(to right,var(--line) 1px,transparent 1px),linear-gradient(to bottom,var(--line) 1px,transparent 1px);background-size:20% 20%;opacity:.7;pointer-events:none}
@@ -360,7 +361,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.21.1',HEARTH_DATE='2026-10-28';
+const HEARTH_VERSION='1.22.0',HEARTH_DATE='2026-10-28';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -1259,14 +1260,16 @@ async function viewPicture(c,id,kind,after){
   const n=$('#gnote');if(n)n.onchange=async()=>{if(g){g.note=n.value.trim();await saveChars()}};
 }
 function openGallery(c,chatId){
-  let only=!!chatId;
+  let only=!!chatId;libData(); // so the button shows when there are saved pictures
   const draw=()=>{
     const list=(c.gallery||[]).filter(g=>!only||g.chatId===chatId).slice().reverse();
     const pn=openSheet(`<h2>${esc(c.name)} · Gallery</h2>
       ${chatId?`<div class="chips" style="margin-bottom:10px"><button type="button" class="chip ${only?'on':''}" data-act="f" data-v="1">This chat</button><button type="button" class="chip ${only?'':'on'}" data-act="f" data-v="">All</button></div>`:''}
       ${thumbs(list.map(g=>g.id),'gview',`<button class="thumb-add" data-act="gadd" title="Add pictures">+</button>`)}
-      ${list.length?'':'<p class="muted small">No pictures yet. Tap + to add some.</p>'}`,{
+      ${list.length?'':'<p class="muted small">No pictures yet. Tap + to add some.</p>'}
+      ${lib?.items.length?`<button class="btn ghost sm" data-act="glib" style="margin-top:10px">${I.folder} Add from My pictures</button>`:''}`,{
       f:b=>{only=!!b.dataset.v;draw()},
+      glib:()=>openLibrary({pick:{c,chatId,after:draw}}),
       gadd:async()=>{await addPictures(c,'gallery',chatId);draw()},
       gview:b=>viewPicture(c,b.dataset.id,'gallery',draw)
     });
@@ -1301,8 +1304,9 @@ document.addEventListener('click',e=>{
   const fn=(inSheet?SH[a]:H[a])||scriptActs[a]||G[a];
   if(fn){e.preventDefault();fn(b,e)}
 });
-document.addEventListener('input',e=>{if(e.target.closest('.dirty-watch'))markDirty()});
+document.addEventListener('input',e=>{if(e.target.closest('.dirty-watch')&&!e.target.classList.contains('cpf-q'))markDirty()}); // searching a list isn't a change
 const G={back:()=>goBack(),close:()=>closeSheet(),
+  cpf:b=>{const bar=b.closest('.cpf');$$('[data-act=cpf]',bar).forEach(x=>x.classList.toggle('on',x===b));cpfApply(bar)},
   zoom:b=>{const lb=$('#lightbox');$('img',lb).src=b.getAttribute('src');lb.classList.add('on')}};
 $('#lightbox').onclick=()=>$('#lightbox').classList.remove('on'); // tap the big picture again to close it
 /* ---------- where the data lives: a temporary link (from a share or a file app) can't be reopened, and its storage may not last ---------- */
@@ -1824,7 +1828,7 @@ function vWizard(){
     </div>
     <div id="wz-cast" hidden>
       <label class="f">Your characters in this world<small>optional</small></label>
-      <div class="chips" id="wz-mem">${S.chars.filter(c=>c.kind!=='world').map(c=>`<button type="button" class="chip mem" data-act="wmem" data-id="${c.id}"><img src="${esc(avatar(c))}" alt="">${esc(c.name)}</button>`).join('')||'<span class="muted small">You have no characters yet. You can add them later in the world\'s editor.</span>'}</div>
+      ${charFilterHTML(S.chars.filter(c=>c.kind!=='world'))}<div class="chips" id="wz-mem">${S.chars.filter(c=>c.kind!=='world').map(c=>`<button type="button" class="chip mem" data-act="wmem" data-id="${c.id}" ${cfAttr(c)}><img src="${esc(avatar(c))}" alt="">${esc(c.name)}</button>`).join('')||'<span class="muted small">You have no characters yet. You can add them later in the world\'s editor.</span>'}</div>
       <div class="hint" id="wz-cast-h"></div>
       <label class="f">How they're connected<small>optional, one per line</small></label><textarea id="wz-wrel" rows="3" placeholder="e.g.&#10;Aria and Fern are sisters.&#10;Stark is Aria's ex-fiancé.&#10;They all owe money to Lysa."></textarea>
       <div class="hint">Kept exactly as you write them. The AI adds other connections that make sense.</div>
@@ -2166,7 +2170,7 @@ function vEdit(id='new'){
   const cast=S.chars.filter(c=>c.kind!=='world');
   editMembers=[...(W.members||[])].filter(getChar);
   const membersHTML=`<label class="f">Characters in this world<small>optional</small></label>
-    ${cast.length?`<div class="chips">${cast.map(c=>`<button type="button" class="chip mem ${(W.members||[]).includes(c.id)?'on':''}" data-act="toggle-mem" data-id="${c.id}"><img src="${esc(avatar(c))}" alt="">${esc(c.name)}</button>`).join('')}</div>`:'<p class="muted small">You have no characters yet.</p>'}
+    ${cast.length?`${charFilterHTML(cast)}<div class="chips">${cast.map(c=>`<button type="button" class="chip mem ${(W.members||[]).includes(c.id)?'on':''}" data-act="toggle-mem" data-id="${c.id}" ${cfAttr(c)}><img src="${esc(avatar(c))}" alt="">${esc(c.name)}</button>`).join('')}</div>`:'<p class="muted small">You have no characters yet.</p>'}
     <div class="hint">Tap to add your characters. Their full definitions are sent, so the AI plays them faithfully. Characters you don't add can still appear, using the world description and the AI's own knowledge.</div>
     <label class="f">Relationships<small>how your characters are connected</small></label>
     <div id="rels">${(W.relations||[]).map(relHTML).join('')}</div>
@@ -3027,7 +3031,7 @@ async function viewMade(id,o={}){
   const rec=await store.get('img:'+id);if(!rec?.data)return toast('Picture not found');
   const c=o.c,saved=c&&((rec.saved||[]).includes(c.id)||c.gallery?.some(g=>g.id===id));
   openSheet(`<img src="${rec.data}" alt="" data-act="zoom" style="width:100%;max-height:60dvh;object-fit:contain;border-radius:12px;background:#000">
-    <p class="small muted" style="margin:6px 0 0">${[rec.tool,rec.uploaded?'From your device':'',rec.seed!=null?`Seed ${rec.seed}`:''].filter(Boolean).map(esc).join(' · ')}${rec.saved?.length?` · <span class="okc">Saved to ${[...new Set(rec.saved)].map(x=>esc(getChar(x)?.name||'?')).join(', ')}</span>`:''}</p>
+    <p class="small muted" style="margin:6px 0 0">${[rec.tool,rec.uploaded?'From your device':'',rec.seed!=null?`Seed ${rec.seed}`:''].filter(Boolean).map(esc).join(' · ')}${rec.saved?.length?` · <span class="okc">Saved to ${[...new Set(rec.saved)].map(x=>x==='lib'?'My pictures':esc(getChar(x)?.name||'?')).join(', ')}</span>`:''}</p>
     <div class="menu" style="margin-top:8px">
       ${c?`<button data-act="gsave" ${saved?'disabled':''}>${saved?`${I.check} Saved to ${esc(c.name)}'s gallery`:`${I.plus} Save to ${esc(c.name)}'s gallery`}</button>`:''}
       <button data-act="gother">${I.folder} Save to ${c?'another':'a'} gallery…</button>
@@ -3039,7 +3043,9 @@ async function viewMade(id,o={}){
     <div class="sheet-foot row"><button class="btn" data-act="back" style="flex:1">${I.back} ${o.backLabel||'Back'}</button></div>`,{
     back:()=>o.back?o.back():closeSheet(),
     gsave:async()=>{await saveToGallery(c,id,o.note,o.chatId);toast(`Saved to ${c.name}'s gallery`);viewMade(id,o)},
-    gother:()=>pickGallery(async t=>{await saveToGallery(t,id,o.note,t.id===c?.id?o.chatId:'');toast(`Saved to ${t.name}'s gallery`);viewMade(id,o)},()=>viewMade(id,o)),
+    gother:()=>pickGallery(async t=>{
+      if(t==='lib')return pickLibFolder(async fid=>{await saveToLibrary(id,fid,o.note);toast(`Saved to My pictures${fid?` · ${libFolderName(fid)}`:''}`);viewMade(id,o)},()=>viewMade(id,o));
+      await saveToGallery(t,id,o.note,t.id===c?.id?o.chatId:'');toast(`Saved to ${t.name}'s gallery`);viewMade(id,o)},()=>viewMade(id,o)),
     dl:async()=>download(`hearth-${rec.seed??id}.png`,await dataToBlob(rec.data)),
     more:b=>o.more[+b.dataset.k].fn(),
     // a copy goes to the Images page, for image to image, inpainting and the tools
@@ -3048,12 +3054,114 @@ async function viewMade(id,o={}){
   });
 }
 // pick a character or world to save a picture to
-function pickGallery(done,back){
+// o.chars: only characters and worlds (no My pictures); done gets the character, or 'lib' for My pictures
+function pickGallery(done,back,o={}){
   const list=[...S.chars].sort((a,b)=>(b.lastUsed||0)-(a.lastUsed||0));
-  openSheet(`<h2>Save to a gallery</h2><div class="list">${list.map(c=>`<div class="li" data-act="pick" data-id="${c.id}"><img src="${esc(avatar(c))}" alt=""><div class="lt"><b>${esc(c.name)}</b><span>${c.kind==='world'?'World':'Character'} · ${c.gallery?.length||0} pictures</span></div></div>`).join('')||'<p class="muted">No characters yet.</p>'}</div>
+  openSheet(`<h2>${o.chars?'Give to a character':'Save to a gallery'}</h2>${o.chars?'':`<div class="list" style="margin-bottom:10px"><div class="li" data-act="lib">${I.folder}<div class="lt"><b>My pictures</b><span>No character yet: keep it in a folder and give it to one later</span></div></div></div>`}
+    ${charFilterHTML(list)}<div class="list">${list.map(c=>`<div class="li" data-act="pick" data-id="${c.id}" ${cfAttr(c)}><img src="${esc(avatar(c))}" alt=""><div class="lt"><b>${esc(c.name)}</b><span>${c.kind==='world'?'World':'Character'} · ${c.gallery?.length||0} pictures</span></div></div>`).join('')||'<p class="muted">No characters yet.</p>'}</div>
     <div class="sheet-foot row"><button class="btn ghost" data-act="back" style="flex:1">${I.back} Back</button></div>`,{
-    pick:b=>done(getChar(b.dataset.id)),back:()=>back()});
+    pick:b=>done(getChar(b.dataset.id)),lib:()=>done('lib'),back:()=>back()});
 }
+/* ---------- My pictures: saved pictures that don't belong to a character yet, in folders ---------- */
+// store 'library': {folders:[{id,name}], items:[{id,folder,note,seed,at}]}; each picture is its own 'img:<id>' like gallery pictures
+let lib=null;
+const libData=async()=>lib??={folders:[],items:[],...((await store.get('library'))||{})};
+const saveLib=()=>store.set('library',lib);
+const libFolderName=id=>lib?.folders.find(f=>f.id===id)?.name;
+// a copy goes into My pictures, like saving to a gallery
+async function saveToLibrary(srcId,folder,note){
+  const rec=await store.get('img:'+srcId);if(!rec?.data)throw new Error('Picture not found');
+  const L=await libData(),id=await putImg(rec.data);L.items.push({id,folder:folder||'',note:note||'',seed:rec.seed,at:Date.now()});await saveLib();
+  await store.set('img:'+srcId,{...rec,saved:[...(rec.saved||[]),'lib']});return id;
+}
+// pick a folder of My pictures (or none, or a new one)
+function pickLibFolder(done,back){
+  libData().then(L=>openSheet(`<h2>Save to My pictures</h2><p class="hint">Pick a folder, so it's easy to find when you give it to a character later.</p><div class="list">
+    <div class="li" data-act="pick" data-f=""><div class="lt"><b>No folder</b></div></div>
+    ${L.folders.map(f=>`<div class="li" data-act="pick" data-f="${f.id}">${I.folder}<div class="lt"><b>${esc(f.name)}</b><span>${L.items.filter(x=>x.folder===f.id).length} pictures</span></div></div>`).join('')}</div>
+    <button class="btn ghost block" data-act="add" style="margin-top:10px">${I.plus} New folder</button>
+    <div class="sheet-foot row"><button class="btn ghost" data-act="back" style="flex:1">${I.back} Back</button></div>`,{
+    pick:b=>done(b.dataset.f),back:()=>back(),
+    add:async()=>{const n=prompt('Folder name')?.trim();if(!n)return;const f={id:uid(),name:n};L.folders.push(f);await saveLib();done(f.id)}}));
+}
+// the library: folders, pictures, and adding pictures from the device. o.pick: choose pictures to give to a character
+// ({c, chatId, after}), they move out of My pictures unless "keep a copy" is on
+function openLibrary(o={}){
+  let cur=S.ui.libFolder||'';const sel=new Set();
+  const draw=async()=>{
+    const L=await libData(),fs=L.folders;if(cur&&cur!=='none'&&!fs.some(f=>f.id===cur))cur='';
+    const loose=x=>!fs.some(f=>f.id===x.folder),inF=x=>!cur||(cur==='none'?loose(x):x.folder===cur);
+    const list=L.items.filter(inF).slice().reverse(),cnt=id=>L.items.filter(x=>id==='none'?loose(x):x.folder===id).length;
+    const chip=(id,name,n,ic='')=>`<button type="button" class="chip ${cur===id?'on':''}" data-act="lf" data-f="${id}">${ic}${esc(name)}<span class="n">${n}</span></button>`;
+    const pn=openSheet(`<h2>${o.pick?`My pictures → ${esc(o.pick.c.name)}`:'My pictures'}</h2>
+      <p class="hint">${o.pick?`Tap the pictures to give to ${esc(o.pick.c.name)}.`:"Pictures you saved that don't belong to a character yet. Open one to give it to a character."}</p>
+      <div class="chips">${chip('','All',L.items.length)}${fs.map(f=>chip(f.id,f.name,cnt(f.id),I.folder)).join('')}${fs.length&&cnt('none')?chip('none','No folder',cnt('none')):''}${o.pick?'':`<button type="button" class="chip" data-act="lnew">${I.plus} Folder</button>`}</div>
+      ${!o.pick&&cur&&cur!=='none'?`<div class="row" style="margin:4px 0 8px"><button class="btn ghost sm" data-act="lren">${I.edit} Rename folder</button><button class="btn ghost sm" data-act="ldel">${I.trash} Delete folder</button></div>`:''}
+      ${list.length?thumbs(list.map(x=>x.id),'lview').replace(/data-act="lview" data-id="([^"]+)"/g,(m,id)=>sel.has(id)?m+' class="picked"':m):'<p class="muted small" style="margin-top:10px">No pictures here yet.</p>'}
+      ${o.pick?`<div class="tg"><div>Keep a copy in My pictures</div><label class="sw"><input type="checkbox" id="lb-keep"><span></span></label></div>`:''}
+      <div class="sheet-foot row">${o.pick?`<button class="btn ghost" data-act="close" style="flex:1">Cancel</button><button class="btn" data-act="ladd" style="flex:2" id="lb-add">Give ${sel.size||''} to ${esc(o.pick.c.name)}</button>`
+        :`<button class="btn ghost" data-act="close" style="flex:1">Close</button><button class="btn ghost" data-act="lup" style="flex:1">${I.plus} From device</button>`}</div>`,{
+      lf:b=>{cur=b.dataset.f;S.ui.libFolder=cur;draw()},
+      lnew:async()=>{const n=prompt('Folder name')?.trim();if(!n)return;const f={id:uid(),name:n};L.folders.push(f);await saveLib();cur=S.ui.libFolder=f.id;draw()},
+      lren:async()=>{const f=fs.find(x=>x.id===cur),n=prompt('Folder name',f.name)?.trim();if(!n)return;f.name=n;await saveLib();draw()},
+      ldel:async()=>{const f=fs.find(x=>x.id===cur);if(!confirm(`Delete the folder “${f.name}”? Its pictures are kept, with no folder.`))return;
+        L.items.forEach(x=>{if(x.folder===f.id)x.folder=''});L.folders=fs.filter(x=>x!==f);await saveLib();cur='';draw()},
+      lview:b=>{const id=b.dataset.id;
+        if(o.pick){sel.has(id)?sel.delete(id):sel.add(id);b.classList.toggle('picked',sel.has(id));$('#lb-add').textContent=`Give ${sel.size||''} to ${o.pick.c.name}`;return}
+        viewLibItem(L.items.find(x=>x.id===id),draw)},
+      lup:async()=>{const files=await pickFiles('image/*',true);for(const fl of files){try{const id=await putImg(await fileToStored(fl));L.items.push({id,folder:cur&&cur!=='none'?cur:'',note:'',at:Date.now()})}catch(e){toast(`${fl.name}: ${e.message}`)}}await saveLib();draw()},
+      ladd:async()=>{if(!sel.size)return toast('Tap the pictures to give first');const keep=$('#lb-keep').checked;
+        for(const id of sel){const x=L.items.find(i=>i.id===id);if(x)await giveToChar(o.pick.c,x,keep,o.pick.chatId)}
+        toast(`Gave ${sel.size} picture${sel.size>1?'s':''} to ${o.pick.c.name}`);closeSheet();o.pick.after?.()}
+    });hydrate(pn);
+  };draw();
+}
+// a picture of My pictures into a character's gallery: moved (the same picture), or copied when keep is on
+async function giveToChar(c,x,keep,chatId){
+  const L=await libData();let id=x.id;
+  if(keep){const d=await getImgData(x.id);if(!d)return;id=await putImg(d)}else L.items=L.items.filter(i=>i!==x);
+  (c.gallery??=[]).push({id,chatId:chatId||'',note:x.note||'',seed:x.seed,at:Date.now()});await saveChars();await saveLib();
+}
+function viewLibItem(x,back){
+  if(!x)return back();
+  getImgData(x.id).then(d=>{if(!d)return toast('Picture not found');
+    openSheet(`<img src="${d}" alt="" data-act="zoom" style="width:100%;max-height:55dvh;object-fit:contain;border-radius:12px;background:#000">
+      <p class="small muted" style="margin:6px 0 0">${[libFolderName(x.folder)?`In ${esc(libFolderName(x.folder))}`:'No folder',x.seed!=null?`Seed ${x.seed}`:''].filter(Boolean).join(' · ')}</p>
+      <label class="f">Note<small>optional</small></label><input id="lb-note" value="${esc(x.note||'')}" placeholder="e.g. for Aria, the festival">
+      <div class="menu" style="margin-top:8px">
+        <button data-act="give">${I.user} Give to a character…</button>
+        <button data-act="copy">${I.copy} Copy to a character…</button>
+        <button data-act="fold">${I.folder} Move to folder…</button>
+        <button data-act="img">${I.img} Use on the Images page</button>
+        <button data-act="dl">${I.imp} Save to device</button>
+        <button class="danger" data-act="del">${I.trash} Delete picture</button>
+      </div>
+      <div class="sheet-foot row"><button class="btn" data-act="back" style="flex:1">${I.back} Back to My pictures</button></div>`,{
+      back:()=>back(),
+      give:()=>pickGallery(async c=>{await giveToChar(c,x,false);toast(`Moved to ${c.name}'s gallery`);back()},()=>viewLibItem(x,back),{chars:true}),
+      copy:()=>pickGallery(async c=>{await giveToChar(c,x,true);toast(`Copied to ${c.name}'s gallery`);viewLibItem(x,back)},()=>viewLibItem(x,back),{chars:true}),
+      fold:()=>pickLibFolder(async f=>{x.folder=f;await saveLib();toast(f?`Moved to ${libFolderName(f)}`:'Not in a folder now');viewLibItem(x,back)},()=>viewLibItem(x,back)),
+      img:async()=>{const pg=await imgPageData(),nid=await putImg(d,{seed:x.seed,made:true});pg.hist.unshift({id:nid,at:Date.now(),seed:x.seed,form:null});saveImgPage();closeSheet();go('#/images');toast('Added to the Images page')},
+      dl:async()=>download(`hearth-${x.seed??x.id}.png`,await dataToBlob(d)),
+      del:async()=>{if(!confirm('Delete this picture from My pictures?'))return;const L=await libData();L.items=L.items.filter(i=>i!==x);await saveLib();if(!inGallery(x.id))await delImg(x.id);back()}
+    });
+    $('#lb-note').onchange=async e=>{x.note=e.target.value.trim();await saveLib()};
+  });
+}
+/* ---------- long character lists: a search box and the Characters page's folders, to narrow any list of characters ---------- */
+// The list's items carry cfAttr (their folder and name) and sit right after the bar; picked items (.on) always stay in view.
+function charFilterHTML(list){
+  const fs=folders('chars').filter(f=>list.some(c=>c.folder===f.id));
+  if(list.length<=8&&!fs.length)return '';
+  const loose=list.some(c=>!fs.some(f=>f.id===c.folder));
+  return `<div class="cpf"><input class="search cpf-q" placeholder="Search characters" style="margin:0 0 6px">${fs.length?`<div class="chips" style="margin-bottom:6px"><button type="button" class="chip on" data-act="cpf" data-f="">All</button>${fs.map(f=>`<button type="button" class="chip" data-act="cpf" data-f="${f.id}">${I.folder}${esc(f.name)}</button>`).join('')}${loose?`<button type="button" class="chip" data-act="cpf" data-f="none">No folder</button>`:''}</div>`:''}</div>`;
+}
+const cfAttr=c=>`data-cf="${folders('chars').some(f=>f.id===c.folder)?esc(c.folder):'none'}" data-cn="${esc((c.name||'').toLowerCase())}"`;
+function cpfApply(bar){
+  const box=bar.nextElementSibling;if(!box)return;const q=$('.cpf-q',bar).value.trim().toLowerCase(),f=$('.chip.on[data-act=cpf]',bar)?.dataset.f||'';
+  for(const el of box.querySelectorAll('[data-cn]'))el.hidden=!el.classList.contains('on')&&!((!f||el.dataset.cf===f)&&(!q||el.dataset.cn.includes(q)));
+}
+document.addEventListener('input',e=>{if(e.target.classList?.contains('cpf-q'))cpfApply(e.target.closest('.cpf'))});
 async function naiAccount(token){
   const r=await fetch(naiUrl()+'/user/subscription',{headers:{'Authorization':'Bearer '+token.trim()}});
   if(r.status===401)throw new Error("NovelAI didn't accept this token");if(!r.ok)throw new Error('NovelAI: error '+r.status);
@@ -4037,9 +4145,9 @@ function chatMenu(chat,char,redraw){
     cworld:()=>{
       const worlds=S.chars.filter(c=>c.kind==='world'),home=getChar(char.homeWorld),cur='worldId' in chat?chat.worldId:undefined;
       const row=(v,title,sub,on)=>`<div class="li ${on?'on':''}" data-act="pick" data-v="${v}"><div class="lt"><b>${title}</b><span>${sub}</span></div></div>`;
-      openSheet(`<h2>World for this chat</h2><p class="hint">${esc(char.name)} gets that world's description, their relationships there, its lorebook, and notes on its other characters when they come up.</p><div class="list">
+      openSheet(`<h2>World for this chat</h2><p class="hint">${esc(char.name)} gets that world's description, their relationships there, its lorebook, and notes on its other characters when they come up.</p>${charFilterHTML(worlds)}<div class="list">
         ${row('@home',`Where ${esc(char.name)} lives`,home?.kind==='world'?esc(home.name):'No world set on the character page',cur===undefined)}
-        ${worlds.map(w=>row(w.id,esc(w.name),(w.members||[]).includes(char.id)?`${esc(char.name)} is a member`:'',cur===w.id)).join('')}
+        ${worlds.map(w=>row(w.id,esc(w.name),(w.members||[]).includes(char.id)?`${esc(char.name)} is a member`:'',cur===w.id).replace('<div class="li',`<div ${cfAttr(w)} class="li`)).join('')}
         ${row('',`No world`,'Only the character page',cur==='')}</div>`,{
         pick:async b=>{const v=b.dataset.v;if(v==='@home')delete chat.worldId;else chat.worldId=v;await saveChat(chat,true);closeSheet();redraw();toast(`World: ${chatWorld(chat,char)?.name||'none'}`)}})},
     scene:()=>{
@@ -4191,16 +4299,16 @@ function imgAiCtx(who){
 async function vImages(){
   const pg=await imgPageData(),f=pg.form,st=S.settings;
   const opt=(k,list,cur)=>`<select data-s="${k}">${list.map(([v,l])=>`<option value="${v}" ${String(cur)===String(v)?'selected':''}>${l}</option>`).join('')}</select>`;
-  const people=[...S.chars].filter(c=>c.kind!=='world').sort((a,b)=>(b.lastUsed||0)-(a.lastUsed||0)).slice(0,40);
+  const people=[...S.chars].filter(c=>c.kind!=='world').sort((a,b)=>(b.lastUsed||0)-(a.lastUsed||0));
   const charBox=(c,k)=>`<div class="box ig-c" data-k="${k}" style="margin:8px 0"><div class="row" style="margin-bottom:6px"><b style="flex:1"><i class="ig-sw" style="background:${dotColor(k)}"></i>Character ${k+1}</b><button class="btn ghost sm" data-act="crm" data-k="${k}" title="Remove">${I.trash}</button></div>
     <textarea class="ig-cpr" rows="3" placeholder="girl, long hair, …">${esc(c.prompt)}</textarea><textarea class="ig-cuc" rows="2" placeholder="Undesired for this character" style="margin-top:6px">${esc(c.uc)}</textarea></div>`;
-  view.innerHTML=`<header class="top"><h1>Images</h1></header><div class="pad">
+  view.innerHTML=`<header class="top"><h1>Images</h1><button class="ib" data-act="lib" title="My pictures">${I.folder}</button></header><div class="pad">
     ${naiOn()?`<div class="box small" style="margin-bottom:12px;display:flex;gap:8px;align-items:center"><div id="ig-acct" style="flex:1" class="muted">Checking your NovelAI account…</div><button class="btn ghost sm" data-act="acct" title="Check again">${I.regen}</button></div>`:''}
     ${naiOn()?'':`<div class="box" style="margin-bottom:12px"><b>Add your NovelAI token first</b><div class="small muted" style="margin:4px 0 8px">Settings → NovelAI images. Pictures use your NovelAI subscription, like on NovelAI's site.</div><button class="btn sm" data-act="toset">Open Settings</button></div>`}
     <div class="box" style="margin-bottom:12px"><b>${I.wand} Ask the AI to write it</b>
       <textarea id="ia-d" rows="3" placeholder="Describe the picture, e.g. Fern and Frieren sharing tea under cherry blossoms in the evening, smiling" style="margin-top:8px">${esc(pg.ask||'')}</textarea>
       <div class="small muted" style="margin:8px 0 4px">Who's in it (so their looks are right)</div>
-      <div class="chips">${S.personas.length?`<button type="button" class="chip ${pg.who.includes('me')?'on':''}" data-act="who" data-id="me">${I.user} Me (${esc(personaFor(null)?.name||'You')})</button>`:''}${people.map(c=>`<button type="button" class="chip mem ${pg.who.includes(c.id)?'on':''}" data-act="who" data-id="${c.id}"><img src="${esc(avatar(c))}" alt="">${esc(c.name)}</button>`).join('')}</div>
+      ${charFilterHTML(people)}<div class="chips">${S.personas.length?`<button type="button" class="chip ${pg.who.includes('me')?'on':''}" data-act="who" data-id="me">${I.user} Me (${esc(personaFor(null)?.name||'You')})</button>`:''}${people.map(c=>`<button type="button" class="chip mem ${pg.who.includes(c.id)?'on':''}" data-act="who" data-id="${c.id}" ${cfAttr(c)}><img src="${esc(avatar(c))}" alt="">${esc(c.name)}</button>`).join('')}</div>
       <div class="row" style="margin-top:8px"><button class="btn sm" data-act="aiw">${I.wand} Write the prompt</button><button class="btn ghost sm" data-act="aic">${I.edit} Change the prompt</button></div>
       <div class="hint">Write the prompt makes a new prompt from your description. Change the prompt keeps the prompt below and changes only what you ask, e.g. "make it night" or "she holds a sword".</div>
       <div class="small" id="ia-msg" style="margin-top:6px"></div></div>
@@ -4297,7 +4405,7 @@ ${novelRules(chat,char,{fmt:'sections',lore:sceneLore(chat,char,[d])})}
 Return one JSON object only: ${panelJson('sections')}`,undefined,1500);r={panels:cleanPanels(j).map(p=>finishPanel(p,chat,char)),usage}}
       fill(r.panels[0]);msg.className='small okc';msg.textContent=`${change?'Changed':'Written'}. Check it, then tap Generate. ${usageText(r.usage)}`;
     }catch(e){msg.className='small err';msg.textContent=e.message}finally{b.disabled=false}};
-  H={toset:()=>go('#/settings'),
+  H={toset:()=>go('#/settings'),lib:()=>openLibrary(),
     who:b=>{const id=b.dataset.id,on=!pg.who.includes(id);pg.who=on?[...pg.who,id]:pg.who.filter(x=>x!==id);b.classList.toggle('on',on);saveImgPage()},
     aiw:b=>aiRun(b,false),aic:b=>aiRun(b,true),
     cadd:()=>{read();if(f.chars.length>=(S.settings.imgModel==='v45'?6:22))return toast('That is as many characters as the model takes');f.chars.push({pos:posAIOf(f)?'':{x:.5,y:.5},prompt:'',uc:''});drawChars();saveImgPage();const ls=$$('.ig-cpr',view);ls[ls.length-1]?.focus()},
@@ -4693,7 +4801,7 @@ function applyFont(){document.documentElement.style.setProperty('--fs',(S.settin
 /* ---------- backup ---------- */
 // every gallery and profile picture, so a backup restores them too
 async function allPictures(){
-  const ids=new Set(S.chars.flatMap(c=>[...(c.gallery||[]).map(g=>g.id),...(c.avatarPool||[])])),out=[];
+  const ids=new Set([...S.chars.flatMap(c=>[...(c.gallery||[]).map(g=>g.id),...(c.avatarPool||[])]),...(await libData()).items.map(x=>x.id)]),out=[];
   for(const id of ids){const d=await getImgData(id);if(d)out.push({id,data:d})}
   return out;
 }
@@ -4702,7 +4810,7 @@ async function exportBackup(auto){
   const inclKeys=auto?!!S.settings.backupKeys:confirm('Include your API keys in the backup?\n\nOK = include keys\nCancel = leave keys out (safer to share)');
   const chats=[];for(const c of S.chatIndex){const x=await loadChat(c.id);if(x)chats.push(x)}
   const settings=clone(S.settings);if(!inclKeys){settings.apis.forEach(a=>a.key='');settings.naiToken=''}
-  download(`hearth-backup-${new Date().toISOString().slice(0,10)}${auto?'-auto':''}.json`,JSON.stringify({hearthBackup:1,exported:Date.now(),chars:S.chars,personas:S.personas,lorebooks:S.lorebooks,settings,chats,images:await allPictures()}));
+  download(`hearth-backup-${new Date().toISOString().slice(0,10)}${auto?'-auto':''}.json`,JSON.stringify({hearthBackup:1,exported:Date.now(),chars:S.chars,personas:S.personas,lorebooks:S.lorebooks,settings,chats,images:await allPictures(),library:await libData()}));
   S.settings.lastBackup=Date.now();await saveSettings();
   const lb=$('#lastbk');if(lb)lb.textContent=new Date().toLocaleString();
 }
@@ -4726,6 +4834,7 @@ async function importBackup(j){
   ensurePrompts();ensureImgPresets();migrateChars();
   for(const c of j.chats||[]){chatCache.delete(c.id);await saveChat(c,true)}
   for(const p of j.images||[])if(p?.id&&p.data){await store.set('img:'+p.id,{id:p.id,data:p.data,at:Date.now()});imgCache.set(p.id,p.data)}
+  if(j.library){const L=await libData(),m=(a,b)=>{const x=new Map(a.map(i=>[i.id,i]));(b||[]).forEach(i=>x.set(i.id,i));return [...x.values()]};L.folders=m(L.folders,j.library.folders);L.items=m(L.items,j.library.items);await saveLib()}
   await saveChars();await savePersonas();await saveBooks();await saveSettings();applyFont();toast('Backup imported');route();
 }
 
