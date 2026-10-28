@@ -238,6 +238,12 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .rd-act svg{width:14px;height:14px}
 .storytxt{margin-top:8px;padding:8px 12px 2px;border-left:3px solid var(--accent2);background:var(--panel2);border-radius:8px;font-size:14.5px;line-height:1.6}
 .controw{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px;color:var(--muted)}
+.ig-padw{width:92px;flex:none;text-align:center}
+.ig-pad{position:relative;width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:8px;touch-action:none;cursor:crosshair;overflow:hidden}
+.ig-pad.off{opacity:.75}
+.ig-pad .g5{position:absolute;inset:0;background-image:linear-gradient(to right,var(--line) 1px,transparent 1px),linear-gradient(to bottom,var(--line) 1px,transparent 1px);background-size:20% 20%;opacity:.7;pointer-events:none}
+.ig-dot{position:absolute;width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 2px #fff,0 1px 4px #0008;pointer-events:none}
+.ig-ai{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:10.5px;line-height:1.3;color:var(--muted);pointer-events:none;padding:4px}
 .tokl{font-size:10.5px;line-height:1.3;color:var(--muted);opacity:.7;margin-top:3px;padding-left:2px}
 .status{font-size:13px;color:var(--muted);margin-bottom:4px}
 [data-act=zoom]{cursor:zoom-in}
@@ -354,7 +360,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.18.0',HEARTH_DATE='2026-10-28';
+const HEARTH_VERSION='1.18.1',HEARTH_DATE='2026-10-28';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -2910,6 +2916,8 @@ const naiSettings=()=>{const st=S.settings,v5=st.imgModel!=='v45',[w,h]=NAI_SIZE
   return {v5,model:v5?'nai-diffusion-5-full':'nai-diffusion-4-5-full',w,h,steps:Math.min(50,Math.max(1,+st.naiSteps||23)),scale:+st.naiScale||(v5?7:5),
     sampler:st.naiSampler||'k_euler_ancestral',seed:st.naiSeed===''||st.naiSeed==null?null:Math.round(+st.naiSeed)||null}};
 const naiFree=()=>{const n=naiSettings();return n.w*n.h<=1048576&&n.steps<=28};
+// NovelAI's 5×5 Character Positions grid (V4.5 snaps to it; V5 takes any point)
+const naiSnap=v=>[.1,.3,.5,.7,.9][Math.min(4,Math.max(0,Math.floor(5*v)))];
 // a position hint like "left, foreground" as a point on NovelAI's 5×5 Character Positions grid, or null
 function naiCenter(s){
   s=String(s||'').toLowerCase();let x=null,y=null;
@@ -2926,7 +2934,8 @@ function naiRequest(p0,seed){
   const uc=joinTags(NAI_UC[st.naiUc||'heavy']??'',p.undesired);
   let base,chars=[];
   if(p.onebox){const [b,...rest]=p.onebox.split('|');base=[addQ(b.trim()),...rest.map(s=>s.trim())].join(' | ')}
-  else{base=addQ(p.base);chars=p.characters.filter(c=>c.prompt?.trim()).map(c=>({prompt:c.prompt.trim(),uc:(c.undesired||'').trim(),center:naiCenter(c.position)}))}
+  else{base=addQ(p.base);chars=p.characters.filter(c=>c.prompt?.trim()).map(c=>{const o=c.position&&typeof c.position==='object'?c.position:null;
+    return {prompt:c.prompt.trim(),uc:(c.undesired||'').trim(),center:o?(n.v5?{x:o.x,y:o.y}:{x:naiSnap(o.x),y:naiSnap(o.y)}):naiCenter(c.position)}})}
   const coords=chars.some(c=>c.center),ctr=c=>c.center||{x:.5,y:.5};
   return {input:base,model:n.model,action:'generate',parameters:{params_version:4,width:n.w,height:n.h,scale:n.scale,sampler:n.sampler,steps:n.steps,n_samples:1,
     seed,ucPreset:{heavy:0,light:1,none:4}[st.naiUc||'heavy'],qualityToggle:!!qual,autoSmea:false,sm:false,sm_dyn:false,dynamic_thresholding:false,controlnet_strength:1,legacy:false,
@@ -3995,8 +4004,12 @@ function chatMenu(chat,char,redraw){
 
 /* ---------- Images: make pictures with NovelAI like on NovelAI's own page, or let the AI write the prompt ---------- */
 // The form and the pictures made here are kept ('imgpage'); a picture goes to a gallery only when you save it there.
-const IMG_POS=[['','AI chooses'],['left, top','Top left'],['center, top','Top'],['right, top','Top right'],['left','Left'],['center','Center'],['right','Right'],['left, bottom','Bottom left'],['center, bottom','Bottom'],['right, bottom','Bottom right']];
-const posOption=s=>{const c=naiCenter(s);if(!c)return '';const x=c.x<.5?'left':c.x>.5?'right':'center',y=c.y<.5?', top':c.y>.5?', bottom':'';return x==='center'&&!y?'center':x+y};
+// A character's position is a dot on the picture, like NovelAI's Character Positions: anywhere on V5, on a 5×5 grid
+// on V4.5. '' = the AI chooses. Older forms kept words like "left, top".
+const posOf=p=>p&&typeof p==='object'?p:naiCenter(p);
+const posPadHTML=(c,k)=>{const n=naiSettings(),p=posOf(c.pos),grid=!n.v5;
+  return `<div class="ig-padw"><div class="ig-pad ${p?'':'off'}" data-k="${k}" style="aspect-ratio:${n.w}/${n.h}">${grid?'<i class="g5"></i>':''}${p?`<span class="ig-dot" style="left:${p.x*100}%;top:${p.y*100}%"></span>`:'<span class="ig-ai">AI chooses<br>tap to place</span>'}</div>
+    ${p?`<button class="btn ghost sm" data-act="cpai" data-k="${k}" style="margin-top:4px">AI chooses</button>`:''}</div>`};
 let imgPage=null,imgSaveT=0;
 const imgPageData=async()=>imgPage??={form:{base:'',uc:'',chars:[],usePreset:true},hist:[],who:[],...((await store.get('imgpage'))||{})};
 const saveImgPage=()=>{clearTimeout(imgSaveT);imgSaveT=setTimeout(()=>store.set('imgpage',imgPage),400)};
@@ -4013,8 +4026,8 @@ async function vImages(){
   const pg=await imgPageData(),f=pg.form,st=S.settings;
   const opt=(k,list,cur)=>`<select data-s="${k}">${list.map(([v,l])=>`<option value="${v}" ${String(cur)===String(v)?'selected':''}>${l}</option>`).join('')}</select>`;
   const people=[...S.chars].filter(c=>c.kind!=='world').sort((a,b)=>(b.lastUsed||0)-(a.lastUsed||0)).slice(0,40);
-  const charBox=(c,k)=>`<div class="box ig-c" data-k="${k}" style="margin:8px 0"><div class="row" style="margin-bottom:6px"><b style="flex:1">Character ${k+1}</b><select class="ig-cp" style="width:auto;padding:4px 8px">${IMG_POS.map(([v,l])=>`<option value="${v}" ${c.pos===v?'selected':''}>${l}</option>`).join('')}</select><button class="btn ghost sm" data-act="crm" data-k="${k}" title="Remove">${I.trash}</button></div>
-    <textarea class="ig-cpr" rows="3" placeholder="girl, long hair, …">${esc(c.prompt)}</textarea><textarea class="ig-cuc" rows="2" placeholder="Undesired for this character" style="margin-top:6px">${esc(c.uc)}</textarea></div>`;
+  const charBox=(c,k)=>`<div class="box ig-c" data-k="${k}" style="margin:8px 0"><div class="row" style="margin-bottom:6px"><b style="flex:1">Character ${k+1}</b><button class="btn ghost sm" data-act="crm" data-k="${k}" title="Remove">${I.trash}</button></div>
+    <div class="row" style="align-items:flex-start;gap:10px"><div style="flex:1;min-width:0"><textarea class="ig-cpr" rows="3" placeholder="girl, long hair, …">${esc(c.prompt)}</textarea><textarea class="ig-cuc" rows="2" placeholder="Undesired for this character" style="margin-top:6px">${esc(c.uc)}</textarea></div>${posPadHTML(c,k)}</div></div>`;
   view.innerHTML=`<header class="top"><h1>Images</h1></header><div class="pad">
     ${naiOn()?'':`<div class="box" style="margin-bottom:12px"><b>Add your NovelAI token first</b><div class="small muted" style="margin:4px 0 8px">Settings → NovelAI images. Pictures use your NovelAI subscription, like on NovelAI's site.</div><button class="btn sm" data-act="toset">Open Settings</button></div>`}
     <div class="box" style="margin-bottom:12px"><b>${I.wand} Ask the AI to write it</b>
@@ -4040,9 +4053,9 @@ async function vImages(){
     <div class="small muted" id="ig-msg" style="margin-top:6px;text-align:center">${naiFree()?'Free on Opus at this size and steps.':'This size or step count costs Anlas.'}</div>
     <div id="ig-out" style="margin-top:12px"></div></div>`;
   const read=()=>{f.base=$('#ig-b').value;f.uc=$('#ig-u').value;f.usePreset=$('#ig-pr').checked;pg.ask=$('#ia-d').value;
-    $$('.ig-c',view).forEach(el=>{const c=f.chars[+el.dataset.k];if(c){c.prompt=$('.ig-cpr',el).value;c.uc=$('.ig-cuc',el).value;c.pos=$('.ig-cp',el).value}});saveImgPage()};
+    $$('.ig-c',view).forEach(el=>{const c=f.chars[+el.dataset.k];if(c){c.prompt=$('.ig-cpr',el).value;c.uc=$('.ig-cuc',el).value}});saveImgPage()};
   const drawChars=()=>{$('#ig-cs').innerHTML=f.chars.map(charBox).join('')};
-  const fill=p=>{f.base=p.base+(p.text?.trim()?'\nText: '+p.text.trim():'');f.uc=p.undesired||'';f.chars=p.characters.map(c=>({prompt:c.prompt||'',uc:c.undesired||'',pos:posOption(c.position)}));
+  const fill=p=>{f.base=p.base+(p.text?.trim()?'\nText: '+p.text.trim():'');f.uc=p.undesired||'';f.chars=p.characters.map(c=>({prompt:c.prompt||'',uc:c.undesired||'',pos:naiCenter(c.position)||''}));
     $('#ig-b').value=f.base;$('#ig-u').value=f.uc;drawChars();saveImgPage()};
   const drawOut=()=>{
     const h=pg.hist,top=h[0];
@@ -4051,8 +4064,21 @@ async function vImages(){
     hydrate($('#ig-out'));
   };
   view.oninput=e=>{const t=e.target,k=t.dataset.s;
-    if(k){S.settings[k]=k==='naiQuality'?!!t.value:t.type==='number'?(t.value===''?'':+t.value):t.value;saveSettings();$('#ig-msg').textContent=naiFree()?'Free on Opus at this size and steps.':'This size or step count costs Anlas.';return}
+    if(k){S.settings[k]=k==='naiQuality'?!!t.value:t.type==='number'?(t.value===''?'':+t.value):t.value;saveSettings();$('#ig-msg').textContent=naiFree()?'Free on Opus at this size and steps.':'This size or step count costs Anlas.';
+      if(k==='imgModel'||k==='naiSize'){read();drawChars()}return} // the position pads follow the picture's shape and the model's grid
     read()};
+  // tap or drag on a position pad to put the character's dot there
+  const padAt=(pad,e)=>{const r=pad.getBoundingClientRect(),c=f.chars[+pad.dataset.k];if(!c)return;
+    let x=Math.min(1,Math.max(0,(e.clientX-r.left)/r.width)),y=Math.min(1,Math.max(0,(e.clientY-r.top)/r.height));
+    if(naiSettings().v5){x=Math.round(x*100)/100;y=Math.round(y*100)/100}else{x=naiSnap(x);y=naiSnap(y)}
+    const was=posOf(c.pos);c.pos={x,y};
+    if(!was)pad.closest('.ig-padw').outerHTML=posPadHTML(c,+pad.dataset.k);
+    else{const d=$('.ig-dot',pad);d.style.left=x*100+'%';d.style.top=y*100+'%'}
+    saveImgPage()};
+  let dragPad=null;
+  view.onpointerdown=e=>{const pad=e.target.closest('.ig-pad');if(!pad)return;e.preventDefault();padAt(pad,e);dragPad=$(`.ig-pad[data-k="${pad.dataset.k}"]`,view);dragPad?.setPointerCapture?.(e.pointerId)};
+  view.onpointermove=e=>{if(dragPad?.isConnected)padAt(dragPad,e)};
+  view.onpointerup=view.onpointercancel=()=>{dragPad=null};
   $('.ip-pr',view).onchange=e=>{S.settings.imgPreset=e.target.value;saveSettings()};
   const aiRun=async(b,change)=>{
     read();const msg=$('#ia-msg'),d=pg.ask.trim();
@@ -4074,6 +4100,7 @@ Return one JSON object only: ${panelJson('sections')}`,undefined,1500);r={panels
     aiw:b=>aiRun(b,false),aic:b=>aiRun(b,true),
     cadd:()=>{read();if(f.chars.length>=(S.settings.imgModel==='v45'?6:22))return toast('That is as many characters as the model takes');f.chars.push({prompt:'',uc:'',pos:''});drawChars();saveImgPage();const ls=$$('.ig-cpr',view);ls[ls.length-1]?.focus()},
     crm:b=>{read();f.chars.splice(+b.dataset.k,1);drawChars();saveImgPage()},
+    cpai:b=>{const k=+b.dataset.k,c=f.chars[k];if(!c)return;c.pos='';b.closest('.ig-padw').outerHTML=posPadHTML(c,k);saveImgPage()},
     gen:async b=>{
       read();const msg=$('#ig-msg'),p=formPanel(f);
       if(!naiOn()){msg.className='small err';msg.textContent='Add your NovelAI token in Settings → NovelAI images.';return}
