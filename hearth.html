@@ -354,7 +354,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.15.1',HEARTH_DATE='2026-10-28';
+const HEARTH_VERSION='1.16.0',HEARTH_DATE='2026-10-28';
 const DEFAULTS={apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -814,7 +814,7 @@ const USE_KINDS=[[/physical state of a roleplay scene/,'Scene tracking',1],[/lon
   [/continuity editor/,'Check characters'],[/expert editor of AI roleplay/,'Fix characters'],[/relationships between roleplay characters/,'World relationships'],
   [/roleplay character notes/,'Character notes'],[/storyboard partner/,'Image stories',1],[/illustrated novel/,'Image story text',1],
   [/Danbooru-style appearance tags/,'Looks tags'],[/NovelAI Diffusion prompt writer/,'Image prompts',1],[/new one-on-one roleplay scene/,'Scene setup'],
-  [/sum up a side scene/,'Scene summaries'],[/^(Reply with just the word OK|What color is this square)/,'Connection tests']];
+  [/sum up a side scene/,'Scene summaries'],[/plan the pictures that illustrate/,'Storyboard plans'],[/^(Reply with just the word OK|What color is this square)/,'Connection tests']];
 const textOf=m=>typeof m.content==='string'?m.content:(m.content||[]).map(p=>p.type==='text'?p.text:'').join(' ');
 function useKind(messages,o){
   if(o.what)return [o.what,!!o.quiet];
@@ -2849,9 +2849,9 @@ function addImage(chat,panels,request,from,usage){
 }
 async function makeImagePrompt(chat,char,upto,opts){
   const p=personaFor(chat),un=p?.name||'You',panels=opts.panels||1;
-  let scene=chat.messages.slice(0,upto+1).slice(-10).map(m=>`${m.role==='user'?un:char.name}: ${macro(stripThink(txt(m)),char.name,un)}`).join('\n\n');
+  let scene=(opts.range?chat.messages.slice(opts.range[0],opts.range[1]+1):chat.messages.slice(0,upto+1).slice(-10)).map(m=>`${m.role==='user'?un:char.name}: ${macro(stripThink(txt(m)),char.name,un)}`).join('\n\n');
   if(scene.length>9000)scene='…'+scene.slice(-9000);
-  const what=opts.comic?`ONE image that is a comic page with ${opts.comic.n} panels${opts.comic.layout?` (${opts.comic.layout})`:''}, following the story beats of the roleplay in reading order and ending at the last message`
+  const what=opts.moment?`one image of this moment from it: ${opts.moment}`:opts.comic?`ONE image that is a comic page with ${opts.comic.n} panels${opts.comic.layout?` (${opts.comic.layout})`:''}, following the story beats of the roleplay in reading order and ending at the last message`
     :panels>1?`a storyboard of ${panels} images that follow its story beats in order, ending at the last message`:'one image of the moment in the last message';
   const {j,usage}=await aiJson(SYS_NAI,`Turn the roleplay below into ${what}.
 ${opts.extra?`USER'S WISHES FOR THE IMAGE: ${opts.extra}\n`:''}
@@ -2941,12 +2941,13 @@ function openImageSheet(chat,char,upto){
     <label class="f">Anything specific?<small>optional</small></label><textarea id="im-x" rows="3" placeholder="e.g. close-up of her face, rain, cinematic lighting, from below"></textarea>
     <div class="row" style="margin-top:10px"><span class="small muted">Preset</span>${presetSelect()}</div>
     <div class="hint">Uses NovelAI ${S.settings.imgModel==='v45'?'V4.5':'V5'} rules and the image tags of your characters and profile (Settings → Image prompts).</div>
-    <div class="hint">${chat.images?.length?`<a href="#" data-act="hist" style="color:var(--accent)">History (${chat.images.length})</a> · `:''}<a href="#" data-act="fromimg" style="color:var(--accent)">Prompt from an image</a></div>
+    <div class="hint">${chat.images?.length?`<a href="#" data-act="hist" style="color:var(--accent)">History (${chat.images.length})</a> · `:''}<a href="#" data-act="fromimg" style="color:var(--accent)">Prompt from an image</a> · <a href="#" data-act="whole" style="color:var(--accent)">Storyboard the whole chat</a></div>
     <div id="im-msg" class="small" style="margin-top:8px"></div>
     <div class="sheet-foot row"><button class="btn ghost" data-act="close" style="flex:1">Cancel</button><button class="btn" data-act="go" style="flex:2">${I.wand} Write prompt</button></div>`,{
     imk:b=>{$$('.im-k',pn).forEach(x=>x.classList.toggle('on',x===b));$('#im-sb',pn).hidden=b.dataset.k!=='sb';$('#im-cm',pn).hidden=b.dataset.k!=='comic'},
     hist:()=>showImageHistory(chat,char,upto),
     fromimg:()=>openFromImage(chat,char),
+    whole:()=>openWholeBoard(chat,char),
     go:async b=>{
       const msg=$('#im-msg',pn);if(!activeApi()){msg.className='small err';msg.textContent='Add an API / proxy in Settings first.';return}
       const comic=!$('#im-cm',pn).hidden;
@@ -2959,6 +2960,128 @@ function openImageSheet(chat,char,upto){
     }
   },{modal:true});
   $('.ip-pr',pn).onchange=e=>{S.settings.imgPreset=e.target.value;saveSettings()};
+}
+// A storyboard of a whole chat: the AI reads all of it and plans the pictures (how many, which moment each), you edit the
+// plan, then the prompts are written one by one, each from the messages of its moment. They're kept as one entry in the
+// image prompt history, filled in as they come; closing the sheet doesn't stop them.
+const SYS_PLAN='You plan the pictures that illustrate a finished roleplay story. Reply with a single JSON object only.';
+const boardBusy=new Map(); // chat id → the run writing its prompts
+const sumUse=(a,b)=>!b?a:!a?{...b}:addCost({...a,in:a.in+b.in,out:a.out+b.out,est:a.est||b.est},b);
+// the whole chat with numbered messages; long chats keep the start and end of each message
+function storyText(chat,char,room=60000){
+  const un=personaFor(chat)?.name||'You',ms=chat.messages.map((m,i)=>({i,m})).filter(x=>txt(x.m).trim());
+  const each=Math.max(300,Math.floor(room/Math.max(1,ms.length)));
+  return ms.map(({i,m})=>{let t=macro(stripThink(txt(m)),char.name,un).trim();if(t.length>each)t=t.slice(0,Math.floor(each*.6))+' … '+t.slice(-Math.floor(each*.4));
+    return `[${i+1}] ${m.role==='user'?un:char.name}: ${t}`}).join('\n\n');
+}
+async function planBoard(chat,char,n,wish){
+  const last=chat.messages.length,un=personaFor(chat)?.name||'You';
+  const {j,usage}=await aiJson(SYS_PLAN,`${char.kind==='world'?`A story set in ${char.name}, with ${un} (the user).`:`A roleplay between ${char.name} and ${un} (the user).`}
+${chat.storySoFar?.trim()?`\nWHAT HAPPENED BEFORE THIS CHAT:\n${macro(chat.storySoFar.trim(),char.name,un)}\n`:''}
+THE STORY (messages are numbered):
+${storyText(chat,char)}
+
+Plan ${n?`exactly ${n} pictures`:'the pictures (you pick how many: one per key moment, usually 3 to 12)'} that tell this story in order from start to end: the key moments, turning points and most striking scenes, spread over the whole story.${wish?`\nTHE USER'S WISHES: ${wish}`:''}
+Reply with JSON: {"images":[{"title":"a short title, at most 6 words","moment":"what the picture shows: who is in it, where, what they are doing, their expressions and the mood, in 1-2 sentences","from":the first message number of this moment,"to":the last message number of it}]}`,undefined,Math.min(5000,(n||12)*170+400));
+  const items=(Array.isArray(j.images)?j.images:[]).map(x=>{
+    const to=Math.min(Math.max(1,Math.round(+x.to||+x.from)||last),last),from=Math.max(1,to-7,Math.min(Math.round(+x.from)||to,to));
+    return {title:str(x.title).trim(),moment:str(x.moment).trim(),from,to}}).filter(x=>x.moment);
+  if(!items.length)throw new Error('The AI returned no plan. Try again.');
+  return {items,usage};
+}
+function openWholeBoard(chat,char){
+  if(boardBusy.has(chat.id))return showBoardRun(chat,char);
+  if(chat.messages.filter(m=>txt(m).trim()).length<2)return toast('Play the story first');
+  const pn=openSheet(`<h2>Storyboard the whole chat</h2><p class="hint">The AI reads the whole chat and plans the pictures that tell the story. You check the plan, then it writes the NovelAI prompts one by one.</p>
+    <label class="f">How many images</label><select id="wb-n"><option value="">AI chooses</option>${[3,4,5,6,8,10,12,15,20].map(v=>`<option>${v}</option>`).join('')}</select>
+    <label class="f">Anything specific?<small>optional</small></label><textarea id="wb-x" rows="2" placeholder="e.g. focus on the fight, skip the camp scenes, end on the kiss"></textarea>
+    <div class="tg"><div>Speech / thought bubbles<div class="hint">Show what characters say or think as text in the images.</div></div><label class="sw"><input type="checkbox" id="wb-t" ${S.settings.imgText==='auto'?'checked':''}><span></span></label></div>
+    <div class="row" style="margin-top:10px"><span class="small muted">Preset</span>${presetSelect()}</div>
+    <div id="wb-msg" class="small" style="margin-top:8px"></div>
+    <div class="sheet-foot row"><button class="btn ghost" data-act="close" style="flex:1">Cancel</button><button class="btn" data-act="plan" style="flex:2">${I.wand} Plan the images</button></div>`,{
+    plan:async b=>{
+      const msg=$('#wb-msg',pn);if(!activeApi()){msg.className='small err';msg.textContent='Add an API / proxy in Settings first.';return}
+      const o={n:+$('#wb-n',pn).value||0,wish:$('#wb-x',pn).value.trim(),text:$('#wb-t',pn).checked?true:S.settings.imgText==='off'?false:'ask'};
+      b.disabled=true;msg.className='small muted';msg.textContent='Reading the whole chat and planning the images…';
+      try{const r=await planBoard(chat,char,o.n,o.wish);if(msg.isConnected)openBoardPlan(chat,char,r.items,{...o,usage:r.usage})}
+      catch(e){if(msg.isConnected){msg.className='small err';msg.textContent=e.message}}finally{if(b.isConnected)b.disabled=false}}
+  },{modal:true});
+  $('.ip-pr',pn).onchange=e=>{S.settings.imgPreset=e.target.value;saveSettings()};
+}
+function openBoardPlan(chat,char,items,o){
+  const last=chat.messages.length,num=(c,v)=>`<input type="number" class="${c}" min="1" max="${last}" value="${v}" style="width:64px;padding:4px 6px">`;
+  const row=(x,k)=>`<div class="box wb-i" data-k="${k}" style="margin:8px 0"><div class="row" style="margin-bottom:6px"><b style="flex:1">Image ${k+1}</b><span class="small muted">messages</span>${num('wb-a',x.from)}<span class="small muted">to</span>${num('wb-b',x.to)}<button class="btn ghost sm" data-act="rm" data-k="${k}" title="Remove">${I.trash}</button></div>
+    <input class="wb-tt" value="${esc(x.title)}" placeholder="Title" style="margin-bottom:6px"><textarea class="wb-m" rows="3" placeholder="What the picture shows">${esc(x.moment)}</textarea></div>`;
+  // what's typed in the boxes, back into the plan
+  const read=()=>$$('#sheet .wb-i').forEach(el=>{const x=items[+el.dataset.k],a=Math.min(Math.max(1,Math.round(+$('.wb-a',el).value)||1),last);
+    x.from=a;x.to=Math.min(Math.max(a,Math.round(+$('.wb-b',el).value)||a),last);x.title=$('.wb-tt',el).value.trim();x.moment=$('.wb-m',el).value.trim()});
+  const draw=()=>{$('#wb-list').innerHTML=items.map(row).join('');$('#wb-go').textContent=`Write ${items.length} prompt${items.length===1?'':'s'}`};
+  openSheet(`<h2>The plan</h2><p class="hint">Change, remove or add images. Each prompt is written from the messages of its moment (the numbers count every message from the top), following what you write here.</p>
+    <div class="tokl">Planning: ${usageText(o.usage)}</div>
+    <div id="wb-list"></div>
+    <button class="btn ghost block" data-act="add" style="margin-top:4px">${I.plus} Add an image</button>
+    <div id="wb-msg" class="small" style="margin-top:8px"></div>
+    <div class="sheet-foot row"><button class="btn ghost" data-act="close" style="flex:1">Cancel</button><button class="btn ghost" data-act="again" style="flex:1">${I.regen} Plan again</button><button class="btn" data-act="go" style="flex:2" id="wb-go"></button></div>`,{
+    rm:b=>{read();items.splice(+b.dataset.k,1);draw()},
+    add:()=>{read();items.push({title:'',moment:'',from:last,to:last});draw();const ls=$$('#sheet .wb-m');ls[ls.length-1]?.focus()},
+    again:async b=>{
+      const msg=$('#wb-msg');b.disabled=true;msg.className='small muted';msg.textContent='Planning again…';
+      try{const r=await planBoard(chat,char,o.n,o.wish);if(msg.isConnected)openBoardPlan(chat,char,r.items,{...o,usage:sumUse(o.usage,r.usage)})}
+      catch(e){if(msg.isConnected){msg.className='small err';msg.textContent=e.message}}finally{if(b.isConnected)b.disabled=false}},
+    go:()=>{read();const msg=$('#wb-msg');
+      if(!items.length){msg.className='small err';msg.textContent='Add at least one image.';return}
+      const k=items.findIndex(x=>!x.moment);if(k>=0){msg.className='small err';msg.textContent=`Say what image ${k+1} shows.`;$$('#sheet .wb-m')[k].focus();return}
+      runBoard(chat,char,items,o)}
+  },{modal:true});
+  draw();sheetMeta.snap=sheetSnap($('#sheet .pn'));
+}
+async function runBoard(chat,char,items,o){
+  const run={items:items.map(x=>({...x,state:'wait'})),ac:new AbortController(),o,
+    entry:addImage(chat,[],`The whole chat, ${items.length} image${items.length===1?'':'s'}${o.wish?`: ${o.wish}`:''}`,'board',o.usage?{...o.usage}:null)};
+  boardBusy.set(chat.id,run);showBoardRun(chat,char);
+  await workBoard(chat,char,run,run.items,o);
+}
+async function workBoard(chat,char,run,list,o){
+  const {ac,entry}=run;
+  for(const x of list){
+    if(ac.signal.aborted)break;
+    x.state='busy';delete x.err;drawBoardRun(chat);
+    try{
+      const r=await makeImagePrompt(chat,char,x.to-1,{range:[x.from-1,x.to-1],moment:x.moment,panels:1,text:o.text,signal:ac.signal});
+      x.p=r.panels[0];if(x.title)x.p.caption=x.title;x.state='done';
+      entry.panels=run.items.filter(y=>y.p).map(y=>y.p);entry.usage=sumUse(entry.usage,r.usage);await saveChat(chat);
+    }catch(e){x.state=ac.signal.aborted?'wait':'fail';x.err=e.message}
+    drawBoardRun(chat);
+  }
+  if(boardBusy.get(chat.id)!==run)return;
+  boardBusy.delete(chat.id);
+  if(!entry.panels.length){chat.images=(chat.images||[]).filter(e=>e!==entry);await saveChat(chat)}
+  const done=run.items.filter(x=>x.p).length;
+  if(drawBoardRun(chat,run))return;
+  toast(done?`Storyboard ready: ${done} of ${run.items.length} prompts. ⋮ → Image prompt / storyboard → History`:'The storyboard was stopped before any prompt was written',5000);
+}
+// the progress of a run; while it's open the rows update as the prompts come in
+function showBoardRun(chat,char,run=boardBusy.get(chat.id)){
+  if(!run)return;
+  openSheet(`<h2>Storyboard</h2><p class="hint" id="wb-h"></p><div class="list" id="wb-run" data-chat="${chat.id}"></div><div class="tokl" id="wb-use" style="margin-top:6px"></div>
+    <div class="sheet-foot row" id="wb-foot"></div>`,{
+    stop:()=>{run.ac.abort()},
+    retry:()=>{const list=run.items.filter(x=>!x.p);if(!list.length)return;run.ac=new AbortController();boardBusy.set(chat.id,run);
+      if(!(chat.images??=[]).includes(run.entry))chat.images.push(run.entry); // it's dropped when a run ends empty
+      list.forEach(x=>x.state='wait');drawBoardRun(chat,run);workBoard(chat,char,run,list,run.o)},
+    open:()=>run.entry.panels.length?showImagePrompts(chat,char,run.entry,null):toast('No prompts yet')});
+  drawBoardRun(chat,run);
+}
+function drawBoardRun(chat,run=boardBusy.get(chat.id)){
+  const box=$('#wb-run');if(!box||box.dataset.chat!==chat.id||!run)return false;
+  const busy=boardBusy.get(chat.id)===run,done=run.items.filter(x=>x.p).length,failed=run.items.some(x=>x.state==='fail');
+  const st={wait:'<span class="muted">waiting</span>',busy:'<span class="muted">writing…</span>',done:'<span class="okc">✓ done</span>',fail:'<span class="err">failed</span>'};
+  $('#wb-h').textContent=busy?`Writing ${run.items.length} prompts, one by one. You can close this: they keep coming, and you'll find them in the image prompt history.`:`${done} of ${run.items.length} prompts written.${failed?' Some failed: try them again.':''}`;
+  box.innerHTML=run.items.map((x,k)=>`<div class="li"><div class="lt"><b>${k+1}. ${esc(x.title||x.moment.slice(0,40))}</b><span>${st[x.state]} · messages ${x.from}${x.to>x.from?`–${x.to}`:''}${x.err?` · ${esc(x.err)}`:''}</span></div></div>`).join('');
+  $('#wb-use').textContent=run.entry.usage?usageText(run.entry.usage):'';
+  $('#wb-foot').innerHTML=busy?`<button class="btn ghost" data-act="close" style="flex:1">Close</button><button class="btn ghost" data-act="stop" style="flex:1">Stop</button><button class="btn" data-act="open" style="flex:1">${I.copy} See prompts</button>`
+    :`<button class="btn ghost" data-act="close" style="flex:1">Close</button>${run.items.some(x=>!x.p)?`<button class="btn ghost" data-act="retry" style="flex:1">${I.regen} Write the rest</button>`:''}<button class="btn" data-act="open" style="flex:1">${I.copy} See prompts</button>`;
+  return true;
 }
 function editImgPreset(p,isNew){
   const st=S.settings,w={...p};
@@ -3655,9 +3778,10 @@ function chatMenu(chat,char,redraw){
     <button data-act="vars">${I.code} Script variables</button><button data-act="lore">${I.tag} Lore used in last reply</button><button data-act="rename">${I.edit} Rename chat</button><button data-act="mvf">${I.folder} Move to folder${folders('chats').find(f=>f.id===chat.folder)?` (now: ${esc(folders('chats').find(f=>f.id===chat.folder).name)})`:''}</button>
     <button data-act="newchat">${I.plus} Start a new chat</button><button data-act="export">${I.exp} Export chat as text</button>
     ${chat.mode==='image'?`<button data-act="srole">${{observer:I.book,pov:I.img}[storyRole(chat)]||I.user} Your role: ${ROLE_LABEL[storyRole(chat)]}</button><button data-act="outline">${I.edit} Story outline</button><button data-act="ihist">${I.copy} All image prompts (${chat.images?.length||0})</button>`
-      :`<button data-act="image">${I.img} Image prompt / storyboard</button>`}<button data-act="fromimg">${I.img} Prompt from image</button><button data-act="ipreset">${I.img} Image preset: ${esc(imgPreset().name)}</button><button data-act="gallery">${I.img} Gallery${char.gallery?.length?` (${char.gallery.length})`:''}</button>${researchOn()?`<button data-act="lookup">${I.wand} Look something up</button>`:''}${chat.researchNotes||researchOn()?`<button data-act="facts">${I.brain} Looked-up facts</button>`:''}<button data-act="charpage">${I.user} Character page</button><button data-act="editchar">${I.tag} Edit character</button><button class="danger" data-act="del">${I.trash} Delete chat</button></div>`,{
+      :`<button data-act="image">${I.img} Image prompt / storyboard</button><button data-act="board">${I.copy} Storyboard the whole chat${boardBusy.has(chat.id)?' (writing…)':''}</button>`}<button data-act="fromimg">${I.img} Prompt from image</button><button data-act="ipreset">${I.img} Image preset: ${esc(imgPreset().name)}</button><button data-act="gallery">${I.img} Gallery${char.gallery?.length?` (${char.gallery.length})`:''}</button>${researchOn()?`<button data-act="lookup">${I.wand} Look something up</button>`:''}${chat.researchNotes||researchOn()?`<button data-act="facts">${I.brain} Looked-up facts</button>`:''}<button data-act="charpage">${I.user} Character page</button><button data-act="editchar">${I.tag} Edit character</button><button class="danger" data-act="del">${I.trash} Delete chat</button></div>`,{
     charpage:()=>go('#/char/'+char.id),
     image:()=>{if(!chat.messages.length)return toast('Start the story first');openImageSheet(chat,char,chat.messages.length-1)},
+    board:()=>openWholeBoard(chat,char),
     ihist:()=>showImageHistory(chat,char,null),
     fromimg:()=>openFromImage(chat,char,redraw),
     srole:()=>{const n=personaFor(chat)?.name||'You',cur=storyRole(chat);
