@@ -361,7 +361,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.22.0',HEARTH_DATE='2026-10-28';
+const HEARTH_VERSION='1.22.1',HEARTH_DATE='2026-10-28';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -3677,6 +3677,38 @@ function metaToPanel(meta){
   if(meta.Description&&/NovelAI/i.test(meta.Software||meta.Title||''))return cleanPanel({caption:'',base:meta.Description,characters:[],undesired:''});
   return null;
 }
+// NovelAI adds its quality tags after the prompt (before a Text: block) and its undesired preset before your undesired
+// tags; Hearth adds them again from its settings, so an imported prompt leaves them out
+function stripNaiExtras(base,uc){
+  let quality=false,ucp='none';
+  const cut=base.search(/\n?Text:/),head=cut<0?base:base.slice(0,cut),tail=cut<0?'':base.slice(cut);
+  const q=head.match(/,?\s*very aesthetic, (masterpiece|amazing quality)(, no text)?\s*$/);
+  if(q){base=head.slice(0,q.index)+tail;quality=true}
+  for(const k of ['heavy','light'])if(uc.startsWith(NAI_UC[k])){uc=uc.slice(NAI_UC[k].length).replace(/^\s*,\s*/,'');ucp=k;break}
+  return {base,uc,quality,ucp};
+}
+// A picture made with one of your image presets: its artist tags, base lines and undesired tags are all in the prompt.
+// Finds the preset (the one that matches the most), so it can be taken out of the prompt and added again on its own:
+// then changing the prompt (by hand or by the AI) can't change what the preset fixes.
+function findPreset(base,uc){
+  const bt=new Set(tagsOf(base)),ut=new Set(tagsOf(uc)),flat=s=>String(s).replace(/\s+/g,' ').trim().toLowerCase();
+  let best=null,score=0;
+  for(const pr of S.settings.imgPresets||[]){
+    const a=tagsOf(pr.artist),u=tagsOf(pr.uc),ft=String(pr.footer||'').trim();
+    if(!a.length&&!ft)continue; // undesired tags alone are too common to tell a preset by
+    if(!a.every(t=>bt.has(t))||!u.every(t=>ut.has(t))||ft&&!flat(base).includes(flat(ft)))continue;
+    const sc=a.length+u.length+(ft?3:0);if(sc>score){best=pr;score=sc}
+  }
+  return best;
+}
+// the prompt without the preset's parts: its base lines, then each of its tags once
+function stripPreset(pr,base,uc){
+  const drop=(s,tags)=>{const rm=new Set(tags);return s.split('\n').map(l=>l.split(',').filter(t=>{const k=normTag(t);if(k&&rm.has(k)){rm.delete(k);return false}return true}).map(t=>t.trim()).filter(Boolean).join(', '))};
+  let b=base;const ft=String(pr.footer||'').trim();
+  if(ft)b=b.replace(new RegExp(ft.split(/\s+/).map(w=>w.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('\\s+'),'i'),'');
+  const tidy=ls=>ls.map(l=>l.replace(/^\s*,\s*|\s*,\s*$/g,'').trim()).filter(Boolean).join('\n');
+  return {base:tidy(drop(b,tagsOf(pr.artist))),uc:tidy(drop(uc,tagsOf(pr.uc)))};
+}
 // Everything NovelAI saved in a picture, for the Images page: the prompt without NovelAI's quality tags and undesired
 // preset (those become settings again), characters with their dots, and size, steps, guidance, sampler, seed and model.
 async function readImageMeta(file){
@@ -3685,19 +3717,16 @@ async function readImageMeta(file){
   if(!metaToPanel(meta))meta=await readStealth(file).catch(()=>null);
   if(!metaToPanel(meta))return null;
   let c=meta.Comment;if(typeof c==='string')try{c=JSON.parse(c)}catch{c=null}
-  if(!c||typeof c!=='object'){const p=metaToPanel(meta);return {form:{base:p.base,uc:p.undesired,chars:[]},set:{},info:p.info}}
+  if(!c||typeof c!=='object'){const p=metaToPanel(meta),preset=findPreset(p.base,p.undesired),x=preset?stripPreset(preset,p.base,p.undesired):{base:p.base,uc:p.undesired};
+    return {form:{base:x.base,uc:x.uc,chars:[]},preset,set:{},info:p.info}}
   const v4=c.v4_prompt?.caption,neg=c.v4_negative_prompt?.caption;
-  let base=str(v4?.base_caption??c.prompt??meta.Description),uc=str(neg?.base_caption??c.uc),quality=false,ucp='none';
-  // NovelAI adds its quality tags after the prompt (before a Text: block) and its undesired preset before yours
-  const cut=base.search(/\n?Text:/),head=cut<0?base:base.slice(0,cut),tail=cut<0?'':base.slice(cut);
-  const q=head.match(/,?\s*very aesthetic, (masterpiece|amazing quality)(, no text)?\s*$/);
-  if(q){base=head.slice(0,q.index)+tail;quality=true}
-  for(const k of ['heavy','light'])if(uc.startsWith(NAI_UC[k])){uc=uc.slice(NAI_UC[k].length).replace(/^\s*,\s*/,'');ucp=k;break}
+  let {base,uc,quality,ucp}=stripNaiExtras(str(v4?.base_caption??c.prompt??meta.Description),str(neg?.base_caption??c.uc));
+  const preset=findPreset(base,uc),whole={base,uc};if(preset)({base,uc}=stripPreset(preset,base,uc));
   const coords=!!c.v4_prompt?.use_coords;
   const chars=arr(v4?.char_captions).map((x,i)=>({prompt:str(x?.char_caption),uc:str(neg?.char_captions?.[i]?.char_caption),pos:x?.centers?.[0]?.x!=null?{x:+x.centers[0].x,y:+x.centers[0].y}:''})).filter(x=>x.prompt.trim());
   const src=String(meta.Source||''),model=/V5/i.test(src)?'v5':/V4\.5/i.test(src)?'v45':null;
   const w=+c.width||0,h=+c.height||0,size=Object.entries(NAI_SIZES).find(([,[a,b]])=>a===w&&b===h)?.[0];
-  return {form:{base,uc,chars,posAI:!coords},
+  return {form:{base,uc,chars,posAI:!coords},preset,whole,
     set:{...(model?{imgModel:model}:{}),...(w&&h?{naiSize:size||'custom',...(size?{}:{naiW:w,naiH:h})}:{}),...(c.steps?{naiSteps:+c.steps}:{}),...(c.scale!=null?{naiScale:+c.scale}:{}),
       ...(c.sampler&&NAI_SAMPLERS.some(([v])=>v===c.sampler)?{naiSampler:c.sampler}:{}),naiQuality:quality,naiUc:ucp},
     seed:c.seed!=null?+c.seed:null,info:[src||meta.Software||'NovelAI',w&&`${w}×${h}`,c.steps&&`${c.steps} steps`,c.seed!=null&&`seed ${c.seed}`].filter(Boolean).join(' · ')};
@@ -3709,7 +3738,12 @@ async function promptFromFile(file){
   if(!p){meta=await readStealth(file).catch(()=>null);p=metaToPanel(meta);how='hidden'}
   if(!p)return null;
   p.caption=p.caption||(file.name?`From ${file.name}`:'From an image');p.own=p.file=true;
-  return {panel:p,how,raw:JSON.stringify(meta,null,1).slice(0,6000)};
+  // made with one of your presets: it's taken out and added again, so "Change something" keeps it as it is
+  if(!p.onebox){const x=stripNaiExtras(p.base,p.undesired);p.base=x.base;p.undesired=x.uc}
+  const pr=!p.onebox&&findPreset(p.base,p.undesired);
+  if(pr){Object.assign(p,(({base,uc})=>({base,undesired:uc}))(stripPreset(pr,p.base,p.undesired)));p.own=false;
+    if(S.settings.imgPreset!==pr.id){S.settings.imgPreset=pr.id;saveSettings()}p.info=[p.info,`your preset “${pr.name}”`].filter(Boolean).join(' · ')}
+  return {panel:p,how,preset:pr||null,raw:JSON.stringify(meta,null,1).slice(0,6000)};
 }
 // NovelAI only understands English tags, so a prompt that is tiny or mostly other scripts was probably replaced by the author to hide it
 function looksReplaced(p){
@@ -3854,7 +3888,7 @@ function openFromImage(chat,char,redraw,preFile){
     const msg=$('#fi-msg',pn);msg.className='small muted';msg.textContent='Reading the image…';
     const r=await promptFromFile(f).catch(()=>null);
     if(r&&!looksReplaced(r.panel)){const e=addFromImage(chat,[r.panel],`From image: ${f.name||'picture'}`,null,story);fileOf.set(e.id,f);rd();showImagePrompts(chat,char,e,null);
-      toast(r.how==='hidden'?'Found the prompt hidden in the picture':'Found the prompt saved in the file',3500);return}
+      toast((r.how==='hidden'?'Found the prompt hidden in the picture':'Found the prompt saved in the file')+(r.preset?`, made with your preset “${r.preset.name}” (kept apart from the prompt)`:''),4500);return}
     if(r){
       found=r;const shown=[r.panel.base,...r.panel.characters.map(c=>c.prompt)].filter(Boolean).join(' | ').slice(0,200);
       $('#fi-raw',pn).innerHTML=`<details class="box small" style="margin-top:8px"><summary>Everything saved in the file</summary><div class="pre mono" style="max-height:220px;overflow:auto;white-space:pre-wrap;word-break:break-all">${esc(r.raw)}</div></details>`;
@@ -4288,7 +4322,7 @@ let imgPage=null,imgSaveT=0;
 const imgPageData=async()=>imgPage??={form:{base:'',uc:'',chars:[],usePreset:true},hist:[],who:[],...((await store.get('imgpage'))||{})};
 const saveImgPage=()=>{clearTimeout(imgSaveT);imgSaveT=setTimeout(()=>store.set('imgpage',imgPage),400)};
 // the picture's prompt as a panel, the same shape the chat prompts use
-const formPanel=f=>({caption:'',base:f.base.trim(),undesired:f.uc.trim(),text:'',own:!f.usePreset,
+const formPanel=f=>({caption:'',base:f.base.split(/\n?Text:/)[0].trim(),undesired:f.uc.trim(),text:(f.base.match(/Text:([\s\S]*)$/)||[,''])[1].trim(),own:!f.usePreset,
   characters:f.chars.filter(c=>c.prompt.trim()).map(c=>({name:'',prompt:c.prompt.trim(),undesired:c.uc.trim(),position:posAIOf(f)?'':posOf(c.pos)||{x:.5,y:.5}}))});
 // the AI writes for a made-up "world" holding the characters you picked, so it knows their looks
 function imgAiCtx(who){
@@ -4487,13 +4521,14 @@ Return one JSON object only: ${panelJson('sections')}`,undefined,1500);r={panels
         ${ck('s','Settings',[m.set.imgModel==='v45'?'V4.5':m.set.imgModel?'V5':'',m.set.naiW?`${m.set.naiW}×${m.set.naiH}`:m.set.naiSize?NAI_SIZES[m.set.naiSize][2].split(' (')[0]:'',m.set.naiSteps&&`${m.set.naiSteps} steps`,m.set.naiScale!=null&&`guidance ${m.set.naiScale}`,m.set.naiSampler,`quality tags ${m.set.naiQuality?'on':'off'}`,`undesired preset: ${m.set.naiUc}`].filter(Boolean).join(' · '))}
         ${m.seed!=null?ck('d','Seed',String(m.seed),false):''}
         ${ck('b','Use the picture as base image','for image to image or inpainting',false)}
-        <p class="hint">The prompt keeps its own artist tags, so "Add my preset's tags" is turned off.</p>
+        ${m.preset?ck('r',`Made with your preset “${esc(m.preset.name)}”`,'Its tags are taken out of the prompt and the preset is turned on instead, so changing the prompt can\'t change them. Off: keep them in the prompt.'):`<p class="hint">The prompt keeps its own artist tags, so "Add my preset's tags" is turned off.</p>`}
         <div class="sheet-foot row"><button class="btn ghost" data-act="close" style="flex:1">Cancel</button><button class="btn" data-act="go" style="flex:2">${I.imp} Import</button></div>`,{
         go:async()=>{
           const on=k=>$('#im-'+k)?.checked;
-          if(on('p')){f.base=m.form.base;f.usePreset=false}if(on('u'))f.uc=m.form.uc;
+          const mine=m.preset&&on('r');
+          if(on('p')){f.base=mine||!m.whole?m.form.base:m.whole.base;f.usePreset=!!mine;if(mine)S.settings.imgPreset=m.preset.id}if(on('u'))f.uc=mine||!m.whole?m.form.uc:m.whole.uc;
           if(on('c')){f.chars=m.form.chars;f.posAI=m.form.posAI}
-          if(on('s'))Object.assign(S.settings,m.set);if(on('d'))S.settings.naiSeed=m.seed;if(on('s')||on('d'))await saveSettings();
+          if(on('s'))Object.assign(S.settings,m.set);if(on('d'))S.settings.naiSeed=m.seed;if(on('s')||on('d')||m.preset)await saveSettings();
           saveImgPage();closeSheet();
           if(on('b')){const id=await putImg(await fileToStored(file),{uploaded:true});pg.hist.unshift({id,at:Date.now(),uploaded:true,form:clone(f)});await setBase(id)}
           vImages();
