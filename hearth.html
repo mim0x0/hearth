@@ -360,7 +360,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.21.0',HEARTH_DATE='2026-10-28';
+const HEARTH_VERSION='1.21.1',HEARTH_DATE='2026-10-28';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -3057,9 +3057,24 @@ function pickGallery(done,back){
 async function naiAccount(token){
   const r=await fetch(naiUrl()+'/user/subscription',{headers:{'Authorization':'Bearer '+token.trim()}});
   if(r.status===401)throw new Error("NovelAI didn't accept this token");if(!r.ok)throw new Error('NovelAI: error '+r.status);
-  const j=await r.json(),t=j.trainingStepsLeft||{};
-  return {tier:['No subscription','Tablet','Scroll','Opus'][j.tier]||`tier ${j.tier}`,active:j.active!==false&&j.tier>0,anlas:(t.fixedTrainingStepsLeft||0)+(t.purchasedTrainingSteps||0)};
+  const j=await r.json(),t=j.trainingStepsLeft||{},u=j.usage,exp=+j.expiresAt||0;
+  return {tier:['No subscription','Tablet','Scroll','Opus'][j.tier]||`tier ${j.tier}`,active:j.active!==false&&j.tier>0,anlas:(t.fixedTrainingStepsLeft||0)+(t.purchasedTrainingSteps||0),
+    expires:exp?(exp<1e12?exp*1000:exp):null,grace:!!j.isGracePeriod,
+    // V5 on Opus has a usage limit that refills over time (NovelAI shows it as a bar)
+    usage:u&&u.percent!=null?{left:+u.percent,boost:+u.purchasedPercent||0,out:!!u.isNegative,perDay:u.timeUntilNextPercent>0?Math.round(86400/u.timeUntilNextPercent):0}:null};
 }
+// the NovelAI account in one line: subscription and until when, Anlas, and the V5 Opus usage limit
+function naiAccountHTML(a){
+  const day=t=>new Date(t).toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'}),ex=a.expires&&a.expires<Date.now();
+  const sub=a.tier==='No subscription'?'<span class="err">No subscription</span>'
+    :a.active&&!ex?`<span class="okc">${esc(a.tier)}</span>${a.expires?`, active until ${day(a.expires)}`:''}${a.grace?' <span class="err">(grace period: payment pending)</span>':''}`
+    :`<span class="err">${esc(a.tier)} expired${a.expires?` ${day(a.expires)}`:''}</span>`;
+  const use=a.usage?` · V5 Opus usage: ${a.usage.out?'<span class="err">used up</span>':`${a.usage.left}% left`}${a.usage.boost?` (+${a.usage.boost}% boosts)`:''}${a.usage.perDay?`, refills about ${a.usage.perDay}% a day`:''}`:'';
+  return `${sub} · <b>${a.anlas.toLocaleString()} Anlas</b>${use}`;
+}
+// asked again at most once a minute, unless something was just made
+let naiAcct=null;
+async function naiAccountNow(fresh){if(fresh||!naiAcct||Date.now()-naiAcct.t>60000)naiAcct={t:Date.now(),a:await naiAccount(S.settings.naiToken)};return naiAcct.a}
 // a Generate button and the pictures already made, under one panel of a prompt
 const naiPanelHTML=(ids,k)=>`<div class="nai-p" data-k="${k}">${ids?.length?thumbs(ids,'nview'):''}<button class="btn sm" data-act="ngen" data-k="${k}" style="margin:6px 0 4px">${I.img} ${ids?.length?'Generate another':'Generate image'}</button><div class="small nai-msg"></div></div>`;
 const presetSelect=id=>`<select class="ip-pr" style="width:auto;padding:5px 10px">${(S.settings.imgPresets||[]).map(p=>`<option value="${p.id}" ${p.id===imgPreset().id?'selected':''}>${esc(p.name)}</option>`).join('')}</select>`;
@@ -4180,6 +4195,7 @@ async function vImages(){
   const charBox=(c,k)=>`<div class="box ig-c" data-k="${k}" style="margin:8px 0"><div class="row" style="margin-bottom:6px"><b style="flex:1"><i class="ig-sw" style="background:${dotColor(k)}"></i>Character ${k+1}</b><button class="btn ghost sm" data-act="crm" data-k="${k}" title="Remove">${I.trash}</button></div>
     <textarea class="ig-cpr" rows="3" placeholder="girl, long hair, …">${esc(c.prompt)}</textarea><textarea class="ig-cuc" rows="2" placeholder="Undesired for this character" style="margin-top:6px">${esc(c.uc)}</textarea></div>`;
   view.innerHTML=`<header class="top"><h1>Images</h1></header><div class="pad">
+    ${naiOn()?`<div class="box small" style="margin-bottom:12px;display:flex;gap:8px;align-items:center"><div id="ig-acct" style="flex:1" class="muted">Checking your NovelAI account…</div><button class="btn ghost sm" data-act="acct" title="Check again">${I.regen}</button></div>`:''}
     ${naiOn()?'':`<div class="box" style="margin-bottom:12px"><b>Add your NovelAI token first</b><div class="small muted" style="margin:4px 0 8px">Settings → NovelAI images. Pictures use your NovelAI subscription, like on NovelAI's site.</div><button class="btn sm" data-act="toset">Open Settings</button></div>`}
     <div class="box" style="margin-bottom:12px"><b>${I.wand} Ask the AI to write it</b>
       <textarea id="ia-d" rows="3" placeholder="Describe the picture, e.g. Fern and Frieren sharing tea under cherry blossoms in the evening, smiling" style="margin-top:8px">${esc(pg.ask||'')}</textarea>
@@ -4213,6 +4229,9 @@ async function vImages(){
   let posSel=-1; // the character whose dot moves; -1 = none, so the dots stay put
   const drawPos=()=>{if(posSel>=f.chars.length)posSel=-1;$('#ig-pos').innerHTML=posPadHTML(f,posSel)};
   const drawChars=()=>{$('#ig-cs').innerHTML=f.chars.map(charBox).join('');drawPos()};
+  const drawAcct=async fresh=>{const el=$('#ig-acct');if(!el)return;
+    try{const a=await naiAccountNow(fresh);if(el.isConnected){el.className='';el.innerHTML=naiAccountHTML(a)}}
+    catch(e){if(el.isConnected){el.className='err';el.textContent=e.message}}};
   const drawPanels=()=>{const pl=pg.panels,el=$('#ig-pnl');if(!el)return;
     el.innerHTML=pl?.list?.length?`<div class="box" style="margin-bottom:12px"><div class="row"><b style="flex:1">Panels from your comic (${pl.list.length})</b><button class="btn ghost sm" data-act="pclr">${I.x} Clear</button></div>
       <div class="small muted" style="margin:2px 0 6px">Load a panel, tap Generate, then load the next.</div>
@@ -4299,6 +4318,7 @@ Return one JSON object only: ${panelJson('sections')}`,undefined,1500);r={panels
         const id=await putImg(data,{seed,made:true,tool}),n=naiSettings();
         pg.hist.unshift({id,at:Date.now(),seed,form:clone(f),model:n.model,w:o?.w||n.w,h:o?.h||n.h,tool});
         const pl=pg.panels;if(pl?.at!=null&&pl.list[pl.at]){pl.list[pl.at].done=true;drawPanels()}
+        drawAcct(true); // Anlas and the usage limit change with each picture
         for(const x of pg.hist.splice(200))if(!inGallery(x.id))await delImg(x.id); // keep the latest 200
         saveImgPage();msg.textContent=`Seed ${seed}. Tap the picture to save it to a gallery.`;if($('#ig-out'))drawOut();
       }catch(e){msg.className='small err';msg.textContent=e.message}
@@ -4308,6 +4328,7 @@ Return one JSON object only: ${panelJson('sections')}`,undefined,1500);r={panels
     pload:b=>{loadPanel(+b.dataset.k)},
     pnext:()=>loadPanel((pg.panels.at??-1)+1),
     pclr:()=>{pg.panels=null;saveImgPage();drawPanels()},
+    acct:()=>{$('#ig-acct').textContent='Checking…';drawAcct(true)},
     // like Prompt from image in chats: a vision model writes prompts that recreate a picture or a comic page
     gpic:()=>{
       let file=null,url='';const names=pg.who.map(x=>x==='me'?personaFor(null)?.name:getChar(x)?.name).filter(Boolean);
@@ -4387,11 +4408,11 @@ Return one JSON object only: ${panelJson('sections')}`,undefined,1500);r={panels
               startFrom({area:w*h,strength:.45,noise:0},`Enhance makes a bigger picture (${w}×${h}) from this one. Bigger pictures cost Anlas. Go on?`)}}]:[]),
           {label:`${I.wand} Tools: upscale, background, line art…`,fn:async()=>{const d=await getImgData(x.id);
             openNaiTools(d,async(list,label)=>{for(const data of list){const id=await putImg(data,{made:true,tool:label});pg.hist.unshift({id,at:Date.now(),form:x.form?clone(x.form):null,tool:label})}
-              saveImgPage();closeSheet();if($('#ig-out'))drawOut();toast(`${label}: ${list.length} picture${list.length>1?'s':''} added`)},again)}},
+              saveImgPage();closeSheet();if($('#ig-out'))drawOut();drawAcct(true);toast(`${label}: ${list.length} picture${list.length>1?'s':''} added`)},again)}},
           ...(x.seed!=null?[{label:`${I.regen} Use this seed`,fn:()=>{S.settings.naiSeed=x.seed;saveSettings();closeSheet();vImages();toast(`Seed ${x.seed} is set. Clear it in Image settings for random seeds.`)}}]:[]),
           ...(x.form?[{label:`${I.edit} Use its prompt`,fn:()=>{useForm();closeSheet();vImages()}}]:[])],
         onDelete:async id=>{pg.hist=pg.hist.filter(h=>h.id!==id);if(pg.base?.id===id){pg.base=null;drawBase()}saveImgPage();if($('#ig-out'))drawOut()}})}};
-  drawOut();drawBase();drawPanels();
+  drawOut();drawBase();drawPanels();drawAcct();
 }
 /* ---------- profile / personas ---------- */
 // pick who you are in one chat, and add, edit or delete personas right there
@@ -4576,7 +4597,7 @@ function vSettings(){
     naicheck:async b=>{
       const tok=$('[data-k=naiToken]',view).value.trim(),r=$('#nai-res');if(!tok){r.innerHTML='<span class="err">Paste your token first.</span>';return}
       b.disabled=true;r.className='small muted';r.textContent='Asking NovelAI…';
-      try{const a=await naiAccount(tok);r.className='small';r.innerHTML=a.active?`<span class="okc">Works.</span> ${esc(a.tier)}, ${a.anlas.toLocaleString()} Anlas.`:`<span class="err">The token works, but there's no active subscription (${esc(a.tier)}).</span> ${a.anlas.toLocaleString()} Anlas.`}
+      try{const a=await naiAccount(tok);r.className='small';r.innerHTML=`<span class="okc">The token works.</span> ${naiAccountHTML(a)}`}
       catch(e){r.className='small';r.innerHTML=`<span class="err">${esc(e.message)}</span>`}finally{b.disabled=false}},
     mfetch:async b=>{
       const k=b.dataset.field,f=MODEL_FIELDS[k],api=f.conn(),r=$('#mres-'+k);r.className='small';
