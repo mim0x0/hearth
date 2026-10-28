@@ -360,7 +360,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.19.0',HEARTH_DATE='2026-10-28';
+const HEARTH_VERSION='1.20.0',HEARTH_DATE='2026-10-28';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -2912,7 +2912,9 @@ const NAI_SIZES={portrait:[832,1216,'Portrait 832×1216'],landscape:[1216,832,'L
 const NAI_SAMPLERS=[['k_euler_ancestral','Euler Ancestral'],['k_euler','Euler'],['k_dpmpp_2s_ancestral','DPM++ 2S Ancestral'],['k_dpmpp_2m_sde','DPM++ 2M SDE'],['k_dpmpp_2m','DPM++ 2M'],['k_dpmpp_sde','DPM++ SDE']];
 const NAI_UC={heavy:'lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page',
   light:'lowres, artistic error, scan artifacts, worst quality, bad quality, jpeg artifacts, multiple views, very displeasing, too many watermarks, negative space, blank page',none:''};
-const naiSettings=()=>{const st=S.settings,v5=st.imgModel!=='v45',[w,h]=NAI_SIZES[st.naiSize]||NAI_SIZES.portrait;
+// the sizes to pick from, plus one read from a picture's metadata when it isn't one of them
+const naiSizeList=()=>[...Object.entries(NAI_SIZES).map(([v,[,,l]])=>[v,l]),...(S.settings.naiSize==='custom'&&S.settings.naiW?[['custom',`${S.settings.naiW}×${S.settings.naiH} (from a picture)`]]:[])];
+const naiSettings=()=>{const st=S.settings,v5=st.imgModel!=='v45',[w,h]=st.naiSize==='custom'&&st.naiW?[st.naiW,st.naiH]:NAI_SIZES[st.naiSize]||NAI_SIZES.portrait;
   return {v5,model:v5?'nai-diffusion-5-full':'nai-diffusion-4-5-full',w,h,steps:Math.min(50,Math.max(1,+st.naiSteps||23)),scale:+st.naiScale||(v5?7:5),
     sampler:st.naiSampler||'k_euler_ancestral',seed:st.naiSeed===''||st.naiSeed==null?null:Math.round(+st.naiSeed)||null}};
 const naiFree=()=>{const n=naiSettings();return n.w*n.h<=1048576&&n.steps<=28};
@@ -3549,6 +3551,31 @@ function metaToPanel(meta){
   if(meta.Description&&/NovelAI/i.test(meta.Software||meta.Title||''))return cleanPanel({caption:'',base:meta.Description,characters:[],undesired:''});
   return null;
 }
+// Everything NovelAI saved in a picture, for the Images page: the prompt without NovelAI's quality tags and undesired
+// preset (those become settings again), characters with their dots, and size, steps, guidance, sampler, seed and model.
+async function readImageMeta(file){
+  let meta=null;
+  if(/png/i.test(file.type)||/\.png$/i.test(file.name||''))try{meta=readPngText(await file.arrayBuffer())}catch{}
+  if(!metaToPanel(meta))meta=await readStealth(file).catch(()=>null);
+  if(!metaToPanel(meta))return null;
+  let c=meta.Comment;if(typeof c==='string')try{c=JSON.parse(c)}catch{c=null}
+  if(!c||typeof c!=='object'){const p=metaToPanel(meta);return {form:{base:p.base,uc:p.undesired,chars:[]},set:{},info:p.info}}
+  const v4=c.v4_prompt?.caption,neg=c.v4_negative_prompt?.caption;
+  let base=str(v4?.base_caption??c.prompt??meta.Description),uc=str(neg?.base_caption??c.uc),quality=false,ucp='none';
+  // NovelAI adds its quality tags after the prompt (before a Text: block) and its undesired preset before yours
+  const cut=base.search(/\n?Text:/),head=cut<0?base:base.slice(0,cut),tail=cut<0?'':base.slice(cut);
+  const q=head.match(/,?\s*very aesthetic, (masterpiece|amazing quality)(, no text)?\s*$/);
+  if(q){base=head.slice(0,q.index)+tail;quality=true}
+  for(const k of ['heavy','light'])if(uc.startsWith(NAI_UC[k])){uc=uc.slice(NAI_UC[k].length).replace(/^\s*,\s*/,'');ucp=k;break}
+  const coords=!!c.v4_prompt?.use_coords;
+  const chars=arr(v4?.char_captions).map((x,i)=>({prompt:str(x?.char_caption),uc:str(neg?.char_captions?.[i]?.char_caption),pos:x?.centers?.[0]?.x!=null?{x:+x.centers[0].x,y:+x.centers[0].y}:''})).filter(x=>x.prompt.trim());
+  const src=String(meta.Source||''),model=/V5/i.test(src)?'v5':/V4\.5/i.test(src)?'v45':null;
+  const w=+c.width||0,h=+c.height||0,size=Object.entries(NAI_SIZES).find(([,[a,b]])=>a===w&&b===h)?.[0];
+  return {form:{base,uc,chars,posAI:!coords},
+    set:{...(model?{imgModel:model}:{}),...(w&&h?{naiSize:size||'custom',...(size?{}:{naiW:w,naiH:h})}:{}),...(c.steps?{naiSteps:+c.steps}:{}),...(c.scale!=null?{naiScale:+c.scale}:{}),
+      ...(c.sampler&&NAI_SAMPLERS.some(([v])=>v===c.sampler)?{naiSampler:c.sampler}:{}),naiQuality:quality,naiUc:ucp},
+    seed:c.seed!=null?+c.seed:null,info:[src||meta.Software||'NovelAI',w&&`${w}×${h}`,c.steps&&`${c.steps} steps`,c.seed!=null&&`seed ${c.seed}`].filter(Boolean).join(' · ')};
+}
 async function promptFromFile(file){
   let meta=null;
   if(/png/i.test(file.type)||/\.png$/i.test(file.name||''))try{meta=readPngText(await file.arrayBuffer())}catch{}
@@ -4130,6 +4157,7 @@ async function vImages(){
       <div class="row" style="margin-top:8px"><button class="btn sm" data-act="aiw">${I.wand} Write the prompt</button><button class="btn ghost sm" data-act="aic">${I.edit} Change the prompt</button></div>
       <div class="hint">Write the prompt makes a new prompt from your description. Change the prompt keeps the prompt below and changes only what you ask, e.g. "make it night" or "she holds a sword".</div>
       <div class="small" id="ia-msg" style="margin-top:6px"></div></div>
+    <button class="btn ghost sm" data-act="imp" style="margin-bottom:10px">${I.imp} Import metadata from a picture</button>
     <label class="f" style="margin-top:0">Prompt</label><textarea id="ig-b" rows="5" placeholder="1girl, outdoors, cherry blossoms, evening, …">${esc(f.base)}</textarea>
     <label class="f">Undesired content</label><textarea id="ig-u" rows="2" placeholder="Things to keep out">${esc(f.uc)}</textarea>
     <label class="f">Base image<small>image to image and inpainting</small></label><div id="ig-base"></div>
@@ -4138,9 +4166,9 @@ async function vImages(){
     <label class="f">Character positions</label><div id="ig-pos">${posPadHTML(f,-1)}</div>
     <div class="tg"><div>Add my preset's tags<div class="hint">Artist tags, base lines and undesired tags of your image preset.</div></div><label class="sw"><input type="checkbox" id="ig-pr" ${f.usePreset?'checked':''}><span></span></label></div>
     <div class="row"><span class="small muted">Preset</span>${presetSelect()}</div>
-    <details style="margin-top:10px"><summary class="small" style="cursor:pointer">Image settings: ${st.imgModel==='v45'?'V4.5':'V5'} · ${(NAI_SIZES[st.naiSize]||NAI_SIZES.portrait)[2].split(' (')[0]} · ${naiSettings().steps} steps${st.naiSeed?` · seed ${st.naiSeed}`:''}</summary>
+    <details style="margin-top:10px"><summary class="small" style="cursor:pointer">Image settings: ${st.imgModel==='v45'?'V4.5':'V5'} · ${`${naiSettings().w}×${naiSettings().h}`} · ${naiSettings().steps} steps${st.naiSeed?` · seed ${st.naiSeed}`:''}</summary>
       <label class="f">Model</label>${opt('imgModel',[['v5','NovelAI Diffusion V5'],['v45','NovelAI Diffusion V4.5']],st.imgModel==='v45'?'v45':'v5')}
-      <label class="f">Size</label>${opt('naiSize',Object.entries(NAI_SIZES).map(([v,[,,l]])=>[v,l]),st.naiSize||'portrait')}
+      <label class="f">Size</label>${opt('naiSize',naiSizeList(),st.naiSize||'portrait')}
       <div class="grid2"><div><label class="f">Steps</label><input type="number" data-s="naiSteps" min="1" max="50" value="${st.naiSteps||23}"></div><div><label class="f">Guidance</label><input type="number" data-s="naiScale" min="0" max="10" step="0.1" value="${st.naiScale||''}" placeholder="${st.imgModel==='v45'?5:7}"></div></div>
       <div class="grid2"><div><label class="f">Sampler</label>${opt('naiSampler',NAI_SAMPLERS,st.naiSampler||'k_euler_ancestral')}</div><div><label class="f">Seed<small>empty = random</small></label><input type="number" data-s="naiSeed" min="0" value="${st.naiSeed||''}" placeholder="random"></div></div>
       <div class="grid2"><div><label class="f">Quality tags</label>${opt('naiQuality',[['1','On'],['','Off']],st.naiQuality===false?'':'1')}</div><div><label class="f">Undesired preset</label>${opt('naiUc',[['heavy','Heavy'],['light','Light'],['none','None']],st.naiUc||'heavy')}</div></div>
@@ -4235,6 +4263,29 @@ Return one JSON object only: ${panelJson('sections')}`,undefined,1500);r={panels
       }catch(e){msg.className='small err';msg.textContent=e.message}
       finally{if(b.isConnected){b.disabled=false;b.innerHTML=`${I.img} Generate`}}},
     bup:async()=>{const id=await addUpload();if(id)setBase(id)},
+    // read the prompt and settings NovelAI saved in a picture, and pick what to use
+    imp:async()=>{
+      const [file]=await pickFiles('image/*');if(!file)return;
+      const m=await readImageMeta(file).catch(()=>null);if(!m)return toast("This picture has no NovelAI metadata (it may have been re-saved or shared through an app that strips it)",5000);
+      const n=m.form.chars.length,ck=(k,l,sub,on=true)=>`<label class="tg" style="margin:0"><div>${l}${sub?`<div class="hint">${esc(sub)}</div>`:''}</div><span class="sw"><input type="checkbox" id="im-${k}" ${on?'checked':''}><span></span></span></label>`;
+      openSheet(`<h2>Import metadata</h2><p class="small muted">${esc(m.info)}</p>
+        ${ck('p','Prompt',m.form.base.slice(0,140))}${ck('u','Undesired content',m.form.uc.slice(0,120)||'(none)')}
+        ${n?ck('c',`Characters (${n})`,(m.form.posAI?'AI chooses positions':'with their positions')+': '+m.form.chars.map(c=>c.prompt.slice(0,40)).join(' | ')):''}
+        ${ck('s','Settings',[m.set.imgModel==='v45'?'V4.5':m.set.imgModel?'V5':'',m.set.naiW?`${m.set.naiW}×${m.set.naiH}`:m.set.naiSize?NAI_SIZES[m.set.naiSize][2].split(' (')[0]:'',m.set.naiSteps&&`${m.set.naiSteps} steps`,m.set.naiScale!=null&&`guidance ${m.set.naiScale}`,m.set.naiSampler,`quality tags ${m.set.naiQuality?'on':'off'}`,`undesired preset: ${m.set.naiUc}`].filter(Boolean).join(' · '))}
+        ${m.seed!=null?ck('d','Seed',String(m.seed),false):''}
+        ${ck('b','Use the picture as base image','for image to image or inpainting',false)}
+        <p class="hint">The prompt keeps its own artist tags, so "Add my preset's tags" is turned off.</p>
+        <div class="sheet-foot row"><button class="btn ghost" data-act="close" style="flex:1">Cancel</button><button class="btn" data-act="go" style="flex:2">${I.imp} Import</button></div>`,{
+        go:async()=>{
+          const on=k=>$('#im-'+k)?.checked;
+          if(on('p')){f.base=m.form.base;f.usePreset=false}if(on('u'))f.uc=m.form.uc;
+          if(on('c')){f.chars=m.form.chars;f.posAI=m.form.posAI}
+          if(on('s'))Object.assign(S.settings,m.set);if(on('d'))S.settings.naiSeed=m.seed;if(on('s')||on('d'))await saveSettings();
+          saveImgPage();closeSheet();
+          if(on('b')){const id=await putImg(await fileToStored(file),{uploaded:true});pg.hist.unshift({id,at:Date.now(),uploaded:true,form:clone(f)});await setBase(id)}
+          vImages();
+          toast('Imported')}});
+    },
     hup:()=>addUpload(),
     brm:()=>{pg.base=null;saveImgPage();drawBase()},
     bunmask:()=>{pg.base.mask=null;saveImgPage();drawBase()},
@@ -4363,7 +4414,7 @@ function vSettings(){
     <p class="hint" style="margin-top:0">Make the pictures right in Hearth instead of copying prompts: a Generate button shows under every image prompt and in image stories. It uses your NovelAI subscription and Anlas, like NovelAI's own site, and one tap makes one picture. The model is the one under Image prompts (${st.imgModel==='v45'?'V4.5':'V5'}).</p>
     <label class="f">NovelAI API token<small>on NovelAI: Account Settings → Get Persistent API Token</small></label><input type="password" data-k="naiToken" value="${esc(st.naiToken||'')}" placeholder="pst-…" autocomplete="off" autocapitalize="off" spellcheck="false">
     <div class="row" style="margin-top:6px"><button class="btn ghost sm" data-act="naicheck">${I.check} Check token</button></div><div id="nai-res" class="small"></div>
-    <label class="f">Size</label><select data-k="naiSize">${Object.entries(NAI_SIZES).map(([v,[,,l]])=>`<option value="${v}" ${(st.naiSize||'portrait')===v?'selected':''}>${l}</option>`).join('')}</select>
+    <label class="f">Size</label><select data-k="naiSize">${naiSizeList().map(([v,l])=>`<option value="${v}" ${(st.naiSize||'portrait')===v?'selected':''}>${l}</option>`).join('')}</select>
     <div class="grid2"><div><label class="f">Steps</label><input type="number" data-k="naiSteps" min="1" max="50" value="${st.naiSteps||23}"></div>
     <div><label class="f">Prompt guidance<small>empty = default</small></label><input type="number" data-k="naiScale" min="0" max="10" step="0.1" value="${st.naiScale||''}" placeholder="${st.imgModel==='v45'?5:7}"></div></div>
     <div class="grid2"><div><label class="f">Sampler</label><select data-k="naiSampler">${NAI_SAMPLERS.map(([v,l])=>`<option value="${v}" ${(st.naiSampler||'k_euler_ancestral')===v?'selected':''}>${l}</option>`).join('')}</select></div>
