@@ -354,7 +354,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.15.0',HEARTH_DATE='2026-10-27';
+const HEARTH_VERSION='1.15.1',HEARTH_DATE='2026-10-28';
 const DEFAULTS={apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -403,12 +403,12 @@ async function updateMemory(chat,char,manual){
     const un=personaFor(chat)?.name||'You',words=+S.settings.memoryWords||300;
     let tr=msgs.map(m=>`${m.role==='user'?un:char.name}: ${macro(stripThink(txt(m)),char.name,un)}`).join('\n\n');
     if(tr.length>24000)tr='…'+tr.slice(-24000);
-    const {text,usage}=await callApi(api,[
+    const {text,used}=await callApi(api,[
       {role:'system',content:'You maintain the long-term memory of an ongoing roleplay story. You are accurate and brief.'},
       {role:'user',content:`Characters: ${char.name} and ${un}.\n\nCURRENT MEMORY:\n${chat.memory?.trim()||'(empty)'}\n\nNEW MESSAGES:\n${tr}\n\nRewrite the memory so it holds everything important: keep still-true facts from the current memory, and add new events, decisions, relationship changes, promises, secrets, injuries, items and places. Drop details that no longer matter or are no longer true. Use short bullet points in past tense, oldest first. At most ${words} words. Reply with only the updated memory.`}
     ],undefined,()=>{},{stream:false,maxTokens:Math.round(words*2.5)+200});
     const mem=stripThink(text||'').trim();if(!mem)throw new Error('The AI returned an empty memory. Try again.');
-    if(usage?.cost)chat.costExtra=(chat.costExtra||0)+usage.cost; // counted in the chat's total, not under one message
+    addExtra(chat,used); // counted in the chat's total, not under one message
     chat.memory=mem;chat.memoryAt=chat.messages.length;await saveChat(chat);return mem;
   }finally{memBusy.delete(chat.id)}
 }
@@ -426,7 +426,7 @@ async function updateScene(chat,char,o={}){
   const tr=recent.map(m=>`${m.role==='user'?un:char.kind==='world'?'Narrator':char.name}: ${macro(stripThink(txt(m)),char.name,un)}`).join('\n\n').slice(-12000);
   sceneBusy.add(chat.id);
   try{
-    const {text,usage}=await callApi(api,[
+    const {text,used}=await callApi(api,[
       {role:'system',content:'You keep track of the physical state of a roleplay scene. You are exact and brief.'},
       {role:'user',content:`${char.kind==='world'?`A story set in ${char.name}. Main characters: ${cast.join(', ')}.`:`Characters: ${char.name} and ${un}.`} ${userAway(chat)?`${un} is the user, who is not in the scene and only directs it: never list ${un} as present.`:`${un} is the user.`}
 
@@ -447,7 +447,8 @@ Keep what is still true, change what the messages changed, and drop what is no l
     if(!o.redo&&!o.rebuild)chat.scenePrev=chat.scene||'';
     // the tracking that followed a reply is part of that reply's cost; a manual rebuild counts for the chat
     const lm=!o.manual&&[...chat.messages].reverse().find(m=>m.role==='assistant'),lu=lm?.usage?.[lm.sw];
-    if(usage?.cost!=null){if(lu)lu.sceneCost=(lu.sceneCost||0)+usage.cost;else chat.costExtra=(chat.costExtra||0)+usage.cost}
+    if(lu){lu.sceneIn=(lu.sceneIn||0)+(used.in||0);lu.sceneOut=(lu.sceneOut||0)+(used.out||0);if(used.cost!=null)lu.sceneCost=(lu.sceneCost||0)+used.cost;if(used.costEst)lu.costEst=true}
+    else addExtra(chat,used);
     chat.scene=s;await saveChat(chat,true);return s;
   }finally{sceneBusy.delete(chat.id)}
 }
@@ -822,9 +823,15 @@ function useKind(messages,o){
 }
 let usageLog=null,usageSaveT=0;const usageNote={};
 const usageList=async()=>usageLog??=((await store.get('usage'))||[]);
+// what one request used: as the proxy reported it, or estimated from the text and the connection's prices
+function usedOf(api,messages,r){
+  if(r.usage)return r.usage;
+  const i=est(messages.map(textOf).join('\n')),out=est(r.text||''),u={in:i,out,est:true},p=priceCost(api,i,out);if(p!=null){u.cost=p;u.costEst=true}return u;
+}
+// work for a chat that isn't one reply (memory updates, scene setup and summaries) counts in the chat's total
+const addExtra=(chat,u)=>{if(!u)return;const e=chat.extra??={in:0,out:0,est:false};e.in+=u.in||0;e.out+=u.out||0;e.est=e.est||!!u.est;addCost(e,u)};
 async function logUsage(api,messages,r,o){
-  const [k,quiet]=useKind(messages,o);let u=r.usage;
-  if(!u){const i=est(messages.map(textOf).join('\n')),out=est(r.text||'');u={in:i,out,est:true};const p=priceCost(api,i,out);if(p!=null){u.cost=p;u.costEst=true}}
+  const [k,quiet]=useKind(messages,o),u=r.used;
   const log=await usageList();log.push({t:Date.now(),k,m:api.model||'',i:Math.round(u.in||0),o:Math.round(u.out||0),c:u.cost??null,ce:!!u.costEst,e:!!u.est});
   if(log.length>5000)log.splice(0,log.length-5000);
   clearTimeout(usageSaveT);usageSaveT=setTimeout(()=>store.set('usage',usageLog),1500);
@@ -861,7 +868,7 @@ function openUsage(){
   draw();
 }
 async function callApi(api,messages,signal,onText,o={}){
-  const r=await callApiRaw(api,messages,signal,onText,o);
+  const r=await callApiRaw(api,messages,signal,onText,o);r.used=usedOf(api,messages,r);
   logUsage(api,messages,r,o).catch(e=>console.warn('Usage log failed:',e));
   return r;
 }
@@ -3430,18 +3437,20 @@ function tokLine(m){
   if(!u)return `<div class="tokl">≈ ${n(est(txt(m)))} tokens</div>`;
   // the reply's cost, plus the scene tracking that followed it
   const total=u.cost!=null||u.sceneCost!=null?(u.cost||0)+(u.sceneCost||0):null;
-  const why=[u.cost!=null?`reply ${fmtCost(u.cost)}`:'',u.sceneCost!=null?`scene tracking ${fmtCost(u.sceneCost)}`:'',u.costEst?'estimated from the prices on your connection':''].filter(Boolean).join(' · ');
+  const why=[u.cost!=null?`reply ${fmtCost(u.cost)}`:'',u.sceneCost!=null||u.sceneIn?`scene tracking ${u.sceneIn?`${Math.round(u.sceneIn+(u.sceneOut||0)).toLocaleString()} tokens`:''}${u.sceneIn&&u.sceneCost!=null?' ':''}${u.sceneCost!=null?fmtCost(u.sceneCost):''}`:'',u.costEst?'estimated from the prices on your connection':''].filter(Boolean).join(' · ');
   return `<div class="tokl" title="↑ tokens sent to the AI for this reply · ↓ tokens the AI wrote${u.est?' (estimated: your proxy did not report them)':''}${why?`\nCost: ${why}`:''}">${u.est?'≈ ':''}↑ ${n(u.in)} · ↓ ${n(u.out)} tokens${total!=null?` · ${u.costEst?'≈ ':''}${fmtCost(total)}`:''}</div>`;
 }
 // everything this chat has cost: replies (every version, with their scene tracking), image prompts kept only in the
 // prompt history, and background work like memory updates
 function chatCost(chat){
-  let t=null,est=false;const add=u=>{if(u?.cost==null&&u?.sceneCost==null)return;t=(t||0)+(u.cost||0)+(u.sceneCost||0);if(u.costEst)est=true};
+  let t=null,est=false,tin=0,tout=0,test=false;const add=u=>{if(!u)return;tin+=(u.in||0)+(u.sceneIn||0);tout+=(u.out||0)+(u.sceneOut||0);test=test||!!u.est;
+    if(u.cost==null&&u.sceneCost==null)return;t=(t||0)+(u.cost||0)+(u.sceneCost||0);if(u.costEst)est=true};
   for(const m of chat.messages)(m.usage||[]).forEach(add);
+  add(chat.extra);
   // story and quick-image prompts are already counted on their messages
   for(const e of chat.images||[])if(!(chat.mode==='image'&&['story','quick','image'].includes(e.from)))add(e.usage);
-  if(chat.costExtra)t=(t||0)+chat.costExtra;
-  return t==null?null:{cost:t,est};
+  if(chat.costExtra)t=(t||0)+chat.costExtra; // from before chats counted tokens
+  return t==null&&!tin&&!tout?null:{cost:t,est,in:tin,out:tout,tokEst:test};
 }
 // Scenes started from a world chat link both ways: the world chat shows each scene under the message it started from,
 // and the scene shows a way back to that message.
@@ -3576,9 +3585,10 @@ Reply with JSON:
         const scs=scenariosOf(c),sc=scs[0],opening=String(j.opening||'').trim();
         const chat={id:uid(),charId:c.id,scenarioId:sc.id,promptId:sc.promptId||'',personaId:wc.personaId||personaFor(wc)?.id,worldId:world.id,
           title:String(j.title||'').trim()||`${c.name} · ${what||'a scene'}`.slice(0,80),titleSet:true,created:Date.now(),memory:'',vars:{},
-          brief:String(j.scenario||'').trim(),storySoFar:String(j.story_so_far||'').trim(),costExtra:usage?.cost||0,
+          brief:String(j.scenario||'').trim(),storySoFar:String(j.story_so_far||'').trim(),
           origin:{chatId:wc.id,worldId:world.id,upto,msgId:wc.messages[upto]?.id,when,what,me,role},
           messages:opening?[{id:uid(),role:'assistant',greeting:true,swipes:[opening],sw:0,time:Date.now()}]:[]};
+        addExtra(chat,usage); // reading the world chat and earlier scenes counts for the new scene
         (wc.scenes??=[]).push({id:chat.id,msgId:chat.origin.msgId});await saveChat(wc,true);
         c.lastUsed=Date.now();await saveChars();await saveChat(chat);closeSheet();go('#/chat/'+chat.id);toast(`Scene with ${c.name} started. ⋮ → Scene setup shows what it knows.`);
       }catch(e){msg.className='small err';msg.textContent=e.message;b.disabled=false}}
@@ -3621,7 +3631,7 @@ async function openSendBack(chat,char){
       const un=personaFor(chat)?.name||'You',past=o.when==='past';
       let tr=chat.messages.filter(m=>txt(m).trim()).map(m=>`${m.role==='user'?un:char.name}: ${macro(stripThink(txt(m)),char.name,un)}`).join('\n\n');
       if(tr.length>24000)tr='…'+tr.slice(-24000);
-      const {text,usage}=await callApi(api,[
+      const {text,used}=await callApi(api,[
         {role:'system',content:'You sum up a side scene of a roleplay story for the memory of the main story. You are accurate and brief.'},
         {role:'user',content:`MAIN STORY: a story with several characters${w?` set in ${w.name}`:''}.
 SIDE SCENE: played one-on-one with ${char.name}${past?`, as a past event: ${o.what}`:''}. ${{direct:`Messages from ${un} are directions from the user, who was not in the scene.`,later:`Messages from ${un} are directions from the user, who was not in the scene.`}[sceneRole(chat)]||`Messages from ${un} are the user${o.me?`, playing ${o.me}`:''}${o.joinedAt!=null?`; until message ${o.joinedAt+1} they were directions, then the user joined the scene`:''}.`}
@@ -3631,7 +3641,7 @@ ${tr}
 
 Write what the main story should now know from this scene, as short past-tense bullet points, oldest first, at most 220 words: ${past?'what really happened back then, who did what, and anything revealed that still matters':'what happened, decisions, promises, secrets, relationship changes, injuries and items'}. Also keep small things that someone else could find out about or run into later, such as letters or messages written, gifts, things hidden, moved or taken, and secrets told, and say who knows something the others don't. Use names, never "you". Reply with only the bullet points.`}
       ],undefined,()=>{},{stream:false,maxTokens:900});
-      if(usage?.cost)chat.costExtra=(chat.costExtra||0)+usage.cost;
+      addExtra(chat,used);await saveChat(chat,true);
       const s=stripThink(text||'').trim();if(!s)throw new Error('The AI returned an empty summary. Try again.');
       if(!ta.isConnected)return;ta.value=s;sheetMeta.snap=sheetSnap(ta.closest('.pn')); // not a change of yours, so closing doesn't ask
       msg.className='small okc';msg.textContent='Fix anything that\'s wrong, then tap Add to its memory.';
@@ -3640,7 +3650,7 @@ Write what the main story should now know from this scene, as short past-tense b
 }
 function chatMenu(chat,char,redraw){
   const spent=chatCost(chat);
-  openSheet(`<h2>Chat options</h2>${spent?`<p class="hint" style="margin:-6px 0 10px">This chat so far: <b>${spent.est?'≈ ':''}${fmtCost(spent.cost)}</b></p>`:''}<div class="menu">
+  openSheet(`<h2>Chat options</h2>${spent?`<p class="hint" style="margin:-6px 0 10px">This chat so far: <b>${spent.cost!=null?`${spent.est?'≈ ':''}${fmtCost(spent.cost)} · `:''}${spent.tokEst?'≈ ':''}${Math.round(spent.in+spent.out).toLocaleString()} tokens</b> (↑ ${Math.round(spent.in).toLocaleString()} · ↓ ${Math.round(spent.out).toLocaleString()})</p>`:''}<div class="menu">
     ${chat.origin?`<button data-act="setup">${I.book} Scene setup (from the world chat)</button><button data-act="srolesc">${I.user} You in this scene: ${SCENE_ROLES[sceneRole(chat)][0]}</button><button data-act="sendback">${I.send} Send back to the world chat${chat.origin.sent?' (sent)':''}</button>`:''}${char.kind==='world'&&chat.mode!=='image'?`<button data-act="wscene">${I.chat} Play a scene with one character</button>${liveScenes(chat).length?`<button data-act="scenes">${I.book} Scenes from this chat (${liveScenes(chat).length})</button>`:''}`:''}<button data-act="memory">${I.brain} Chat memory</button>${chat.mode==='image'?'':`<button data-act="scene">${I.user} The scene right now</button>`}${char.kind!=='world'&&S.chars.some(c=>c.kind==='world')?`<button data-act="cworld">${I.book} World for this chat: ${esc(chatWorld(chat,char)?.name||'none')}</button>`:''}<button data-act="persona">${I.user} Persona for this chat</button><button data-act="prompt">${I.edit} Prompt preset</button>
     <button data-act="vars">${I.code} Script variables</button><button data-act="lore">${I.tag} Lore used in last reply</button><button data-act="rename">${I.edit} Rename chat</button><button data-act="mvf">${I.folder} Move to folder${folders('chats').find(f=>f.id===chat.folder)?` (now: ${esc(folders('chats').find(f=>f.id===chat.folder).name)})`:''}</button>
     <button data-act="newchat">${I.plus} Start a new chat</button><button data-act="export">${I.exp} Export chat as text</button>
