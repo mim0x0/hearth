@@ -360,7 +360,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.18.3',HEARTH_DATE='2026-10-28';
+const HEARTH_VERSION='1.19.0',HEARTH_DATE='2026-10-28';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -1361,7 +1361,7 @@ function dismissSheet(){
 (()=>{ // swipe a sheet down to close it (from its top, or from anywhere once it's scrolled to the top)
   const pn=$('#sheet .pn');let y0=null,x0=0,dy=0,drag=false,t0=0;
   pn.addEventListener('touchstart',e=>{y0=null;if(e.touches.length>1)return;const grab=e.target.closest('.grab,h2');
-    if(!grab&&(pn.scrollTop>0||e.target.closest('textarea,input,select,[contenteditable]')))return;
+    if(!grab&&(pn.scrollTop>0||e.target.closest('textarea,input,select,[contenteditable],.noswipe')))return;
     y0=e.touches[0].clientY;x0=e.touches[0].clientX;dy=0;drag=false},{passive:true});
   pn.addEventListener('touchmove',e=>{if(y0==null)return;const t=e.touches[0],d=t.clientY-y0,dx=t.clientX-x0;
     if(!drag){if(Math.abs(dx)>10&&Math.abs(dx)>Math.abs(d)||d<-8){y0=null;return}if(d<8)return;drag=true;y0=t.clientY;t0=Date.now();pn.style.transition='none'}
@@ -2926,7 +2926,9 @@ function naiCenter(s){
   return x==null&&y==null?null:{x:x??.5,y:y??.5};
 }
 // the NovelAI request for one panel: your preset's tags included, plus NovelAI's quality and undesired presets if on
-function naiRequest(p0,seed){
+// o (optional): image to image or inpainting from a base picture: image (base64 PNG at w×h), w, h, strength, noise,
+// mask (base64 PNG, white = redraw) and for a mask its own strength (inpaint, 1 = redraw fully)
+function naiRequest(p0,seed,o={}){
   const p=withPreset(p0),st=S.settings,n=naiSettings();
   // quality tags go at the end of the prompt but before a "Text:" block; "no text" is left out when the image has words
   const qual=st.naiQuality===false?'':'very aesthetic, masterpiece'+(p.text?.trim()?'':', no text');
@@ -2937,44 +2939,74 @@ function naiRequest(p0,seed){
   else{base=addQ(p.base);chars=p.characters.filter(c=>c.prompt?.trim()).map(c=>{const o=c.position&&typeof c.position==='object'?c.position:null;
     return {prompt:c.prompt.trim(),uc:(c.undesired||'').trim(),center:o?(n.v5?{x:o.x,y:o.y}:{x:naiSnap(o.x),y:naiSnap(o.y)}):naiCenter(c.position)}})}
   const coords=chars.some(c=>c.center),ctr=c=>c.center||{x:.5,y:.5};
-  return {input:base,model:n.model,action:'generate',parameters:{params_version:4,width:n.w,height:n.h,scale:n.scale,sampler:n.sampler,steps:n.steps,n_samples:1,
+  const req=naiBody(base,uc,chars,coords,ctr,seed,qual,o.w||n.w,o.h||n.h);
+  if(o.image){
+    const pr=req.parameters;pr.image=o.image;pr.extra_noise_seed=Math.max(0,seed-1);pr.strength=o.strength??.7;pr.noise=o.noise??0;
+    if(o.mask){req.action='infill';req.model=n.model+'-inpainting';pr.mask=o.mask;if((o.inpaint??1)<1)pr.img2img={strength:o.inpaint,color_correct:true}}
+    else req.action='img2img';
+  }
+  return req;
+}
+function naiBody(base,uc,chars,coords,ctr,seed,qual,w,h){
+  const st=S.settings,n=naiSettings();
+  return {input:base,model:n.model,action:'generate',parameters:{params_version:4,width:w,height:h,scale:n.scale,sampler:n.sampler,steps:n.steps,n_samples:1,
     seed,ucPreset:{heavy:0,light:1,none:4}[st.naiUc||'heavy'],qualityToggle:!!qual,autoSmea:false,sm:false,sm_dyn:false,dynamic_thresholding:false,controlnet_strength:1,legacy:false,
-    add_original_image:true,cfg_rescale:0,noise_schedule:/^k_dpmpp_2m$/.test(n.sampler)?'exponential':'karras',legacy_v3_extend:false,skip_cfg_above_sigma:null,
+    add_original_image:true,cfg_rescale:0,noise_schedule:/^k_dpmpp_2m$/.test(n.sampler)&&!n.v5?'exponential':'karras',legacy_v3_extend:false,skip_cfg_above_sigma:null,
     use_coords:coords,legacy_uc:false,normalize_reference_strength_multiple:true,deliberate_euler_ancestral_bug:false,prefer_brownian:true,
     characterPrompts:chars.map(c=>({prompt:c.prompt,uc:c.uc,center:ctr(c),enabled:true})),negative_prompt:uc,
     v4_prompt:{caption:{base_caption:base,char_captions:chars.map(c=>({char_caption:c.prompt,centers:[ctr(c)]}))},use_coords:coords,use_order:true},
     v4_negative_prompt:{caption:{base_caption:uc,char_captions:chars.map(c=>({char_caption:c.uc,centers:[ctr(c)]}))},legacy_uc:false}}};
 }
-// the first file in a zip (NovelAI's other answer format), read through the central directory
-async function unzipFirst(buf){
+// every file in a zip (NovelAI's other answer format), read through the central directory
+async function unzipAll(buf){
   const v=new DataView(buf);let e=buf.byteLength-22;while(e>=0&&v.getUint32(e,true)!==0x06054b50)e--;if(e<0)throw new Error('NovelAI sent a broken file');
-  const cd=v.getUint32(e+16,true),method=v.getUint16(cd+10,true),size=v.getUint32(cd+20,true),off=v.getUint32(cd+42,true);
-  const start=off+30+v.getUint16(off+26,true)+v.getUint16(off+28,true),raw=new Uint8Array(buf,start,size);
-  if(method===0)return new Blob([raw]);
-  return new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).blob();
+  const out=[];let cd=v.getUint32(e+16,true);
+  for(let k=v.getUint16(e+10,true);k>0;k--){
+    const method=v.getUint16(cd+10,true),size=v.getUint32(cd+20,true),off=v.getUint32(cd+42,true);
+    const start=off+30+v.getUint16(off+26,true)+v.getUint16(off+28,true),raw=new Uint8Array(buf,start,size);
+    out.push(method===0?new Blob([raw]):await new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).blob());
+    cd+=46+v.getUint16(cd+28,true)+v.getUint16(cd+30,true)+v.getUint16(cd+32,true);
+  }
+  return out;
 }
 const blobToData=b=>new Promise((ok,no)=>{const r=new FileReader();r.onload=()=>ok(r.result);r.onerror=()=>no(r.error);r.readAsDataURL(b)});
 let naiBusy=false;
-async function naiGenerate(p,signal){
+// one NovelAI image request (one at a time, as NovelAI allows); returns the pictures it sent as data URLs
+async function naiPost(path,body,signal){
   if(!naiOn())throw new Error('Add your NovelAI token in Settings → NovelAI images first.');
   if(naiBusy)throw new Error('NovelAI makes one image at a time. Wait for the one that is being made.');
   naiBusy=true;
   try{
-    const n=naiSettings(),seed=n.seed??Math.floor(Math.random()*4294967295);
-    const r=await fetch(naiUrl()+'/ai/generate-image',{method:'POST',signal,headers:{'Authorization':'Bearer '+S.settings.naiToken.trim(),'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify(naiRequest(p,seed))});
+    const r=await fetch(naiUrl()+path,{method:'POST',signal,headers:{'Authorization':'Bearer '+S.settings.naiToken.trim(),'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify(body)});
     if(!r.ok){
       let m='';try{const j=await r.json();m=j.message||j.error||''}catch{}
       throw new Error({401:"NovelAI didn't accept your token. Check it in Settings → NovelAI images.",402:`NovelAI says this needs an active subscription or more Anlas${m?` (${m})`:''}.`,
         429:'NovelAI is busy with another image from your account. Wait a moment and try again.'}[r.status]||`NovelAI: ${m||'error '+r.status}`);
     }
-    let data;
-    if(/json/.test(r.headers.get('content-type')||'')){const j=await r.json(),im=j.images?.[0];if(!im?.image)throw new Error('NovelAI sent no image');data=`data:image/png;base64,${im.image}`}
-    else data=await blobToData(await unzipFirst(await r.arrayBuffer()));
-    if(!/^data:image\//.test(data))data=data.replace(/^data:[^;]*;/,'data:image/png;');
-    return {data,seed};
+    let list;
+    if(/json/.test(r.headers.get('content-type')||'')){const j=await r.json();list=(j.images||[]).filter(x=>x?.image).map(x=>`data:image/png;base64,${x.image}`)}
+    else list=await Promise.all((await unzipAll(await r.arrayBuffer())).map(blobToData));
+    if(!list.length)throw new Error('NovelAI sent no image');
+    return list.map(d=>/^data:image\//.test(d)?d:d.replace(/^data:[^;]*;/,'data:image/png;'));
   }finally{naiBusy=false}
 }
-// makes the picture for a panel and keeps it in the character's (or world's) gallery; returns its picture id
+async function naiGenerate(p,signal,o){
+  const seed=naiSettings().seed??Math.floor(Math.random()*4294967295);
+  return {data:(await naiPost('/ai/generate-image',naiRequest(p,seed,o),signal))[0],seed};
+}
+// pictures in and out of NovelAI's tools
+// a picture's shape at about the given area, in steps of 64 (what NovelAI takes)
+function fitSize(w,h,area){const r=w/h,W=Math.sqrt(area*r);return [Math.max(64,Math.round(W/64)*64),Math.max(64,Math.round(W/r/64)*64)]}
+async function imgB64(src,w,h){const i=await loadImg(src),c=document.createElement('canvas');w=w||i.naturalWidth;h=h||i.naturalHeight;c.width=w;c.height=h;c.getContext('2d').drawImage(i,0,0,w,h);return c.toDataURL('image/png').split(',')[1]}
+// NovelAI's picture tools: upscale (×2) and the director tools; some send more than one picture
+const NAI_TOOLS={upscale:'Upscale ×2','bg-removal':'Remove background',lineart:'Line art',sketch:'Sketch',colorize:'Colorize',emotion:'Change emotion',declutter:'Declutter'};
+const NAI_EMOTIONS=['neutral','happy','sad','angry','scared','surprised','tired','excited','nervous','thinking','confused','shy','disgusted','smug','bored','laughing','irritated','aroused','embarrassed','worried','love','determined','hurt','playful'];
+async function naiTool(kind,src,o={}){
+  const i=await loadImg(src),w=i.naturalWidth,h=i.naturalHeight,image=await imgB64(src,w,h);
+  if(kind==='upscale')return naiPost('/ai/upscale',{image,model:'nai-diffusion-5-curated',declared_blur_sigma:0});
+  return naiPost('/ai/augment-image',{req_type:kind,image,width:w,height:h,
+    ...(kind==='colorize'?{prompt:o.prompt||'',defry:o.defry??0}:kind==='emotion'?{prompt:`${o.emotion||'happy'};;${o.extra||''}`,defry:o.defry??0}:{})});
+}
 // makes the picture for a panel and keeps it with what made it (not in a gallery until you save it there); returns its picture id
 async function naiPicture(p,signal){const {data,seed}=await naiGenerate(p,signal);return putImg(data,{seed,made:true})}
 const inGallery=id=>S.chars.some(c=>c.gallery?.some(g=>g.id===id));
@@ -2990,12 +3022,13 @@ async function viewMade(id,o={}){
   const rec=await store.get('img:'+id);if(!rec?.data)return toast('Picture not found');
   const c=o.c,saved=c&&((rec.saved||[]).includes(c.id)||c.gallery?.some(g=>g.id===id));
   openSheet(`<img src="${rec.data}" alt="" data-act="zoom" style="width:100%;max-height:60dvh;object-fit:contain;border-radius:12px;background:#000">
-    <p class="small muted" style="margin:6px 0 0">${rec.seed!=null?`Seed ${rec.seed}`:''}${rec.saved?.length?` · <span class="okc">Saved to ${[...new Set(rec.saved)].map(x=>esc(getChar(x)?.name||'?')).join(', ')}</span>`:''}</p>
+    <p class="small muted" style="margin:6px 0 0">${[rec.tool,rec.uploaded?'From your device':'',rec.seed!=null?`Seed ${rec.seed}`:''].filter(Boolean).map(esc).join(' · ')}${rec.saved?.length?` · <span class="okc">Saved to ${[...new Set(rec.saved)].map(x=>esc(getChar(x)?.name||'?')).join(', ')}</span>`:''}</p>
     <div class="menu" style="margin-top:8px">
       ${c?`<button data-act="gsave" ${saved?'disabled':''}>${saved?`${I.check} Saved to ${esc(c.name)}'s gallery`:`${I.plus} Save to ${esc(c.name)}'s gallery`}</button>`:''}
       <button data-act="gother">${I.folder} Save to ${c?'another':'a'} gallery…</button>
       <button data-act="dl">${I.imp} Save to device</button>
       ${(o.more||[]).map((x,k)=>`<button data-act="more" data-k="${k}">${x.label}</button>`).join('')}
+      ${o.images?'':`<button data-act="toimg">${I.img} Edit on the Images page</button>`}
       <button class="danger" data-act="del">${I.trash} Delete picture</button>
     </div>
     <div class="sheet-foot row"><button class="btn" data-act="back" style="flex:1">${I.back} ${o.backLabel||'Back'}</button></div>`,{
@@ -3004,6 +3037,8 @@ async function viewMade(id,o={}){
     gother:()=>pickGallery(async t=>{await saveToGallery(t,id,o.note,t.id===c?.id?o.chatId:'');toast(`Saved to ${t.name}'s gallery`);viewMade(id,o)},()=>viewMade(id,o)),
     dl:async()=>download(`hearth-${rec.seed??id}.png`,await dataToBlob(rec.data)),
     more:b=>o.more[+b.dataset.k].fn(),
+    // a copy goes to the Images page, for image to image, inpainting and the tools
+    toimg:async()=>{const pg=await imgPageData(),nid=await putImg(rec.data,{seed:rec.seed,made:true});pg.hist.unshift({id:nid,at:Date.now(),seed:rec.seed,form:null});saveImgPage();closeSheet();go('#/images');toast('Added to the Images page: tap it there for image to image and the tools')},
     del:async()=>{if(!confirm('Delete this picture?'))return;if(!inGallery(id))await delImg(id);await o.onDelete?.(id);if(o.back)o.back();else closeSheet()}
   });
 }
@@ -4007,6 +4042,54 @@ function chatMenu(chat,char,redraw){
 // A character's position is a dot on the picture, like NovelAI's Character Positions: anywhere on V5, on a 5×5 grid
 // on V4.5. '' = the AI chooses. Older forms kept words like "left, top".
 const posOf=p=>p&&typeof p==='object'?p:naiCenter(p);
+// Paint the part of a picture NovelAI should draw again (inpainting). The mask is white where you painted and black
+// elsewhere, at the picture's size; done(base64 PNG, or null when nothing is painted).
+function openMaskEditor(src,w,h,mask,done,back){
+  let mode='paint',size=6,x,last=null;
+  openSheet(`<h2>Paint what to redraw</h2><p class="hint">Paint over the part NovelAI should draw again. Everything else stays as it is.</p>
+    <div class="chips" style="margin-top:0"><button type="button" class="chip on" data-act="mode" data-v="paint">${I.edit} Paint</button><button type="button" class="chip" data-act="mode" data-v="erase">Erase</button><button type="button" class="chip" data-act="clear">${I.trash} Clear</button></div>
+    <input type="hidden" id="mk-n" value="0"><div class="row" style="margin-top:8px"><span class="small muted">Brush</span><input type="range" id="mk-s" style="flex:1" min="1" max="20" value="${size}"></div>
+    <div class="noswipe" style="position:relative;border-radius:10px;overflow:hidden;background:#000;width:min(100%,calc(58dvh * ${w} / ${h}));margin:10px auto 0"><img src="${src}" alt="" style="width:100%;display:block"><canvas id="mk-c" width="${w}" height="${h}" style="position:absolute;inset:0;width:100%;height:100%;touch-action:none;opacity:.6"></canvas></div>
+    
+    <div class="sheet-foot row"><button class="btn ghost" data-act="cancel" style="flex:1">Cancel</button><button class="btn" data-act="done" style="flex:2">${I.check} Done</button></div>`,{
+    mode:b=>{mode=b.dataset.v;$$('#sheet [data-act=mode]').forEach(e=>e.classList.toggle('on',e===b))},
+    clear:()=>{x.clearRect(0,0,w,h);$('#mk-n').value++},
+    cancel:()=>back(),
+    done:()=>{
+      const d=x.getImageData(0,0,w,h).data,m=document.createElement('canvas');m.width=w;m.height=h;const mx=m.getContext('2d'),md=mx.createImageData(w,h);let any=false;
+      for(let i=0;i<d.length;i+=4){const v=d[i+3]>0?255:0;if(v)any=true;md.data[i]=md.data[i+1]=md.data[i+2]=v;md.data[i+3]=255}
+      mx.putImageData(md,0,0);done(any?m.toDataURL('image/png').split(',')[1]:null)}
+  },{modal:true});
+  const cv=$('#mk-c');x=cv.getContext('2d');
+  $('#mk-s').oninput=e=>{size=+e.target.value};
+  // an earlier mask comes back as red paint
+  if(mask)loadImg('data:image/png;base64,'+mask).then(i=>{x.drawImage(i,0,0,w,h);const id=x.getImageData(0,0,w,h),p=id.data;
+    for(let k=0;k<p.length;k+=4){const on=p[k]>127;p[k]=255;p[k+1]=60;p[k+2]=90;p[k+3]=on?255:0}x.putImageData(id,0,0);sheetMeta.snap=sheetSnap($('#sheet .pn'))});
+  const at=e=>{const r=cv.getBoundingClientRect();return [(e.clientX-r.left)/r.width*w,(e.clientY-r.top)/r.height*h]};
+  const stroke=(a,b)=>{x.globalCompositeOperation=mode==='erase'?'destination-out':'source-over';x.strokeStyle=x.fillStyle='#ff3c5a';x.lineWidth=size/100*w;x.lineCap=x.lineJoin='round';
+    x.beginPath();x.moveTo(a[0],a[1]);x.lineTo(b[0]+.01,b[1]);x.stroke()};
+  cv.onpointerdown=e=>{e.preventDefault();cv.setPointerCapture?.(e.pointerId);last=at(e);stroke(last,last);$('#mk-n').value++}; // a change, so closing asks first
+  cv.onpointermove=e=>{if(!last)return;const p=at(e);stroke(last,p);last=p};
+  cv.onpointerup=cv.onpointercancel=()=>{last=null};
+}
+// NovelAI's upscaler and director tools for one picture; done(the pictures it sent, the tool's name)
+function openNaiTools(src,done,back){
+  openSheet(`<h2>Picture tools</h2><p class="hint">NovelAI's upscaler and director tools. They may cost Anlas, depending on the picture's size.</p>
+    <div class="menu">${['upscale','bg-removal','lineart','sketch','declutter'].map(k=>`<button data-act="run" data-k="${k}">${I.wand} ${NAI_TOOLS[k]}</button>`).join('')}</div>
+    <label class="f">Colorize<small>optional: colors or style to use</small></label><input id="nt-cp" placeholder="e.g. silver hair, red cape, warm light">
+    <button class="btn ghost sm" data-act="run" data-k="colorize" style="margin-top:6px">${I.wand} Colorize</button>
+    <label class="f">Change emotion</label><div class="grid2"><select id="nt-em">${NAI_EMOTIONS.map(e=>`<option>${e}</option>`).join('')}</select><input id="nt-ex" placeholder="extra tags (optional)"></div>
+    <button class="btn ghost sm" data-act="run" data-k="emotion" style="margin-top:6px">${I.wand} Change emotion</button>
+    <label class="f">Defry<small>for Colorize and Change emotion: higher = a weaker change</small></label><input type="range" id="nt-df" min="0" max="5" value="0">
+    <div id="nt-msg" class="small" style="margin-top:8px"></div>
+    <div class="sheet-foot row"><button class="btn ghost" data-act="back" style="flex:1">${I.back} Back</button></div>`,{
+    back:()=>back(),
+    run:async b=>{
+      const k=b.dataset.k,msg=$('#nt-msg'),btns=$$('#sheet [data-act=run]');btns.forEach(e=>e.disabled=true);msg.className='small muted';msg.textContent=`${NAI_TOOLS[k]}: NovelAI is working…`;
+      try{const list=await naiTool(k,src,{prompt:$('#nt-cp').value.trim(),emotion:$('#nt-em').value,extra:$('#nt-ex').value.trim(),defry:+$('#nt-df').value});await done(list,NAI_TOOLS[k])}
+      catch(e){if(msg.isConnected){msg.className='small err';msg.textContent=e.message}}finally{btns.forEach(e=>{if(e.isConnected)e.disabled=false})}}
+  });
+}
 const DOT_COLORS=['#e8577a','#4fa3f7','#f2b33d','#4cc285','#b07cf0','#f07c4a'],dotColor=k=>DOT_COLORS[k%DOT_COLORS.length];
 // the AI chooses positions unless that was turned off (older forms: unless some character has a dot)
 const posAIOf=f=>f.posAI??!f.chars.some(c=>posOf(c.pos));
@@ -4049,6 +4132,7 @@ async function vImages(){
       <div class="small" id="ia-msg" style="margin-top:6px"></div></div>
     <label class="f" style="margin-top:0">Prompt</label><textarea id="ig-b" rows="5" placeholder="1girl, outdoors, cherry blossoms, evening, …">${esc(f.base)}</textarea>
     <label class="f">Undesired content</label><textarea id="ig-u" rows="2" placeholder="Things to keep out">${esc(f.uc)}</textarea>
+    <label class="f">Base image<small>image to image and inpainting</small></label><div id="ig-base"></div>
     <label class="f">Characters<small>one box per person, like NovelAI's Character Prompts</small></label><div id="ig-cs">${f.chars.map(charBox).join('')}</div>
     <button class="btn ghost sm" data-act="cadd">${I.plus} Add character</button>
     <label class="f">Character positions</label><div id="ig-pos">${posPadHTML(f,-1)}</div>
@@ -4062,7 +4146,7 @@ async function vImages(){
       <div class="grid2"><div><label class="f">Quality tags</label>${opt('naiQuality',[['1','On'],['','Off']],st.naiQuality===false?'':'1')}</div><div><label class="f">Undesired preset</label>${opt('naiUc',[['heavy','Heavy'],['light','Light'],['none','None']],st.naiUc||'heavy')}</div></div>
     </details>
     <button class="btn block" data-act="gen" id="ig-go" style="margin-top:14px">${I.img} Generate</button>
-    <div class="small muted" id="ig-msg" style="margin-top:6px;text-align:center">${naiFree()?'Free on Opus at this size and steps.':'This size or step count costs Anlas.'}</div>
+    <div class="small muted" id="ig-msg" style="margin-top:6px;text-align:center"></div>
     <div id="ig-out" style="margin-top:12px"></div></div>`;
   const read=()=>{f.base=$('#ig-b').value;f.uc=$('#ig-u').value;f.usePreset=$('#ig-pr').checked;pg.ask=$('#ia-d').value;
     $$('.ig-c',view).forEach(el=>{const c=f.chars[+el.dataset.k];if(c){c.prompt=$('.ig-cpr',el).value;c.uc=$('.ig-cuc',el).value}});saveImgPage()};
@@ -4071,14 +4155,32 @@ async function vImages(){
   const drawChars=()=>{$('#ig-cs').innerHTML=f.chars.map(charBox).join('');drawPos()};
   const fill=p=>{f.base=p.base+(p.text?.trim()?'\nText: '+p.text.trim():'');f.uc=p.undesired||'';f.chars=p.characters.map(c=>({prompt:c.prompt||'',uc:c.undesired||'',pos:naiCenter(c.position)||''}));f.posAI=!f.chars.some(c=>c.pos);if(!f.posAI)spreadDots(f);
     $('#ig-b').value=f.base;$('#ig-u').value=f.uc;drawChars();saveImgPage()};
+  // free on Opus up to about 1024×1024 and 28 steps; a base picture brings its own size
+  const freeNote=()=>{const n=naiSettings(),b=pg.base,a=b?b.w*b.h:n.w*n.h;$('#ig-msg').className='small muted';
+    $('#ig-msg').textContent=a<=1048576&&n.steps<=28?'Free on Opus at this size and steps.':'This size or step count costs Anlas.'};
+  // the picture to start from: image to image changes all of it, a painted area (inpainting) only that part
+  const drawBase=()=>{const b=pg.base,el=$('#ig-base');
+    if(!b){el.innerHTML=`<div class="box small muted">Start from a picture: open one below and tap <b>Use as base image</b>, or <a href="#" data-act="bup" style="color:var(--accent)">add one from your device</a>.</div>`;freeNote();return}
+    const rng=(k,l,min,max,v,hint)=>`<label class="f" style="margin-top:6px">${l} <span class="muted" id="bv-${k}">${v}</span>${hint?`<small>${hint}</small>`:''}</label><input type="range" data-b="${k}" min="${min}" max="${max}" step="0.01" value="${v}">`;
+    el.innerHTML=`<div class="box"><div class="row" style="gap:10px;align-items:flex-start"><img data-img="${b.id}" src="${BLANK}" data-act="bview" alt="" style="width:84px;border-radius:8px;background:var(--panel2)"><div style="flex:1;min-width:0">
+      <div class="small muted">${b.w}×${b.h}${b.mask?' · <b>inpainting</b>: only the painted part is redrawn':' · image to image'}</div>
+      ${b.mask?rng('inpaint','Strength',0.01,1,b.inpaint??1,'1 = draw the painted part fully new'):rng('strength','Strength',0.01,0.99,b.strength??.7,'higher = more change')+rng('noise','Noise',0,0.99,b.noise??0,'adds detail; keep low')}</div></div>
+      <div class="row" style="margin-top:8px;flex-wrap:wrap"><button class="btn ghost sm" data-act="bmask">${I.edit} ${b.mask?'Edit painted area':'Paint area to redo'}</button>${b.mask?`<button class="btn ghost sm" data-act="bunmask">Clear painted area</button>`:''}<button class="btn ghost sm" data-act="brm">${I.trash} Remove</button></div></div>`;
+    hydrate(el);freeNote()};
+  const setBase=async(id,o={})=>{const d=await getImgData(id);if(!d)return toast('Picture not found');const i=await loadImg(d),nw=i.naturalWidth,nh=i.naturalHeight;
+    const [w,h]=fitSize(nw,nh,o.area||Math.min(nw*nh,1048576));pg.base={id,w,h,strength:o.strength??.7,noise:o.noise??0,mask:null,inpaint:1};saveImgPage();if($('#ig-base'))drawBase()};
+  const addUpload=async()=>{const [file]=await pickFiles('image/*');if(!file)return null;const id=await putImg(await fileToStored(file),{uploaded:true});
+    pg.hist.unshift({id,at:Date.now(),uploaded:true,form:null});saveImgPage();drawOut();return id};
   const drawOut=()=>{
     const h=pg.hist,top=h[0];
     $('#ig-out').innerHTML=top?`<img data-img="${top.id}" src="${BLANK}" data-act="hview" data-id="${top.id}" alt="" style="width:100%;border-radius:12px;background:var(--panel2);display:block">
-      ${h.length>1?`<div class="small muted" style="margin:12px 0 6px">Made here (${h.length}). Tap one to save it to a gallery, reuse its seed or prompt, or delete it.</div>${thumbs(h.slice(1).map(x=>x.id),'hview')}`:''}`:'';
+      ${h.length>1?`<div class="small muted" style="margin:12px 0 6px">Made here (${h.length}). Tap one to save it, start from it, use the tools, reuse its seed or prompt, or delete it.</div>${thumbs(h.slice(1).map(x=>x.id),'hview')}`:''}`:'';
+    $('#ig-out').insertAdjacentHTML('beforeend',`<button class="btn ghost sm" data-act="hup" style="margin-top:10px">${I.plus} Add a picture from your device</button>`);
     hydrate($('#ig-out'));
   };
   view.oninput=e=>{const t=e.target,k=t.dataset.s;
-    if(k){S.settings[k]=k==='naiQuality'?!!t.value:t.type==='number'?(t.value===''?'':+t.value):t.value;saveSettings();$('#ig-msg').textContent=naiFree()?'Free on Opus at this size and steps.':'This size or step count costs Anlas.';
+    if(t.dataset.b&&pg.base){pg.base[t.dataset.b]=+t.value;$('#bv-'+t.dataset.b).textContent=t.value;saveImgPage();return}
+    if(k){S.settings[k]=k==='naiQuality'?!!t.value:t.type==='number'?(t.value===''?'':+t.value):t.value;saveSettings();freeNote();
       if(k==='imgModel'||k==='naiSize')drawPos();return} // the positions follow the picture's shape and the model's grid
     if(t.id==='ig-pai'){f.posAI=t.checked;if(!t.checked)spreadDots(f);drawPos();saveImgPage();return}
     read()};
@@ -4113,7 +4215,7 @@ Return one JSON object only: ${panelJson('sections')}`,undefined,1500);r={panels
   H={toset:()=>go('#/settings'),
     who:b=>{const id=b.dataset.id,on=!pg.who.includes(id);pg.who=on?[...pg.who,id]:pg.who.filter(x=>x!==id);b.classList.toggle('on',on);saveImgPage()},
     aiw:b=>aiRun(b,false),aic:b=>aiRun(b,true),
-    cadd:()=>{read();if(f.chars.length>=(S.settings.imgModel==='v45'?6:22))return toast('That is as many characters as the model takes');f.chars.push({pos:posAIOf(f)?'':{x:.5,y:.5},prompt:'',uc:'',pos:''});drawChars();saveImgPage();const ls=$$('.ig-cpr',view);ls[ls.length-1]?.focus()},
+    cadd:()=>{read();if(f.chars.length>=(S.settings.imgModel==='v45'?6:22))return toast('That is as many characters as the model takes');f.chars.push({pos:posAIOf(f)?'':{x:.5,y:.5},prompt:'',uc:''});drawChars();saveImgPage();const ls=$$('.ig-cpr',view);ls[ls.length-1]?.focus()},
     crm:b=>{read();f.chars.splice(+b.dataset.k,1);drawChars();saveImgPage()},
     psel:b=>{const k=+b.dataset.k;if(b.classList.contains('ig-dot')&&k===posSel)return; // a tap on the picked dot is a move, not an unpick
       posSel=posSel===k?-1:k;markSel()},
@@ -4121,20 +4223,40 @@ Return one JSON object only: ${panelJson('sections')}`,undefined,1500);r={panels
       read();const msg=$('#ig-msg'),p=formPanel(f);
       if(!naiOn()){msg.className='small err';msg.textContent='Add your NovelAI token in Settings → NovelAI images.';return}
       if(!p.base&&!p.characters.length){msg.className='small err';msg.textContent='Write a prompt first, or ask the AI to write it.';return}
-      b.disabled=true;b.innerHTML=`${I.img} Generating…`;msg.className='small muted';msg.textContent='NovelAI is making the picture…';
+      const bs=pg.base,src=bs&&await getImgData(bs.id);if(bs&&!src){pg.base=null;drawBase();msg.className='small err';msg.textContent='The base picture was deleted.';return}
+      b.disabled=true;b.innerHTML=`${I.img} Generating…`;msg.className='small muted';msg.textContent=bs?.mask?'NovelAI is redrawing the painted part…':bs?'NovelAI is changing the picture…':'NovelAI is making the picture…';
       try{
-        const {data,seed}=await naiGenerate(p),id=await putImg(data,{seed,made:true}),n=naiSettings();
-        pg.hist.unshift({id,at:Date.now(),seed,form:clone(f),model:n.model,w:n.w,h:n.h});
+        const o=bs?{image:await imgB64(src,bs.w,bs.h),w:bs.w,h:bs.h,strength:bs.strength,noise:bs.noise,mask:bs.mask,inpaint:bs.inpaint}:undefined;
+        const tool=bs?.mask?'Inpainting':bs?'Image to image':'';
+        const {data,seed}=await naiGenerate(p,undefined,o),id=await putImg(data,{seed,made:true,tool}),n=naiSettings();
+        pg.hist.unshift({id,at:Date.now(),seed,form:clone(f),model:n.model,w:o?.w||n.w,h:o?.h||n.h,tool});
         for(const x of pg.hist.splice(200))if(!inGallery(x.id))await delImg(x.id); // keep the latest 200
         saveImgPage();msg.textContent=`Seed ${seed}. Tap the picture to save it to a gallery.`;if($('#ig-out'))drawOut();
       }catch(e){msg.className='small err';msg.textContent=e.message}
       finally{if(b.isConnected){b.disabled=false;b.innerHTML=`${I.img} Generate`}}},
+    bup:async()=>{const id=await addUpload();if(id)setBase(id)},
+    hup:()=>addUpload(),
+    brm:()=>{pg.base=null;saveImgPage();drawBase()},
+    bunmask:()=>{pg.base.mask=null;saveImgPage();drawBase()},
+    bview:()=>{if(pg.hist.some(h=>h.id===pg.base?.id))H.hview({dataset:{id:pg.base.id}})},
+    bmask:async()=>{const bs=pg.base,d=await getImgData(bs.id);if(!d)return toast('Picture not found');
+      openMaskEditor(d,bs.w,bs.h,bs.mask,m=>{bs.mask=m;saveImgPage();closeSheet();drawBase();if(m)toast('Now tap Generate: only the painted part is redrawn')},()=>closeSheet())},
     hview:b=>{const x=pg.hist.find(h=>h.id===b.dataset.id);if(!x)return;
-      viewMade(x.id,{backLabel:'Back to Images',note:x.form?.base?.slice(0,80)||'',
-        more:[{label:`${I.regen} Use this seed`,fn:()=>{S.settings.naiSeed=x.seed;saveSettings();closeSheet();vImages();toast(`Seed ${x.seed} is set. Clear it in Image settings for random seeds.`)}},
-          {label:`${I.edit} Use its prompt`,fn:()=>{if(x.form){pg.form=clone(x.form);saveImgPage()}closeSheet();vImages()}}],
-        onDelete:async id=>{pg.hist=pg.hist.filter(h=>h.id!==id);saveImgPage();if($('#ig-out'))drawOut()}})}};
-  drawOut();
+      const again=()=>H.hview(b),useForm=()=>{if(x.form){pg.form=clone(x.form);saveImgPage()}};
+      // start from this picture and make one right away (the tap on the button is the request)
+      const startFrom=async(o,ask)=>{if(ask&&!confirm(ask))return;useForm();await setBase(x.id,o);closeSheet();await vImages();$('[data-act=gen]',view)?.click()};
+      viewMade(x.id,{images:true,backLabel:'Back to Images',note:x.form?.base?.slice(0,80)||'',
+        more:[{label:`${I.img} Use as base image`,fn:async()=>{await setBase(x.id);closeSheet();$('#ig-base')?.scrollIntoView({block:'center'});toast('Base image set. Change the prompt or paint an area, then tap Generate.')}},
+          ...(x.form?[{label:`${I.regen} Variations`,fn:()=>startFrom({strength:.8,noise:.1})},
+            {label:`${I.wand} Enhance (1.5× bigger)`,fn:async()=>{const i=await loadImg(await getImgData(x.id)),[w,h]=fitSize(i.naturalWidth,i.naturalHeight,i.naturalWidth*i.naturalHeight*2.25);
+              startFrom({area:w*h,strength:.45,noise:0},`Enhance makes a bigger picture (${w}×${h}) from this one. Bigger pictures cost Anlas. Go on?`)}}]:[]),
+          {label:`${I.wand} Tools: upscale, background, line art…`,fn:async()=>{const d=await getImgData(x.id);
+            openNaiTools(d,async(list,label)=>{for(const data of list){const id=await putImg(data,{made:true,tool:label});pg.hist.unshift({id,at:Date.now(),form:x.form?clone(x.form):null,tool:label})}
+              saveImgPage();closeSheet();if($('#ig-out'))drawOut();toast(`${label}: ${list.length} picture${list.length>1?'s':''} added`)},again)}},
+          ...(x.seed!=null?[{label:`${I.regen} Use this seed`,fn:()=>{S.settings.naiSeed=x.seed;saveSettings();closeSheet();vImages();toast(`Seed ${x.seed} is set. Clear it in Image settings for random seeds.`)}}]:[]),
+          ...(x.form?[{label:`${I.edit} Use its prompt`,fn:()=>{useForm();closeSheet();vImages()}}]:[])],
+        onDelete:async id=>{pg.hist=pg.hist.filter(h=>h.id!==id);if(pg.base?.id===id){pg.base=null;drawBase()}saveImgPage();if($('#ig-out'))drawOut()}})}};
+  drawOut();drawBase();
 }
 /* ---------- profile / personas ---------- */
 // pick who you are in one chat, and add, edit or delete personas right there
