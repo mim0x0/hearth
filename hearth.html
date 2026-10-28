@@ -360,7 +360,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.20.0',HEARTH_DATE='2026-10-28';
+const HEARTH_VERSION='1.20.1',HEARTH_DATE='2026-10-28';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -2944,7 +2944,10 @@ function naiRequest(p0,seed,o={}){
   const req=naiBody(base,uc,chars,coords,ctr,seed,qual,o.w||n.w,o.h||n.h);
   if(o.image){
     const pr=req.parameters;pr.image=o.image;pr.extra_noise_seed=Math.max(0,seed-1);pr.strength=o.strength??.7;pr.noise=o.noise??0;
-    if(o.mask){req.action='infill';req.model=n.model+'-inpainting';pr.mask=o.mask;if((o.inpaint??1)<1)pr.img2img={strength:o.inpaint,color_correct:true}}
+    // like NovelAI's site: the strength sliders of image to image don't apply, and the original isn't laid over the answer
+    // (Hearth blends it in itself, see inpaintBlend)
+    if(o.mask){req.action='infill';req.model=n.model+'-inpainting';pr.mask=o.mask;pr.strength=.7;pr.noise=0;pr.add_original_image=false;
+      if((o.inpaint??1)<1)pr.img2img={strength:o.inpaint,color_correct:true}}
     else req.action='img2img';
   }
   return req;
@@ -4099,6 +4102,34 @@ function openMaskEditor(src,w,h,mask,done,back){
   cv.onpointermove=e=>{if(!last)return;const p=at(e);stroke(last,p);last=p};
   cv.onpointerup=cv.onpointercancel=()=>{last=null};
 }
+// Inpainting the way NovelAI's site does it. The painted mask goes on NovelAI's 1/8 grid (a cell counts when it is
+// mostly painted) and is sent blown up to full size, white on black. The answer is then blended into the original
+// through that grid grown by 4 cells and softened, so nothing outside the painted part changes.
+async function maskGrid(mask,w,h){
+  const m=await loadImg('data:image/png;base64,'+mask),gw=Math.max(1,Math.round(w/8)),gh=Math.max(1,Math.round(h/8));
+  const c=document.createElement('canvas');c.width=gw;c.height=gh;const x=c.getContext('2d');x.drawImage(m,0,0,gw,gh);
+  const p=x.getImageData(0,0,gw,gh).data,on=new Uint8Array(gw*gh);for(let i=0;i<on.length;i++)on[i]=p[i*4]>100?1:0;
+  return {gw,gh,on};
+}
+// the grid as a canvas: white (opaque, or as alpha) where on
+function gridCanvas(g,alpha){
+  const c=document.createElement('canvas');c.width=g.gw;c.height=g.gh;const x=c.getContext('2d'),d=x.createImageData(g.gw,g.gh);
+  for(let i=0;i<g.on.length;i++){const v=g.on[i]?255:0;d.data[i*4]=d.data[i*4+1]=d.data[i*4+2]=alpha?255:v;d.data[i*4+3]=alpha?v:255}
+  x.putImageData(d,0,0);return c;
+}
+const bigCanvas=(src,w,h,smooth,blur)=>{const c=document.createElement('canvas');c.width=w;c.height=h;const x=c.getContext('2d');x.imageSmoothingEnabled=!!smooth;if(blur)x.filter=`blur(${blur}px)`;x.drawImage(src,0,0,w,h);return c};
+async function inpaintMask(mask,w,h){const g=await maskGrid(mask,w,h);return {grid:g,b64:bigCanvas(gridCanvas(g),w,h,false).toDataURL('image/png').split(',')[1]}}
+async function inpaintBlend(orig,result,g,w,h){
+  const on=new Uint8Array(g.on.length); // the painted cells grown by 4 in every direction
+  for(let y=0;y<g.gh;y++)for(let x=0;x<g.gw;x++)if(g.on[y*g.gw+x])for(let dy=-4;dy<=4;dy++)for(let dx=-4;dx<=4;dx++){const yy=y+dy,xx=x+dx;if(yy>=0&&yy<g.gh&&xx>=0&&xx<g.gw)on[yy*g.gw+xx]=1}
+  const soft=bigCanvas(gridCanvas({...g,on},true),w,h,true,20);
+  const r=bigCanvas(await loadImg(result),w,h,true),rx=r.getContext('2d');rx.globalCompositeOperation='destination-in';rx.drawImage(soft,0,0);
+  const c=bigCanvas(await loadImg(orig),w,h,true);c.getContext('2d').drawImage(r,0,0);
+  // keep what NovelAI wrote into its picture, so the result can be imported later
+  let blob=await new Promise(ok=>c.toBlob(ok,'image/png'));
+  try{const meta=readPngText(await (await fetch(result)).arrayBuffer());for(const k of ['Title','Description','Software','Source','Comment'])if(meta[k])blob=pngWithText(await blob.arrayBuffer(),k,meta[k])}catch{}
+  return blobToData(blob);
+}
 // NovelAI's upscaler and director tools for one picture; done(the pictures it sent, the tool's name)
 function openNaiTools(src,done,back){
   openSheet(`<h2>Picture tools</h2><p class="hint">NovelAI's upscaler and director tools. They may cost Anlas, depending on the picture's size.</p>
@@ -4254,9 +4285,11 @@ Return one JSON object only: ${panelJson('sections')}`,undefined,1500);r={panels
       const bs=pg.base,src=bs&&await getImgData(bs.id);if(bs&&!src){pg.base=null;drawBase();msg.className='small err';msg.textContent='The base picture was deleted.';return}
       b.disabled=true;b.innerHTML=`${I.img} Generating…`;msg.className='small muted';msg.textContent=bs?.mask?'NovelAI is redrawing the painted part…':bs?'NovelAI is changing the picture…':'NovelAI is making the picture…';
       try{
-        const o=bs?{image:await imgB64(src,bs.w,bs.h),w:bs.w,h:bs.h,strength:bs.strength,noise:bs.noise,mask:bs.mask,inpaint:bs.inpaint}:undefined;
+        const im=bs?.mask&&await inpaintMask(bs.mask,bs.w,bs.h);
+        const o=bs?{image:await imgB64(src,bs.w,bs.h),w:bs.w,h:bs.h,strength:bs.strength,noise:bs.noise,mask:im?.b64,inpaint:bs.inpaint}:undefined;
         const tool=bs?.mask?'Inpainting':bs?'Image to image':'';
-        const {data,seed}=await naiGenerate(p,undefined,o),id=await putImg(data,{seed,made:true,tool}),n=naiSettings();
+        let {data,seed}=await naiGenerate(p,undefined,o);if(im)data=await inpaintBlend(src,data,im.grid,bs.w,bs.h);
+        const id=await putImg(data,{seed,made:true,tool}),n=naiSettings();
         pg.hist.unshift({id,at:Date.now(),seed,form:clone(f),model:n.model,w:o?.w||n.w,h:o?.h||n.h,tool});
         for(const x of pg.hist.splice(200))if(!inGallery(x.id))await delImg(x.id); // keep the latest 200
         saveImgPage();msg.textContent=`Seed ${seed}. Tap the picture to save it to a gallery.`;if($('#ig-out'))drawOut();
