@@ -360,7 +360,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.20.1',HEARTH_DATE='2026-10-28';
+const HEARTH_VERSION='1.21.0',HEARTH_DATE='2026-10-28';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -3636,7 +3636,7 @@ const finishPanel=(p,chat,char)=>{const cast=castOf(chat,char);return fixUndesir
 // o.story: also write story text per image (image story chats)
 async function guessPrompt(chat,char,file,o={}){
   const api=visionApi();if(!api)throw new Error('Add an API / proxy in Settings first');
-  const fmt=S.settings.imgOutput,cast=castOf(chat,char),layout=o.layout||'auto',split=layout==='split';
+  const fmt=o.fmt||S.settings.imgOutput,cast=castOf(chat,char),layout=o.layout||'auto',split=layout==='split';
   const img=await fileToImage(file,layout==='single'?1024:1536); // comic pages need more detail to read
   const swap=o.mine?`- REPLACE the people in the picture with the user's characters listed under CHARACTERS below${o.note?' (follow the user\'s note about who is who)':'; the most prominent person becomes the first character'}. People beyond the user's characters stay as they are. Put the character's name in "name".
 - For each replaced person, write a prompt for the user's character, not for the person in the picture: their name, their Danbooru character tag if they have one, and their hair color and length, eye color, skin and other features from their appearance tags or description. Never use the original person's character tag, hair color, hairstyle, eye color or skin.
@@ -4188,7 +4188,8 @@ async function vImages(){
       <div class="row" style="margin-top:8px"><button class="btn sm" data-act="aiw">${I.wand} Write the prompt</button><button class="btn ghost sm" data-act="aic">${I.edit} Change the prompt</button></div>
       <div class="hint">Write the prompt makes a new prompt from your description. Change the prompt keeps the prompt below and changes only what you ask, e.g. "make it night" or "she holds a sword".</div>
       <div class="small" id="ia-msg" style="margin-top:6px"></div></div>
-    <button class="btn ghost sm" data-act="imp" style="margin-bottom:10px">${I.imp} Import metadata from a picture</button>
+    <div class="row" style="margin-bottom:10px;flex-wrap:wrap"><button class="btn ghost sm" data-act="imp">${I.imp} Import metadata</button><button class="btn ghost sm" data-act="gpic">${I.wand} Guess from a picture</button></div>
+    <div id="ig-pnl"></div>
     <label class="f" style="margin-top:0">Prompt</label><textarea id="ig-b" rows="5" placeholder="1girl, outdoors, cherry blossoms, evening, …">${esc(f.base)}</textarea>
     <label class="f">Undesired content</label><textarea id="ig-u" rows="2" placeholder="Things to keep out">${esc(f.uc)}</textarea>
     <label class="f">Base image<small>image to image and inpainting</small></label><div id="ig-base"></div>
@@ -4212,6 +4213,12 @@ async function vImages(){
   let posSel=-1; // the character whose dot moves; -1 = none, so the dots stay put
   const drawPos=()=>{if(posSel>=f.chars.length)posSel=-1;$('#ig-pos').innerHTML=posPadHTML(f,posSel)};
   const drawChars=()=>{$('#ig-cs').innerHTML=f.chars.map(charBox).join('');drawPos()};
+  const drawPanels=()=>{const pl=pg.panels,el=$('#ig-pnl');if(!el)return;
+    el.innerHTML=pl?.list?.length?`<div class="box" style="margin-bottom:12px"><div class="row"><b style="flex:1">Panels from your comic (${pl.list.length})</b><button class="btn ghost sm" data-act="pclr">${I.x} Clear</button></div>
+      <div class="small muted" style="margin:2px 0 6px">Load a panel, tap Generate, then load the next.</div>
+      <div class="list">${pl.list.map((x,k)=>`<div class="li ${k===pl.at?'on':''}" data-act="pload" data-k="${k}"><div class="lt"><b>Panel ${k+1}${x.done?' ✓':''}${k===pl.at?' · loaded':''}</b><span>${esc(x.caption)}</span></div></div>`).join('')}</div>
+      ${(pl.at??-1)<pl.list.length-1?`<button class="btn ghost sm" data-act="pnext" style="margin-top:8px">Load panel ${(pl.at??-1)+2}</button>`:''}</div>`:''};
+  const loadPanel=k=>{const pl=pg.panels;if(!pl?.list[k])return;read();fill(pl.list[k].p);pl.at=k;saveImgPage();drawPanels();$('#ig-b')?.scrollIntoView({block:'center'})};
   const fill=p=>{f.base=p.base+(p.text?.trim()?'\nText: '+p.text.trim():'');f.uc=p.undesired||'';f.chars=p.characters.map(c=>({prompt:c.prompt||'',uc:c.undesired||'',pos:naiCenter(c.position)||''}));f.posAI=!f.chars.some(c=>c.pos);if(!f.posAI)spreadDots(f);
     $('#ig-b').value=f.base;$('#ig-u').value=f.uc;drawChars();saveImgPage()};
   // free on Opus up to about 1024×1024 and 28 steps; a base picture brings its own size
@@ -4291,14 +4298,58 @@ Return one JSON object only: ${panelJson('sections')}`,undefined,1500);r={panels
         let {data,seed}=await naiGenerate(p,undefined,o);if(im)data=await inpaintBlend(src,data,im.grid,bs.w,bs.h);
         const id=await putImg(data,{seed,made:true,tool}),n=naiSettings();
         pg.hist.unshift({id,at:Date.now(),seed,form:clone(f),model:n.model,w:o?.w||n.w,h:o?.h||n.h,tool});
+        const pl=pg.panels;if(pl?.at!=null&&pl.list[pl.at]){pl.list[pl.at].done=true;drawPanels()}
         for(const x of pg.hist.splice(200))if(!inGallery(x.id))await delImg(x.id); // keep the latest 200
         saveImgPage();msg.textContent=`Seed ${seed}. Tap the picture to save it to a gallery.`;if($('#ig-out'))drawOut();
       }catch(e){msg.className='small err';msg.textContent=e.message}
       finally{if(b.isConnected){b.disabled=false;b.innerHTML=`${I.img} Generate`}}},
     bup:async()=>{const id=await addUpload();if(id)setBase(id)},
+    // the panels of a comic page guessed one by one: load one, generate it, then the next
+    pload:b=>{loadPanel(+b.dataset.k)},
+    pnext:()=>loadPanel((pg.panels.at??-1)+1),
+    pclr:()=>{pg.panels=null;saveImgPage();drawPanels()},
+    // like Prompt from image in chats: a vision model writes prompts that recreate a picture or a comic page
+    gpic:()=>{
+      let file=null,url='';const names=pg.who.map(x=>x==='me'?personaFor(null)?.name:getChar(x)?.name).filter(Boolean);
+      const layHint={auto:'A comic page becomes one comic prompt; anything else one normal prompt.',single:'One prompt for the whole picture.',
+        page:'One prompt that redraws the whole page: comic tags, the panel layout in reading order, and all the bubbles. Works best on V5.',
+        split:'One full picture per panel, in reading order. They show up as a list here: load a panel, generate it, then load the next.'};
+      const pn=openSheet(`<h2>Guess from a picture</h2><p class="hint">A vision model looks at the picture and writes NovelAI prompts that recreate it. The result is close, not the original prompt.</p>
+        <div id="gp-pic" class="pic bn" data-act="pick" style="height:auto;min-height:120px">Tap to choose a picture</div>
+        <div id="gp-meta" class="small" style="margin-top:6px"></div>
+        <label class="f">Picture type</label><select id="gp-lay"><option value="auto">Find out (spots comic pages)</option><option value="single">One picture</option><option value="page">Comic page → one comic picture</option><option value="split">Comic page → one picture per panel</option></select>
+        <div class="hint" id="gp-h"></div>
+        <div class="tg"><div>Put my characters in it<div class="hint">${names.length?`Swaps the people in the picture for ${esc(names.join(', '))} (picked under Ask the AI), keeping pose, expression and scene.`:'Pick who\'s in it under Ask the AI first.'}</div></div><label class="sw"><input type="checkbox" id="gp-mine" ${names.length?'':'disabled'}><span></span></label></div>
+        <div id="gp-out" hidden><label class="f">Clothes</label><select id="gp-outfit"><option value="picture">From the picture</option><option value="usual">Their usual outfit</option></select></div>
+        <label class="f">Anything to note?<small>optional</small></label><textarea id="gp-note" rows="2" placeholder="e.g. the girl on the left becomes Aria; ignore the watermark"></textarea>
+        <div class="hint">Vision model: <b>${esc(visionModelName()||'none')}</b> (Settings → Image prompts).</div>
+        <div id="gp-msg" class="small" style="margin-top:8px"></div>
+        <div class="sheet-foot row"><button class="btn ghost" data-act="close" style="flex:1">Cancel</button><button class="btn" data-act="go" style="flex:2">${I.wand} Guess the prompt</button></div>`,{
+        pick:async()=>{const [x]=await pickFiles('image/*');if(!x)return;file=x;if(url)URL.revokeObjectURL(url);url=URL.createObjectURL(x);
+          $('#gp-pic',pn).innerHTML=`<img src="${url}" style="width:100%;height:auto;max-height:240px;object-fit:contain">`;$('#gp-meta',pn).textContent='';
+          if(await readImageMeta(x).catch(()=>null))$('#gp-meta',pn).innerHTML='<b>This picture has its NovelAI prompt saved in it.</b> <a href="#" data-act="imeta" style="color:var(--accent)">Import it instead</a> for the exact prompt, or guess anyway.'},
+        imeta:()=>{closeSheet();H.imp(null,null,file)},
+        go:async b=>{
+          const msg=$('#gp-msg',pn);if(!file){msg.className='small err';msg.textContent='Choose a picture first.';return}
+          const layout=$('#gp-lay',pn).value,{chat,char}=imgAiCtx(pg.who);b.disabled=true;msg.className='small muted';
+          msg.textContent=layout==='split'?`Asking ${visionModelName()} for every panel… (this can take a minute)`:`Asking ${visionModelName()}…`;
+          try{
+            const r=await guessPrompt(chat,char,file,{fmt:'sections',layout,mine:$('#gp-mine',pn).checked,outfit:$('#gp-outfit',pn).value,note:$('#gp-note',pn).value.trim()});
+            read();f.usePreset=true; // a guess has no artist tags of its own
+            if(r.panels.length>1){pg.panels={list:r.panels.map(p=>({p,caption:p.caption||''})),at:null,name:file.name||''};closeSheet();loadPanel(0);toast(`${r.panels.length} panels guessed. Panel 1 is loaded: tap Generate, then load the next.`,5000)}
+            else{pg.panels=null;
+              // one picture keeps the picture's shape
+              const i=await loadImg(url),ar=i.naturalWidth/i.naturalHeight;S.settings.naiSize=ar<.85?'portrait':ar>1.18?'landscape':'square';await saveSettings();
+              closeSheet();fill(r.panels[0]);drawPanels();$('#ig-pr').checked=true;toast('Prompt guessed. Check it, then tap Generate.')}
+            saveImgPage();
+          }catch(e){if(msg.isConnected){msg.className='small err';msg.textContent=e.message}}finally{if(b.isConnected)b.disabled=false}}
+      },{modal:true});
+      const lay=$('#gp-lay',pn),showLay=()=>{$('#gp-h',pn).textContent=layHint[lay.value]};lay.onchange=showLay;showLay();
+      $('#gp-mine',pn).onchange=e=>{$('#gp-out',pn).hidden=!e.target.checked};
+    },
     // read the prompt and settings NovelAI saved in a picture, and pick what to use
-    imp:async()=>{
-      const [file]=await pickFiles('image/*');if(!file)return;
+    imp:async(b,e,pre)=>{
+      const [file]=pre?[pre]:await pickFiles('image/*');if(!file)return;
       const m=await readImageMeta(file).catch(()=>null);if(!m)return toast("This picture has no NovelAI metadata (it may have been re-saved or shared through an app that strips it)",5000);
       const n=m.form.chars.length,ck=(k,l,sub,on=true)=>`<label class="tg" style="margin:0"><div>${l}${sub?`<div class="hint">${esc(sub)}</div>`:''}</div><span class="sw"><input type="checkbox" id="im-${k}" ${on?'checked':''}><span></span></span></label>`;
       openSheet(`<h2>Import metadata</h2><p class="small muted">${esc(m.info)}</p>
@@ -4340,7 +4391,7 @@ Return one JSON object only: ${panelJson('sections')}`,undefined,1500);r={panels
           ...(x.seed!=null?[{label:`${I.regen} Use this seed`,fn:()=>{S.settings.naiSeed=x.seed;saveSettings();closeSheet();vImages();toast(`Seed ${x.seed} is set. Clear it in Image settings for random seeds.`)}}]:[]),
           ...(x.form?[{label:`${I.edit} Use its prompt`,fn:()=>{useForm();closeSheet();vImages()}}]:[])],
         onDelete:async id=>{pg.hist=pg.hist.filter(h=>h.id!==id);if(pg.base?.id===id){pg.base=null;drawBase()}saveImgPage();if($('#ig-out'))drawOut()}})}};
-  drawOut();drawBase();
+  drawOut();drawBase();drawPanels();
 }
 /* ---------- profile / personas ---------- */
 // pick who you are in one chat, and add, edit or delete personas right there
