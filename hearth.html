@@ -354,8 +354,8 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.16.0',HEARTH_DATE='2026-10-28';
-const DEFAULTS={apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
+const HEARTH_VERSION='1.17.0',HEARTH_DATE='2026-10-28';
+const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
 const saveChars=()=>store.set('chars',S.chars);
@@ -2519,7 +2519,7 @@ async function vChat(id){
     const canRegen=!u&&isLast&&!m.greeting;
     const sw=!u&&isLast&&(m.swipes.length>1||!m.greeting)?`<div class="swipes"><button data-act="swl" ${m.sw===0||GEN?'disabled':''}>‹</button><span>${m.sw+1}/${m.swipes.length}</span><button data-act="swr" ${GEN||(m.greeting&&m.sw>=m.swipes.length-1)?'disabled':''}>›</button></div>`:'';
     return `<div class="msg ${u?'user':'bot'}${hasScene(chat,m)?' hasscene':''}" data-i="${i}"><img class="av" data-act="zoom" src="${esc(u?avatar(who):chatAvatar(chat,char,m))}" alt=""><div class="mw"><div class="nm">${esc(name)}</div><div class="bubble">${body}</div>${generating||!S.settings.showTokens?'':tokLine(m)}${lk?`<div class="lookups">Looked up: ${lk.map(esc).join(' · ')}</div>`:''}${sceneLinksHTML(chat,m)}
-      ${story&&!u&&!generating&&m.imgs?.[m.sw]?`${m.pics?.[m.sw]?.length?thumbs(m.pics[m.sw],'sview'):''}<div class="row" style="margin-top:6px"><button class="btn ghost sm" data-act="attach">${I.img} Attach picture</button></div>${m.story?.[m.sw]?`<div class="storytxt">${paras(macro(m.story[m.sw],char.name,p?.name||'You'))}</div>`:''}${storyCardsHTML(m.imgs[m.sw],i)}`:''}
+      ${story&&!u&&!generating&&m.imgs?.[m.sw]?`${m.pics?.[m.sw]?.length?thumbs(m.pics[m.sw],'sview'):''}<div class="row" style="margin-top:6px">${naiOn()?`<button class="btn sm" data-act="ngenm">${I.img} Generate picture</button>`:''}<button class="btn ghost sm" data-act="attach">${I.img} Attach picture</button></div>${m.story?.[m.sw]?`<div class="storytxt">${paras(macro(m.story[m.sw],char.name,p?.name||'You'))}</div>`:''}${storyCardsHTML(m.imgs[m.sw],i)}`:''}
       ${story&&!u&&isLast&&!generating&&m.next?.[m.sw]?`<div class="nextsug"><div><b>Next:</b> ${esc(m.next[m.sw])}</div><button class="btn sm" data-act="usenext" ${GEN?'disabled':''}>Use this ›</button></div>`:''}
       ${!story&&!u&&isLast&&!generating&&m.cut?.[m.sw]?`<div class="controw"><button class="btn ghost sm" data-act="cont" ${GEN?'disabled':''}>Continue ›</button><span>This reply was cut off.</span></div>`:''}
       <div class="mact"><button data-act="medit">${I.edit}Edit</button><button data-act="mcopy">${I.copy}Copy</button>${story?'':`<button data-act="mimg">${I.img}Image</button>`}${!story&&char.kind==='world'&&txt(m).trim()?`<button data-act="mscene">${I.chat}Scene</button>`:''}${canRegen?`<button data-act="regen">${I.regen}${story?'Try again':'Regenerate'}</button>`:''}${canRegen?`<button data-act="redonotes">${I.wand}Redo with notes</button>`:''}${story&&!u&&m.imgs?.[m.sw]?`<button data-act="rwrite">${I.book}Rewrite story</button>`:''}${!story&&!u&&isLast?`<button data-act="cont">${I.send}Continue</button>`:''}<button data-act="mdel">${I.trash}Delete</button></div>${sw}</div></div>`;
@@ -2681,6 +2681,11 @@ async function vChat(id){
     mimg:b=>{b.closest('.msg').classList.remove('open');openImageSheet(chat,char,idxOf(b))},
     mscene:b=>{b.closest('.msg').classList.remove('open');openWorldScene(chat,char,idxOf(b))},
     icp:b=>copyText(JSON.parse(b.closest('.storycards').dataset.texts)[+b.dataset.i]),
+    // make the picture with NovelAI and keep it with the message
+    ngenm:async b=>{const i=idxOf(b),m=chat.messages[i],img=m.imgs?.[m.sw];if(!img)return;
+      b.disabled=true;const was=b.innerHTML;b.textContent='Making the picture…';
+      try{const id=await naiPicture(char,chat.id,img);((m.pics??=[])[m.sw]??=[]).push(id);await saveChat(chat);updateOne(i)}
+      catch(e){toast(e.message,5000);if(b.isConnected){b.disabled=false;b.innerHTML=was}}},
     // keep the picture NovelAI made for this prompt next to it, and in the character's gallery
     attach:async b=>{const i=idxOf(b),m=chat.messages[i],ids=await addPictures(char,'gallery',chat.id);if(!ids.length)return;
       const cap=m.imgs?.[m.sw]?.caption||'';for(const g of char.gallery)if(ids.includes(g.id))g.note=cap;await saveChars();
@@ -2881,23 +2886,105 @@ Return one JSON object only: {"panels":[${panelJson(fmt)}, ...]} with the same n
   return {panels:out,usage};
 }
 // One sections block per panel, each with its own Copy button; T collects the texts the buttons copy.
-function panelsHTML(panels,T,act='cp',attrs=''){
+function panelsHTML(panels,T,act='cp',attrs='',after=null){
   const box=(label,text,sub='')=>{if(!text)return '';T.push(text);
     return `<div class="cp"><div class="cp-h"><b>${label}</b><button class="btn ghost sm" data-act="${act}" data-i="${T.length-1}" ${attrs}>${I.copy} Copy</button></div>${sub?`<div class="small muted" style="margin-bottom:4px">${esc(sub)}</div>`:''}<div class="cp-t">${esc(text)}</div></div>`};
   return panels.map((p0,k)=>{const p=withPreset(p0);return `${panels.length>1?`<h3 class="cp-panel">Panel ${k+1}</h3>`:''}${p.caption?`<p class="muted small" style="margin:2px 0 8px">${esc(p.caption)}</p>`:''}
     ${p.onebox?box('Prompt (all in one box)',p.onebox,'Paste into the main prompt box with no character boxes.')+box('Undesired content',p.undesired)
-      :box('Base prompt',p.base)+box('Undesired content',p.undesired)+p.characters.map((c,i)=>box(`Character ${i+1}${c.name?' · '+esc(c.name):''}`,c.prompt,c.position?`Position: ${c.position}`:'')+box(`Character ${i+1} undesired`,c.undesired)).join('')}`}).join('');
+      :box('Base prompt',p.base)+box('Undesired content',p.undesired)+p.characters.map((c,i)=>box(`Character ${i+1}${c.name?' · '+esc(c.name):''}`,c.prompt,c.position?`Position: ${c.position}`:'')+box(`Character ${i+1} undesired`,c.undesired)).join('')}${after?after(k):''}`}).join('');
 }
+/* ---------- NovelAI image generation: with your own NovelAI token, one tap per image (NovelAI's terms ask that every
+   image is started by a person). The request is built the way NovelAI's own site builds it. ---------- */
+const naiUrl=()=>S.settings.naiUrl||'https://image.novelai.net';
+const naiOn=()=>!!S.settings.naiToken?.trim();
+const NAI_SIZES={portrait:[832,1216,'Portrait 832×1216'],landscape:[1216,832,'Landscape 1216×832'],square:[1024,1024,'Square 1024×1024'],
+  tall:[1024,1536,'Large portrait 1024×1536 (costs Anlas)'],wide:[1536,1024,'Large landscape 1536×1024 (costs Anlas)']};
+const NAI_SAMPLERS=[['k_euler_ancestral','Euler Ancestral'],['k_euler','Euler'],['k_dpmpp_2s_ancestral','DPM++ 2S Ancestral'],['k_dpmpp_2m_sde','DPM++ 2M SDE'],['k_dpmpp_2m','DPM++ 2M'],['k_dpmpp_sde','DPM++ SDE']];
+const NAI_UC={heavy:'lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page',
+  light:'lowres, artistic error, scan artifacts, worst quality, bad quality, jpeg artifacts, multiple views, very displeasing, too many watermarks, negative space, blank page',none:''};
+const naiSettings=()=>{const st=S.settings,v5=st.imgModel!=='v45',[w,h]=NAI_SIZES[st.naiSize]||NAI_SIZES.portrait;
+  return {v5,model:v5?'nai-diffusion-5-full':'nai-diffusion-4-5-full',w,h,steps:Math.min(50,Math.max(1,+st.naiSteps||23)),scale:+st.naiScale||(v5?7:5),
+    sampler:st.naiSampler||'k_euler_ancestral',seed:st.naiSeed===''||st.naiSeed==null?null:Math.round(+st.naiSeed)||null}};
+const naiFree=()=>{const n=naiSettings();return n.w*n.h<=1048576&&n.steps<=28};
+// a position hint like "left, foreground" as a point on NovelAI's 5×5 Character Positions grid, or null
+function naiCenter(s){
+  s=String(s||'').toLowerCase();let x=null,y=null;
+  if(/far[- ]left/.test(s))x=.1;else if(/\bleft\b/.test(s))x=.3;else if(/far[- ]right/.test(s))x=.9;else if(/\bright\b/.test(s))x=.7;else if(/center|centre|middle/.test(s))x=.5;
+  if(/\b(top|upper|above)\b/.test(s))y=.3;else if(/\b(bottom|lower|below|foreground)\b/.test(s))y=.7;
+  return x==null&&y==null?null:{x:x??.5,y:y??.5};
+}
+// the NovelAI request for one panel: your preset's tags included, plus NovelAI's quality and undesired presets if on
+function naiRequest(p0,seed){
+  const p=withPreset(p0),st=S.settings,n=naiSettings();
+  // quality tags go at the end of the prompt but before a "Text:" block; "no text" is left out when the image has words
+  const qual=st.naiQuality===false?'':'very aesthetic, masterpiece'+(p.text?.trim()?'':', no text');
+  const addQ=s=>{if(!qual)return s;const i=s.search(/\n?Text:/);return i<0?joinTags(s,qual):joinTags(s.slice(0,i),qual)+s.slice(i)};
+  const uc=joinTags(NAI_UC[st.naiUc||'heavy']??'',p.undesired);
+  let base,chars=[];
+  if(p.onebox){const [b,...rest]=p.onebox.split('|');base=[addQ(b.trim()),...rest.map(s=>s.trim())].join(' | ')}
+  else{base=addQ(p.base);chars=p.characters.filter(c=>c.prompt?.trim()).map(c=>({prompt:c.prompt.trim(),uc:(c.undesired||'').trim(),center:naiCenter(c.position)}))}
+  const coords=chars.some(c=>c.center),ctr=c=>c.center||{x:.5,y:.5};
+  return {input:base,model:n.model,action:'generate',parameters:{params_version:4,width:n.w,height:n.h,scale:n.scale,sampler:n.sampler,steps:n.steps,n_samples:1,
+    seed,ucPreset:{heavy:0,light:1,none:4}[st.naiUc||'heavy'],qualityToggle:!!qual,autoSmea:false,sm:false,sm_dyn:false,dynamic_thresholding:false,controlnet_strength:1,legacy:false,
+    add_original_image:true,cfg_rescale:0,noise_schedule:/^k_dpmpp_2m$/.test(n.sampler)?'exponential':'karras',legacy_v3_extend:false,skip_cfg_above_sigma:null,
+    use_coords:coords,legacy_uc:false,normalize_reference_strength_multiple:true,deliberate_euler_ancestral_bug:false,prefer_brownian:true,
+    characterPrompts:chars.map(c=>({prompt:c.prompt,uc:c.uc,center:ctr(c),enabled:true})),negative_prompt:uc,
+    v4_prompt:{caption:{base_caption:base,char_captions:chars.map(c=>({char_caption:c.prompt,centers:[ctr(c)]}))},use_coords:coords,use_order:true},
+    v4_negative_prompt:{caption:{base_caption:uc,char_captions:chars.map(c=>({char_caption:c.uc,centers:[ctr(c)]}))},legacy_uc:false}}};
+}
+// the first file in a zip (NovelAI's other answer format), read through the central directory
+async function unzipFirst(buf){
+  const v=new DataView(buf);let e=buf.byteLength-22;while(e>=0&&v.getUint32(e,true)!==0x06054b50)e--;if(e<0)throw new Error('NovelAI sent a broken file');
+  const cd=v.getUint32(e+16,true),method=v.getUint16(cd+10,true),size=v.getUint32(cd+20,true),off=v.getUint32(cd+42,true);
+  const start=off+30+v.getUint16(off+26,true)+v.getUint16(off+28,true),raw=new Uint8Array(buf,start,size);
+  if(method===0)return new Blob([raw]);
+  return new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).blob();
+}
+const blobToData=b=>new Promise((ok,no)=>{const r=new FileReader();r.onload=()=>ok(r.result);r.onerror=()=>no(r.error);r.readAsDataURL(b)});
+let naiBusy=false;
+async function naiGenerate(p,signal){
+  if(!naiOn())throw new Error('Add your NovelAI token in Settings → NovelAI images first.');
+  if(naiBusy)throw new Error('NovelAI makes one image at a time. Wait for the one that is being made.');
+  naiBusy=true;
+  try{
+    const n=naiSettings(),seed=n.seed??Math.floor(Math.random()*4294967295);
+    const r=await fetch(naiUrl()+'/ai/generate-image',{method:'POST',signal,headers:{'Authorization':'Bearer '+S.settings.naiToken.trim(),'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify(naiRequest(p,seed))});
+    if(!r.ok){
+      let m='';try{const j=await r.json();m=j.message||j.error||''}catch{}
+      throw new Error({401:"NovelAI didn't accept your token. Check it in Settings → NovelAI images.",402:`NovelAI says this needs an active subscription or more Anlas${m?` (${m})`:''}.`,
+        429:'NovelAI is busy with another image from your account. Wait a moment and try again.'}[r.status]||`NovelAI: ${m||'error '+r.status}`);
+    }
+    let data;
+    if(/json/.test(r.headers.get('content-type')||'')){const j=await r.json(),im=j.images?.[0];if(!im?.image)throw new Error('NovelAI sent no image');data=`data:image/png;base64,${im.image}`}
+    else data=await blobToData(await unzipFirst(await r.arrayBuffer()));
+    if(!/^data:image\//.test(data))data=data.replace(/^data:[^;]*;/,'data:image/png;');
+    return {data,seed};
+  }finally{naiBusy=false}
+}
+// makes the picture for a panel and keeps it in the character's (or world's) gallery; returns its picture id
+async function naiPicture(char,chatId,p,signal){
+  const {data,seed}=await naiGenerate(p,signal),id=await putImg(data);
+  (char.gallery??=[]).push({id,chatId:chatId||'',note:p.caption||'',seed,at:Date.now()});await saveChars();return id;
+}
+async function naiAccount(token){
+  const r=await fetch(naiUrl()+'/user/subscription',{headers:{'Authorization':'Bearer '+token.trim()}});
+  if(r.status===401)throw new Error("NovelAI didn't accept this token");if(!r.ok)throw new Error('NovelAI: error '+r.status);
+  const j=await r.json(),t=j.trainingStepsLeft||{};
+  return {tier:['No subscription','Tablet','Scroll','Opus'][j.tier]||`tier ${j.tier}`,active:j.active!==false&&j.tier>0,anlas:(t.fixedTrainingStepsLeft||0)+(t.purchasedTrainingSteps||0)};
+}
+// a Generate button and the pictures already made, under one panel of a prompt
+const naiPanelHTML=(ids,k)=>`<div class="nai-p" data-k="${k}">${ids?.length?thumbs(ids,'nview'):''}<button class="btn sm" data-act="ngen" data-k="${k}" style="margin:6px 0 4px">${I.img} ${ids?.length?'Generate another':'Generate image'}</button><div class="small nai-msg"></div></div>`;
 const presetSelect=id=>`<select class="ip-pr" style="width:auto;padding:5px 10px">${(S.settings.imgPresets||[]).map(p=>`<option value="${p.id}" ${p.id===imgPreset().id?'selected':''}>${esc(p.name)}</option>`).join('')}</select>`;
 function showImagePrompts(chat,char,entry,upto){
-  const T=[],k=chat.images.indexOf(entry);
+  const T=[],k=chat.images.indexOf(entry),kept=j=>(entry.pics?.[j]||[]).filter(id=>char.gallery?.some(g=>g.id===id));
   const pn=openSheet(`<h2>NovelAI prompt${entry.panels.length>1?'s':''}</h2>
     <div class="row" style="margin-bottom:10px"><span class="small muted">Preset</span>${presetSelect()}<span class="small muted" style="margin-left:auto">${k+1} of ${chat.images.length}</span></div>
     ${entry.request?`<p class="small muted" style="margin:0 0 8px">“${esc(entry.request)}”</p>`:''}
     ${entry.usage?`<div class="tokl" style="margin:-4px 0 8px">${usageText(entry.usage)}</div>`:''}
     ${entry.panels[0]?.info?`<div class="small muted" style="margin:-2px 0 8px">${esc(entry.panels[0].info)}</div>`:''}
     ${entry.panels.some(p=>p.file)?`<div class="tg" style="margin-top:0"><div>Add my preset's tags<div class="hint">Off: exactly the image's own prompt, with its artist and quality tags.</div></div><label class="sw"><input type="checkbox" class="ip-own" ${entry.panels.some(p=>p.own)?'':'checked'}><span></span></label></div>`:''}
-    ${panelsHTML(entry.panels,T)}
+    ${panelsHTML(entry.panels,T,'cp','',naiOn()?j=>naiPanelHTML(kept(j),j):null)}
+    ${naiOn()?'':'<p class="hint">To make the images right here, add your NovelAI token in Settings → NovelAI images.</p>'}
     <label class="f">Change something<small>what you want or don't want</small></label>
     <textarea id="ip-ch" rows="2" placeholder="e.g. make her smile, no sword, night time, view from behind"></textarea>
     <div id="ip-msg" class="small" style="margin-top:6px"></div>
@@ -2905,6 +2992,11 @@ function showImagePrompts(chat,char,entry,upto){
     <div class="hint">Paste each part into the matching NovelAI box (add a character box with + under Character Prompts). Positions are hints for Character Positions. Your preset's artist tags, base lines and undesired tags are already included.</div>
     <div class="sheet-foot row"><button class="btn ghost" data-act="close" style="flex:1">Close</button>${upto!=null?`<button class="btn" data-act="again" style="flex:1">${I.regen} New prompt</button>`:''}</div>`,{
     cp:b=>copyText(T[+b.dataset.i]),
+    ngen:async b=>{
+      const j=+b.dataset.k,box=b.closest('.nai-p'),msg=$('.nai-msg',box);b.disabled=true;msg.className='small muted nai-msg';msg.textContent='Making the image…';
+      try{const id=await naiPicture(char,chat.id,entry.panels[j]);((entry.pics??=[])[j]??=[]).push(id);await saveChat(chat);if(box.isConnected){box.outerHTML=naiPanelHTML(kept(j),j);hydrate($('#sheet'))}}
+      catch(e){if(msg.isConnected){msg.className='small err nai-msg';msg.textContent=e.message}}finally{if(b.isConnected)b.disabled=false}},
+    nview:b=>viewPicture(char,b.dataset.id,'gallery',()=>showImagePrompts(chat,char,entry,upto)),
     hist:()=>showImageHistory(chat,char,upto),
     reguess:()=>openFromImage(chat,char,null,fileOf.get(entry.id)),
     again:()=>openImageSheet(chat,char,upto),
@@ -2915,6 +3007,7 @@ function showImagePrompts(chat,char,entry,upto){
       catch(e){if(msg.isConnected){msg.className='small err';msg.textContent=e.message}}finally{if(b.isConnected)b.disabled=false}
     }
   });
+  hydrate(pn);
   $('.ip-pr',pn).onchange=e=>{S.settings.imgPreset=e.target.value;saveSettings();showImagePrompts(chat,char,entry,upto)};
   const own=$('.ip-own',pn);if(own)own.onchange=()=>{entry.panels.forEach(p=>{if(p.file)p.own=!own.checked});saveChat(chat);showImagePrompts(chat,char,entry,upto)};
 }
@@ -3156,7 +3249,7 @@ function readerHTML(chat,char){
     ${missing?`<div class="box small rd-miss"><span>${missing===1?'1 image has':`${missing} images have`} no story text yet.</span><button class="btn sm" data-act="fillstory">${I.wand} Write it</button></div>`:''}
     ${secs.map((s,k)=>`<section class="rd-sec" data-i="${s.i}">
       ${s.pics.length?`<div class="rd-pics">${s.pics.map(id=>`<img data-img="${id}" src="${BLANK}" data-act="sview" data-id="${id}" alt="">`).join('')}</div>`
-        :`<div class="rd-nopic"><span>${esc(s.img.caption||`Image ${k+1}`)}</span><button class="btn ghost sm" data-act="attach">${I.img} Attach the picture</button></div>`}
+        :`<div class="rd-nopic"><span>${esc(s.img.caption||`Image ${k+1}`)}</span>${naiOn()?`<button class="btn sm" data-act="ngenm">${I.img} Generate</button>`:''}<button class="btn ghost sm" data-act="attach">${I.img} Attach the picture</button></div>`}
       <div class="rd-text">${s.story?paras(macro(s.story,char.name,un)):`<p class="muted"><i>${esc(s.img.caption||'')}</i></p>`}</div>
       <div class="rd-act"><button data-act="redit">${I.edit} Edit text</button><button data-act="rwrite">${I.regen} Rewrite</button>${s.pics.length?`<button data-act="attach">${I.img} Add picture</button>`:''}</div>
     </section>`).join('')}
@@ -3952,6 +4045,19 @@ function vSettings(){
     <button class="btn ghost sm" data-act="ipr-new" style="margin-top:8px">${I.plus} New preset</button>
     <div class="hint">In a chat, tap a message → Image, or ⋮ → Image prompt / storyboard. Add Image tags to your characters and profiles so they look the same in every prompt.</div>
   </div></div>
+  <div class="sec"><h3>NovelAI images</h3><div class="box">
+    <p class="hint" style="margin-top:0">Make the pictures right in Hearth instead of copying prompts: a Generate button shows under every image prompt and in image stories. It uses your NovelAI subscription and Anlas, like NovelAI's own site, and one tap makes one picture. The model is the one under Image prompts (${st.imgModel==='v45'?'V4.5':'V5'}).</p>
+    <label class="f">NovelAI API token<small>on NovelAI: Account Settings → Get Persistent API Token</small></label><input type="password" data-k="naiToken" value="${esc(st.naiToken||'')}" placeholder="pst-…" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <div class="row" style="margin-top:6px"><button class="btn ghost sm" data-act="naicheck">${I.check} Check token</button></div><div id="nai-res" class="small"></div>
+    <label class="f">Size</label><select data-k="naiSize">${Object.entries(NAI_SIZES).map(([v,[,,l]])=>`<option value="${v}" ${(st.naiSize||'portrait')===v?'selected':''}>${l}</option>`).join('')}</select>
+    <div class="grid2"><div><label class="f">Steps</label><input type="number" data-k="naiSteps" min="1" max="50" value="${st.naiSteps||23}"></div>
+    <div><label class="f">Prompt guidance<small>empty = default</small></label><input type="number" data-k="naiScale" min="0" max="10" step="0.1" value="${st.naiScale||''}" placeholder="${st.imgModel==='v45'?5:7}"></div></div>
+    <div class="grid2"><div><label class="f">Sampler</label><select data-k="naiSampler">${NAI_SAMPLERS.map(([v,l])=>`<option value="${v}" ${(st.naiSampler||'k_euler_ancestral')===v?'selected':''}>${l}</option>`).join('')}</select></div>
+    <div><label class="f">Seed<small>empty = random</small></label><input type="number" data-k="naiSeed" min="0" value="${st.naiSeed||''}" placeholder="random"></div></div>
+    ${tg('naiQuality','Add quality tags',"NovelAI's “very aesthetic, masterpiece, no text”, like the Quality Tags switch on NovelAI. “no text” is left out when a picture has speech bubbles.")}
+    <label class="f">Undesired content preset<small>added before your undesired tags</small></label><select data-k="naiUc">${[['heavy','Heavy'],['light','Light'],['none','None']].map(([v,l])=>`<option value="${v}" ${(st.naiUc||'heavy')===v?'selected':''}>${l}</option>`).join('')}</select>
+    <div class="hint">On Opus, pictures are free up to 1024×1024 with 28 steps or fewer. Larger sizes and more steps cost Anlas. Your image preset's artist tags and undesired tags are always included.</div>
+  </div></div>
   <div class="sec"><h3>Web lookups</h3><div class="box">
     ${tg('webSearch','Let the AI look things up','The AI can search Wikipedia and Fandom wikis for characters and stories it doesn\'t know. Your model and proxy must support tool calling (most GPT, DeepSeek, Claude, Gemini and Qwen models do).')}
     <div class="grid2"><div><label class="f">Wikipedia language</label><input data-k="wikiLang" value="${esc(st.wikiLang)}" maxlength="12" autocapitalize="off" placeholder="en"></div>
@@ -4017,6 +4123,11 @@ function vSettings(){
     'book-import':async()=>addGlobalBook(await pickBookFile()),
     'book-paste':()=>openPasteBook(addGlobalBook),
     ipr:b=>editImgPreset(st.imgPresets.find(p=>p.id===b.dataset.id)),
+    naicheck:async b=>{
+      const tok=$('[data-k=naiToken]',view).value.trim(),r=$('#nai-res');if(!tok){r.innerHTML='<span class="err">Paste your token first.</span>';return}
+      b.disabled=true;r.className='small muted';r.textContent='Asking NovelAI…';
+      try{const a=await naiAccount(tok);r.className='small';r.innerHTML=a.active?`<span class="okc">Works.</span> ${esc(a.tier)}, ${a.anlas.toLocaleString()} Anlas.`:`<span class="err">The token works, but there's no active subscription (${esc(a.tier)}).</span> ${a.anlas.toLocaleString()} Anlas.`}
+      catch(e){r.className='small';r.innerHTML=`<span class="err">${esc(e.message)}</span>`}finally{b.disabled=false}},
     mfetch:async b=>{
       const k=b.dataset.field,f=MODEL_FIELDS[k],api=f.conn(),r=$('#mres-'+k);r.className='small';
       if(!api){r.innerHTML='<span class="err">Add a connection first.</span>';return}
@@ -4119,7 +4230,7 @@ async function exportBackup(auto){
   auto=auto===true;
   const inclKeys=auto?!!S.settings.backupKeys:confirm('Include your API keys in the backup?\n\nOK = include keys\nCancel = leave keys out (safer to share)');
   const chats=[];for(const c of S.chatIndex){const x=await loadChat(c.id);if(x)chats.push(x)}
-  const settings=clone(S.settings);if(!inclKeys)settings.apis.forEach(a=>a.key='');
+  const settings=clone(S.settings);if(!inclKeys){settings.apis.forEach(a=>a.key='');settings.naiToken=''}
   download(`hearth-backup-${new Date().toISOString().slice(0,10)}${auto?'-auto':''}.json`,JSON.stringify({hearthBackup:1,exported:Date.now(),chars:S.chars,personas:S.personas,lorebooks:S.lorebooks,settings,chats,images:await allPictures()}));
   S.settings.lastBackup=Date.now();await saveSettings();
   const lb=$('#lastbk');if(lb)lb.textContent=new Date().toLocaleString();
@@ -4140,7 +4251,7 @@ async function importBackup(j){
   const starter=S.personas.length===1&&S.personas[0].name==='You'&&!S.personas[0].description&&!S.personas[0].avatar&&!S.personas[0].imageTags;
   if(starter&&j.personas?.length)S.personas=[];
   S.chars=merge(S.chars,j.chars);S.personas=merge(S.personas,j.personas);S.lorebooks=merge(S.lorebooks,j.lorebooks);
-  if(j.settings){const keep=S.settings.apis;const apis=(j.settings.apis||[]).map(a=>a.key?a:{...a,key:keep.find(k=>k.id===a.id)?.key||''});S.settings={...DEFAULTS,...j.settings,apis:merge(keep,apis)}}
+  if(j.settings){const keep=S.settings.apis;const apis=(j.settings.apis||[]).map(a=>a.key?a:{...a,key:keep.find(k=>k.id===a.id)?.key||''});S.settings={...DEFAULTS,...j.settings,apis:merge(keep,apis),naiToken:j.settings.naiToken||S.settings.naiToken||''}}
   ensurePrompts();ensureImgPresets();migrateChars();
   for(const c of j.chats||[]){chatCache.delete(c.id);await saveChat(c,true)}
   for(const p of j.images||[])if(p?.id&&p.data){await store.set('img:'+p.id,{id:p.id,data:p.data,at:Date.now()});imgCache.set(p.id,p.data)}
