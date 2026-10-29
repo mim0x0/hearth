@@ -361,7 +361,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.24.0',HEARTH_DATE='2026-10-29';
+const HEARTH_VERSION='1.25.0',HEARTH_DATE='2026-10-29';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -2902,6 +2902,33 @@ Return one JSON object only: {"panels":[${panelJson(fmt)}, ...]} with the same n
   const out=cleanPanels(j).map(p=>fixUndesired(p));if(panels.every(p=>p.own))out.forEach(p=>{p.own=true;p.file=true});
   return {panels:out,usage};
 }
+// Puts the user's characters in a prompt in place of the people in it. who[i] is the character (or persona) for
+// character box i, or null to keep that person; with no character boxes, who[0] is the main person in the base prompt.
+// The AI rewrites the people; then each one's Looks are put in word for word. Without an API only the Looks swap is done.
+const COUNT_RX=/^(\d+(girl|boy|other)s?|solo|multiple (girls|boys|others))$/i;
+async function swapPeople(chat,char,panel,who,outfit){
+  const boxes=panel.characters.length>0;let p=panel,usage=null;
+  if(activeApi()){
+    const list=who.map((c,i)=>c?`- ${boxes?`Character box ${i+1}`:'The main person in the base prompt'} becomes ${c.name}`:'').filter(Boolean).join('\n');
+    const r=await aiJson(SYS_NAI,`Here is a NovelAI prompt, as JSON:
+${JSON.stringify({panels:[panel]})}
+
+Put the user's characters in it in place of the people in it:
+${list}
+- For each replaced person, write the prompt for the user's character, not the original person: their name, their Danbooru character tag if they have one, and their hair, eyes, skin and other features from their Looks or description. Take out everything that only describes the original person: their character tag, series tag, hair color, hairstyle, hair length, eye color, skin and body features${outfit==='usual'?', and their clothes and accessories. Clothes: the character\'s usual outfit':'. Keep the clothes and accessories they wear'}.
+- Keep the expression, pose, action, gestures, framing and position, and everything about the scene, background, lighting, art style and text.${boxes?' Keep the same number of character boxes in the same order; a person who is not replaced stays exactly as they are.':' Keep everything in the base prompt that is not about the replaced person.'}
+- If the base prompt names the original people (character or series tags), take those out. Keep counts like 1girl or 2girls, and fix them only if a new character's sex is different.
+${novelRules(chat,char,{fmt:'sections',lore:[]})}
+Return one JSON object only: {"panels":[${panelJson('sections')}]}`,undefined,2000);
+    p=cleanPanels(r.j)[0];usage=r.usage;if(!p||p.onebox)throw new Error('The AI returned an empty prompt. Try again.');
+    if(boxes&&p.characters.length!==panel.characters.length)throw new Error('The AI changed the number of people. Try again.');
+  }else p=clone(panel);
+  // their Looks word for word, whatever the AI wrote
+  // (a person you kept stays exactly as they were, whatever the AI did)
+  if(boxes)p.characters=p.characters.map((c,i)=>{const w=who[i];if(!w)return {...panel.characters[i]};c.name=w.name;c.prompt=asCharacter(c.prompt,w);return c});
+  else if(who[0])p.base=asCharacter(p.base,{...who[0],imageTags:String(who[0].imageTags||'').split(',').filter(t=>!/^s*(girl|boy|other)s*$/i.test(t)).join(',')},COUNT_RX); // the base already says 1girl
+  return {panel:fixUndesired(p,who.filter(Boolean)),usage};
+}
 // One sections block per panel, each with its own Copy button; T collects the texts the buttons copy.
 function panelsHTML(panels,T,act='cp',attrs='',after=null){
   const box=(label,text,sub='')=>{if(!text)return '';T.push(text);
@@ -3787,12 +3814,12 @@ const idKind=t=>{const n=normTag(t);
 };
 // Makes a person's prompt use the character's Looks word for word: their Looks go right after girl / boy / other, in their own order;
 // the AI's versions of those tags, and hair, eye or skin tags that contradict them, are dropped. Clothes, pose and expression stay.
-function asCharacter(prompt,c){
+function asCharacter(prompt,c,lead0=/^(girl|boy|other)$/i){
   const looks=String(c?.imageTags||'').split(',').map(t=>t.trim()).filter(t=>t&&!/^\d+(girl|boy)s?$/i.test(t));if(!looks.length)return prompt;
   const mine=new Set(looks.map(normTag)),kinds=new Set(looks.map(idKind).filter(Boolean));
-  const parts=String(prompt).split(',').map(t=>t.trim()).filter(Boolean);
+  const seen=new Set(),parts=String(prompt).split(',').map(t=>t.trim()).filter(t=>t&&!seen.has(normTag(t))&&seen.add(normTag(t)));
   const kept=parts.filter(t=>{const n=normTag(t),k=idKind(t);return !mine.has(n)&&!(k&&(kinds.has(k)||k==='who'))});
-  const lead=kept.length&&/^(girl|boy|other)$/i.test(kept[0])?[kept.shift()]:[];
+  const lead=[];while(kept.length&&lead0.test(kept[0]))lead.push(kept.shift());
   return [...lead,...looks,...kept].join(', ');
 }
 // Every image prompt: the user's characters named in it get their Looks locked in. single: in a one-character chat,
@@ -4365,7 +4392,7 @@ async function vImages(){
       <div class="row" style="margin-top:8px"><button class="btn sm" data-act="aiw">${I.wand} Write the prompt</button><button class="btn ghost sm" data-act="aic">${I.edit} Change the prompt</button></div>
       <div class="hint">Write the prompt makes a new prompt from your description. Change the prompt keeps the prompt below and changes only what you ask, e.g. "make it night" or "she holds a sword".</div>
       <div class="small" id="ia-msg" style="margin-top:6px"></div></div>
-    <div class="row" style="margin-bottom:10px;flex-wrap:wrap"><button class="btn ghost sm" data-act="imp">${I.imp} Import metadata</button><button class="btn ghost sm" data-act="gpic">${I.wand} Guess from a picture</button></div>
+    <div class="row" style="margin-bottom:10px;flex-wrap:wrap"><button class="btn ghost sm" data-act="imp">${I.imp} Import metadata</button><button class="btn ghost sm" data-act="gpic">${I.wand} Guess from a picture</button><button class="btn ghost sm" data-act="swap">${I.user} Put my characters in it</button></div>
     <div id="ig-pnl"></div>
     <label class="f" style="margin-top:0">Prompt</label><textarea id="ig-b" rows="5" placeholder="1girl, outdoors, cherry blossoms, evening, …">${esc(f.base)}</textarea>
     <label class="f">Undesired content</label><textarea id="ig-u" rows="2" placeholder="Things to keep out">${esc(f.uc)}</textarea>
@@ -4423,6 +4450,34 @@ async function vImages(){
       ${groups.length?groups.map(([n,ids])=>`<div class="small muted" style="margin:10px 0 6px">${esc(n)}</div>${thumbs(ids,'pick')}`).join(''):'<p class="muted">No pictures in Hearth yet.</p>'}
       <div class="sheet-foot"><button class="btn ghost block" data-act="back">${I.back} Back</button></div>`,{pick:b=>done(b.dataset.id),back:()=>back()});
     hydrate(pn);
+  };
+  // swap the people in the prompt for your characters, keeping the scene
+  const openSwap=()=>{
+    read();const boxes=f.chars.filter(c=>c.prompt.trim()),rows=boxes.length?boxes:[{prompt:f.base}],me=personaFor(null);
+    if(!f.base.trim()&&!boxes.length)return toast('There is no prompt yet. Import one or write one first.');
+    const people=S.chars.filter(c=>c.kind!=='world').sort((a,b)=>(b.lastUsed||0)-(a.lastUsed||0)),fl=folders('chars');
+    const opt=c=>`<option value="${c.id}">${esc(c.name)}${c.imageTags?.trim()?'':' (no Looks)'}</option>`;
+    const opts=`<option value="">Keep as is</option>${me?`<option value="me">${esc(me.name)} (you)</option>`:''}
+      ${fl.length?[...fl.map(x=>[x.name,people.filter(c=>c.folder===x.id)]),['Not in a folder',people.filter(c=>!fl.some(x=>x.id===c.folder))]].filter(([,l])=>l.length).map(([n,l])=>`<optgroup label="${esc(n)}">${l.map(opt).join('')}</optgroup>`).join(''):people.map(opt).join('')}`;
+    const pn=openSheet(`<h2>Put my characters in it</h2><p class="hint">Pick who replaces whom. Pose, expression, framing and the scene stay; the new person gets your character's Looks word for word.</p>
+      ${rows.map((c,i)=>`<label class="f">${boxes.length?`Character ${i+1}`:'The person in the prompt'}<small>${esc(c.prompt.slice(0,80))}${c.prompt.length>80?'…':''}</small></label><select class="sw-who" data-i="${i}">${opts}</select>`).join('')}
+      <label class="f">Clothes</label><select id="sw-out"><option value="picture">Keep the clothes in the prompt</option><option value="usual">Their usual outfit</option></select>
+      <div class="hint">${activeApi()?`Your AI (${esc(activeApi().model||'')}) rewrites the people; that's one short request.`:'No API is set up, so only the Looks tags are swapped and the clothes stay. Add one in Settings for a full swap.'}</div>
+      <div id="sw-msg" class="small" style="margin-top:8px"></div>
+      <div class="sheet-foot row"><button class="btn ghost" data-act="close" style="flex:1">Cancel</button><button class="btn" data-act="go" style="flex:2">${I.user} Put them in</button></div>`,{
+      go:async b=>{
+        const msg=$('#sw-msg',pn),ids=$$('.sw-who',pn).map(x=>x.value),who=ids.map(id=>id==='me'?me:id?getChar(id):null);
+        if(!who.some(Boolean)){msg.className='small err';msg.textContent='Pick at least one of your characters.';return}
+        const picked=[...new Set(ids.filter(Boolean))],{chat,char}=imgAiCtx(picked);
+        b.disabled=true;msg.className='small muted';msg.textContent=activeApi()?'Putting them in…':'';
+        try{
+          const keep=boxes.map(c=>c.pos),pai=f.posAI,panel=formPanel({...f,usePreset:false});
+          const r=await swapPeople(chat,char,panel,who,$('#sw-out',pn).value);
+          fill(r.panel);if(f.chars.length===keep.length){f.chars.forEach((c,i)=>c.pos=keep[i]);f.posAI=pai;drawChars()} // the dots stay where they were
+          pg.who=[...new Set([...pg.who,...picked])];saveImgPage();closeSheet();vImages();
+          toast(`${who.filter(Boolean).map(c=>c.name).join(', ')} put in. Check it, then tap Generate.${r.usage?' '+usageText(r.usage):''}`,4500);
+        }catch(e){if(msg.isConnected){msg.className='small err';msg.textContent=e.message}}finally{if(b.isConnected)b.disabled=false}}
+    },{modal:true});
   };
   const addUpload=async()=>{const [file]=await pickFiles('image/*');if(!file)return null;const id=await putImg(await fileToStored(file),{uploaded:true});
     pg.hist.unshift({id,at:Date.now(),uploaded:true,form:null});saveImgPage();drawOut();return id};
@@ -4539,7 +4594,7 @@ Return one JSON object only: ${panelJson('sections')}`,undefined,1500);r={panels
       $('#gp-mine',pn).onchange=e=>{$('#gp-out',pn).hidden=!e.target.checked};
     },
     // read the prompt and settings NovelAI saved in a picture, and pick what to use
-    bmeta:()=>H.imp(null,null,null,pg.base.id),
+    bmeta:()=>H.imp(null,null,null,pg.base.id),swap:()=>openSwap(),
     // read the prompt and settings NovelAI saved in a picture: one on the device (pre) or one Hearth keeps (id)
     imp:async(b,e,pre,id)=>{
       if(!pre&&!id)return openSheet(`<h2>Import metadata</h2><p class="hint">Reads the prompt and settings NovelAI saved in a picture.</p>
@@ -4557,6 +4612,7 @@ Return one JSON object only: ${panelJson('sections')}`,undefined,1500);r={panels
         ${ck('s','Settings',[m.set.imgModel==='v45'?'V4.5':m.set.imgModel?'V5':'',m.set.naiW?`${m.set.naiW}×${m.set.naiH}`:m.set.naiSize?NAI_SIZES[m.set.naiSize][2].split(' (')[0]:'',m.set.naiSteps&&`${m.set.naiSteps} steps`,m.set.naiScale!=null&&`guidance ${m.set.naiScale}`,m.set.naiSampler,`quality tags ${m.set.naiQuality?'on':'off'}`,`undesired preset: ${m.set.naiUc}`].filter(Boolean).join(' · '))}
         ${m.seed!=null?ck('d','Seed',String(m.seed),false):''}
         ${ck('b','Use the picture as base image','for image to image or inpainting',false)}
+        ${ck('m','Then put my characters in it','pick who replaces whom next',false)}
         ${m.preset?ck('r',`Made with your preset “${esc(m.preset.name)}”`,'Its tags are taken out of the prompt and the preset is turned on instead, so changing the prompt can\'t change them. Off: keep them in the prompt.'):`<p class="hint">The prompt keeps its own artist tags, so "Add my preset's tags" is turned off.</p>`}
         <div class="sheet-foot row"><button class="btn ghost" data-act="close" style="flex:1">Cancel</button><button class="btn" data-act="go" style="flex:2">${I.imp} Import</button></div>`,{
         go:async()=>{
@@ -4568,8 +4624,8 @@ Return one JSON object only: ${panelJson('sections')}`,undefined,1500);r={panels
           saveImgPage();closeSheet();
           const h=id&&pg.hist.find(x=>x.id===id);if(h&&!h.form)h.form=clone(f); // later "Use its prompt" brings this back
           if(on('b')){let bid=h?id:null;if(!bid){bid=await putImg(id?await getImgData(id):await fileToStored(file),{uploaded:!id,made:!!id,seed:m.seed??undefined});pg.hist.unshift({id:bid,at:Date.now(),uploaded:!id,seed:m.seed??undefined,form:clone(f)})}saveImgPage();await setBase(bid)}
-          vImages();
-          toast('Imported')}});
+          await vImages();
+          if(on('m')&&(on('p')||on('c')))H.swap();else toast('Imported')}});
     },
     hup:()=>addUpload(),
     brm:()=>{pg.base=null;saveImgPage();drawBase()},
