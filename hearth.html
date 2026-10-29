@@ -377,7 +377,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.27.0',HEARTH_DATE='2026-10-29';
+const HEARTH_VERSION='1.27.1',HEARTH_DATE='2026-10-29';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -913,18 +913,26 @@ async function callApiRaw(api,messages,signal,onText,o={}){
   // OpenRouter adds the exact cost of the request to the token counts
   if(/openrouter\.ai/i.test(api.url)&&!api.noCost)body.usage={include:true};
   const headers={'Content-Type':'application/json'};if(api.key)headers.Authorization='Bearer '+api.key.trim();
-  let res;
+  let res,busy=0,waited=0;
   for(;;){
     try{res=await fetch(endpoint(api.url),{method:'POST',headers,body:JSON.stringify(body),signal})}
     catch(e){if(e.name==='AbortError')throw e;throw new Error(`Could not reach the proxy (${e.message}). Check the URL and your connection. The proxy must also allow browser requests (CORS).`)}
     if(res.ok)break;
     const t=await res.text().catch(()=>'');
+    // busy, rate-limited or a hiccup on the proxy's side (like OpenRouter's "could not verify available credits in time"):
+    // wait as long as it asks (or 2, 5, then 10 seconds) and send the same request again, up to 3 times
+    if([429,502,503,504,529].includes(res.status)&&busy<3){
+      const after=+res.headers.get('retry-after');busy++;const ms=Math.min(20000,after>0?after*1000:[2000,5000,10000][busy-1]);waited+=ms;
+      await new Promise((ok,no)=>{const t=setTimeout(ok,ms);signal?.addEventListener('abort',()=>{clearTimeout(t);no(new DOMException('Aborted','AbortError'))},{once:true})});
+      continue;
+    }
     if(body.stream_options&&/stream_options|include_usage/i.test(t)){delete body.stream_options;api.noUsage=true;saveSettings();continue}
     if(body.response_format&&/response_format|json_object|json mode|structured output|requested parameters/i.test(t)){delete body.response_format;api.noJson=true;saveSettings();continue}
     if(body.usage&&/\busage\b/i.test(t)){delete body.usage;api.noCost=true;saveSettings();continue}
     if(body.reasoning&&/reasoning|effort/i.test(t)){delete body.reasoning;api.noEffort=true;saveSettings();continue}
     let m=t;try{const j=JSON.parse(t);m=j.error?.message||j.error||j.message||j.detail||t;if(typeof m!=='string')m=JSON.stringify(m)}catch{}
-    const err=new Error(`Proxy error ${res.status}: ${String(m||res.statusText).slice(0,1000)}`);err.status=res.status;throw err;
+    const busyNote=busy?` (Hearth tried ${busy+1} times over about ${Math.round(waited/1000)} seconds. Wait a minute and try again${res.status===429&&/openrouter\.ai/i.test(api.url)?'; if it keeps happening, check your credits on OpenRouter':''}.)`:'';
+    const err=new Error(`Proxy error ${res.status}: ${String(m||res.statusText).slice(0,1000)}${busyNote}`);err.status=res.status;throw err;
   }
   const usageOf=u=>{
     if(!u||(u.prompt_tokens==null&&u.input_tokens==null))return null;
