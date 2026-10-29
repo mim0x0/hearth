@@ -361,7 +361,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.23.0',HEARTH_DATE='2026-10-29';
+const HEARTH_VERSION='1.24.0',HEARTH_DATE='2026-10-29';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -1248,6 +1248,7 @@ async function viewPicture(c,id,kind,after){
       <button data-act="dl">${I.imp} Save to device</button>
       <button data-act="main">${I.user} Use as main picture</button>
       ${kind==='gallery'?`<button data-act="pool">${I.regen} Add to profile pictures</button>`:''}
+      <button data-act="tometa" hidden>${I.edit} Use its prompt on the Images page</button>
       <button class="danger" data-act="del">${I.trash} ${kind==='pool'?'Remove from profile pictures':'Delete picture'}</button>
     </div>`,{
     dl:async()=>{const b=await dataToBlob(d);download(`${safeName(c.name)}-${id}.${(b.type.split('/')[1]||'png').replace('jpeg','jpg')}`,b)},
@@ -1255,8 +1256,10 @@ async function viewPicture(c,id,kind,after){
     pool:async()=>{const nid=await putImg(await fileToImage(new File([await dataToBlob(d)],'p',{type:'image/png'}),768));(c.avatarPool??=[]).push(nid);await saveChars();closeSheet();toast('Added to profile pictures');after?.()},
     del:async()=>{if(!confirm(kind==='pool'?'Remove this profile picture?':'Delete this picture?'))return;
       if(kind==='pool')c.avatarPool=c.avatarPool.filter(x=>x!==id);else c.gallery=c.gallery.filter(x=>x.id!==id);
-      await delImg(id);await saveChars();closeSheet();after?.()}
+      await delImg(id);await saveChars();closeSheet();after?.()},
+    tometa:()=>importToImages(id)
   });
+  metaOf(id).then(m=>{const x=$('[data-act=tometa]',$('#sheet'));if(m&&x)x.hidden=false});
   const n=$('#gnote');if(n)n.onchange=async()=>{if(g){g.note=n.value.trim();await saveChars()}};
 }
 function openGallery(c,chatId){
@@ -3038,6 +3041,7 @@ async function viewMade(id,o={}){
       <button data-act="dl">${I.imp} Save to device</button>
       ${(o.more||[]).map((x,k)=>`<button data-act="more" data-k="${k}">${x.label}</button>`).join('')}
       ${o.images?'':`<button data-act="toimg">${I.img} Edit on the Images page</button>`}
+      ${o.noMeta?'':`<button data-act="tometa" hidden>${I.edit} Use its prompt ${o.images?'and settings':'on the Images page'}</button>`}
       <button class="danger" data-act="del">${I.trash} Delete picture</button>
     </div>
     <div class="sheet-foot row"><button class="btn" data-act="back" style="flex:1">${I.back} ${o.backLabel||'Back'}</button></div>`,{
@@ -3050,8 +3054,10 @@ async function viewMade(id,o={}){
     more:b=>o.more[+b.dataset.k].fn(),
     // a copy goes to the Images page, for image to image, inpainting and the tools
     toimg:async()=>{const pg=await imgPageData(),nid=await putImg(rec.data,{seed:rec.seed,made:true});pg.hist.unshift({id:nid,at:Date.now(),seed:rec.seed,form:null});saveImgPage();closeSheet();go('#/images');toast('Added to the Images page: tap it there for image to image and the tools')},
+    tometa:()=>o.meta?o.meta(id):importToImages(id),
     del:async()=>{if(!confirm('Delete this picture?'))return;if(!inGallery(id))await delImg(id);await o.onDelete?.(id);if(o.back)o.back();else closeSheet()}
   });
+  if(!o.noMeta)metaOf(id).then(m=>{const x=$('[data-act=tometa]',$('#sheet'));if(m&&x)x.hidden=false});
 }
 // pick a character or world to save a picture to
 // o.chars: only characters and worlds (no My pictures); done gets the character, or 'lib' for My pictures
@@ -3133,6 +3139,7 @@ function viewLibItem(x,back){
         <button data-act="copy">${I.copy} Copy to a character…</button>
         <button data-act="fold">${I.folder} Move to folder…</button>
         <button data-act="img">${I.img} Use on the Images page</button>
+        <button data-act="tometa" hidden>${I.edit} Use its prompt on the Images page</button>
         <button data-act="dl">${I.imp} Save to device</button>
         <button class="danger" data-act="del">${I.trash} Delete picture</button>
       </div>
@@ -3143,9 +3150,11 @@ function viewLibItem(x,back){
       fold:()=>pickLibFolder(async f=>{x.folder=f;await saveLib();toast(f?`Moved to ${libFolderName(f)}`:'Not in a folder now');viewLibItem(x,back)},()=>viewLibItem(x,back)),
       img:async()=>{const pg=await imgPageData(),nid=await putImg(d,{seed:x.seed,made:true});pg.hist.unshift({id:nid,at:Date.now(),seed:x.seed,form:null});saveImgPage();closeSheet();go('#/images');toast('Added to the Images page')},
       dl:async()=>download(`hearth-${x.seed??x.id}.png`,await dataToBlob(d)),
+      tometa:()=>importToImages(x.id),
       del:async()=>{if(!confirm('Delete this picture from My pictures?'))return;const L=await libData();L.items=L.items.filter(i=>i!==x);await saveLib();if(!inGallery(x.id))await delImg(x.id);back()}
     });
     $('#lb-note').onchange=async e=>{x.note=e.target.value.trim();await saveLib()};
+    metaOf(x.id).then(m=>{const b=$('[data-act=tometa]',$('#sheet'));if(m&&b)b.hidden=false});
   });
 }
 /* ---------- long character lists: a search box and the Characters page's folders, to narrow any list of characters ---------- */
@@ -3731,6 +3740,16 @@ async function readImageMeta(file){
       ...(c.sampler&&NAI_SAMPLERS.some(([v])=>v===c.sampler)?{naiSampler:c.sampler}:{}),naiQuality:quality,naiUc:ucp},
     seed:c.seed!=null?+c.seed:null,info:[src||meta.Software||'NovelAI',w&&`${w}×${h}`,c.steps&&`${c.steps} steps`,c.seed!=null&&`seed ${c.seed}`].filter(Boolean).join(' · ')};
 }
+// whether a picture Hearth keeps still has NovelAI's prompt saved in it (remembered while the app is open)
+const metaSeen=new Map();
+async function metaOf(id){
+  if(!metaSeen.has(id)){let m=null;const d=await getImgData(id);if(d)try{m=await readImageMeta(await fileOfImg(d))}catch{}metaSeen.set(id,m)}
+  return metaSeen.get(id);
+}
+async function fileOfImg(d){const b=await dataToBlob(d);return new File([b],'picture.'+(b.type.split('/')[1]||'png'),{type:b.type})}
+// open the Images page and read a picture's prompt and settings there
+let imgImportId=null;
+function importToImages(id){imgImportId=id;closeSheet();if(location.hash==='#/images')vImages();else go('#/images')}
 async function promptFromFile(file){
   let meta=null;
   if(/png/i.test(file.type)||/\.png$/i.test(file.name||''))try{meta=readPngText(await file.arrayBuffer())}catch{}
@@ -4392,10 +4411,19 @@ async function vImages(){
     el.innerHTML=`<div class="box"><div class="row" style="gap:10px;align-items:flex-start"><img data-img="${b.id}" src="${BLANK}" data-act="bview" alt="" style="width:84px;border-radius:8px;background:var(--panel2)"><div style="flex:1;min-width:0">
       <div class="small muted">${b.w}×${b.h}${b.mask?' · <b>inpainting</b>: only the painted part is redrawn':' · image to image'}</div>
       ${b.mask?rng('inpaint','Strength',0.01,1,b.inpaint??1,'1 = draw the painted part fully new'):rng('strength','Strength',0.01,0.99,b.strength??.7,'higher = more change')+rng('noise','Noise',0,0.99,b.noise??0,'adds detail; keep low')}</div></div>
-      <div class="row" style="margin-top:8px;flex-wrap:wrap"><button class="btn ghost sm" data-act="bmask">${I.edit} ${b.mask?'Edit painted area':'Paint area to redo'}</button>${b.mask?`<button class="btn ghost sm" data-act="bunmask">Clear painted area</button>`:''}<button class="btn ghost sm" data-act="brm">${I.trash} Remove</button></div></div>`;
+      <div class="row" style="margin-top:8px;flex-wrap:wrap"><button class="btn ghost sm" data-act="bmask">${I.edit} ${b.mask?'Edit painted area':'Paint area to redo'}</button>${b.mask?`<button class="btn ghost sm" data-act="bunmask">Clear painted area</button>`:''}<button class="btn ghost sm" data-act="bmeta" hidden>${I.edit} Use its prompt</button><button class="btn ghost sm" data-act="brm">${I.trash} Remove</button></div></div>`;
+    metaOf(b.id).then(m=>{const x=$('[data-act=bmeta]',el);if(m&&x)x.hidden=false});
     hydrate(el);freeNote()};
   const setBase=async(id,o={})=>{const d=await getImgData(id);if(!d)return toast('Picture not found');const i=await loadImg(d),nw=i.naturalWidth,nh=i.naturalHeight;
     const [w,h]=fitSize(nw,nh,o.area||Math.min(nw*nh,1048576));pg.base={id,w,h,strength:o.strength??.7,noise:o.noise??0,mask:null,inpaint:1};saveImgPage();if($('#ig-base'))drawBase()};
+  const pickAppPicture=async(done,back)=>{
+    const L=await libData(),groups=[['Made on this page',pg.hist.map(h=>h.id)],['My pictures',L.items.map(i=>i.id)],
+      ...S.chars.filter(c=>c.gallery?.length).map(c=>[`${c.name}'s gallery`,c.gallery.map(g=>g.id).reverse()])].filter(([,ids])=>ids.length);
+    const pn=openSheet(`<h2>Choose a picture</h2><p class="hint">Pictures made with NovelAI, here or on its site, keep their prompt. Photos and edited or shared copies usually don't.</p>
+      ${groups.length?groups.map(([n,ids])=>`<div class="small muted" style="margin:10px 0 6px">${esc(n)}</div>${thumbs(ids,'pick')}`).join(''):'<p class="muted">No pictures in Hearth yet.</p>'}
+      <div class="sheet-foot"><button class="btn ghost block" data-act="back">${I.back} Back</button></div>`,{pick:b=>done(b.dataset.id),back:()=>back()});
+    hydrate(pn);
+  };
   const addUpload=async()=>{const [file]=await pickFiles('image/*');if(!file)return null;const id=await putImg(await fileToStored(file),{uploaded:true});
     pg.hist.unshift({id,at:Date.now(),uploaded:true,form:null});saveImgPage();drawOut();return id};
   const drawOut=()=>{
@@ -4511,9 +4539,17 @@ Return one JSON object only: ${panelJson('sections')}`,undefined,1500);r={panels
       $('#gp-mine',pn).onchange=e=>{$('#gp-out',pn).hidden=!e.target.checked};
     },
     // read the prompt and settings NovelAI saved in a picture, and pick what to use
-    imp:async(b,e,pre)=>{
-      const [file]=pre?[pre]:await pickFiles('image/*');if(!file)return;
-      const m=await readImageMeta(file).catch(()=>null);if(!m)return toast("This picture has no NovelAI metadata (it may have been re-saved or shared through an app that strips it)",5000);
+    bmeta:()=>H.imp(null,null,null,pg.base.id),
+    // read the prompt and settings NovelAI saved in a picture: one on the device (pre) or one Hearth keeps (id)
+    imp:async(b,e,pre,id)=>{
+      if(!pre&&!id)return openSheet(`<h2>Import metadata</h2><p class="hint">Reads the prompt and settings NovelAI saved in a picture.</p>
+        <div class="menu"><button data-act="dev">${I.imp} A picture on this device</button><button data-act="app">${I.img} A picture in Hearth</button></div>
+        <div class="sheet-foot"><button class="btn ghost block" data-act="close">Cancel</button></div>`,{
+        dev:async()=>{const [x]=await pickFiles('image/*');if(x)H.imp(null,null,x)},
+        app:()=>pickAppPicture(id=>H.imp(null,null,null,id),()=>H.imp())});
+      let file=pre;
+      if(id){const d=await getImgData(id);if(!d)return toast('Picture not found');file=await fileOfImg(d)}
+      const m=await readImageMeta(file).catch(()=>null);if(!m)return toast(id?"This picture has no NovelAI metadata. Pictures made here or saved from NovelAI keep it; photos and edited or shared copies usually don't.":"This picture has no NovelAI metadata (it may have been re-saved or shared through an app that strips it)",5000);
       const n=m.form.chars.length,ck=(k,l,sub,on=true)=>`<label class="tg" style="margin:0"><div>${l}${sub?`<div class="hint">${esc(sub)}</div>`:''}</div><span class="sw"><input type="checkbox" id="im-${k}" ${on?'checked':''}><span></span></span></label>`;
       openSheet(`<h2>Import metadata</h2><p class="small muted">${esc(m.info)}</p>
         ${ck('p','Prompt',m.form.base.slice(0,140))}${ck('u','Undesired content',m.form.uc.slice(0,120)||'(none)')}
@@ -4530,7 +4566,8 @@ Return one JSON object only: ${panelJson('sections')}`,undefined,1500);r={panels
           if(on('c')){f.chars=m.form.chars;f.posAI=m.form.posAI}
           if(on('s'))Object.assign(S.settings,m.set);if(on('d'))S.settings.naiSeed=m.seed;if(on('s')||on('d')||m.preset)await saveSettings();
           saveImgPage();closeSheet();
-          if(on('b')){const id=await putImg(await fileToStored(file),{uploaded:true});pg.hist.unshift({id,at:Date.now(),uploaded:true,form:clone(f)});await setBase(id)}
+          const h=id&&pg.hist.find(x=>x.id===id);if(h&&!h.form)h.form=clone(f); // later "Use its prompt" brings this back
+          if(on('b')){let bid=h?id:null;if(!bid){bid=await putImg(id?await getImgData(id):await fileToStored(file),{uploaded:!id,made:!!id,seed:m.seed??undefined});pg.hist.unshift({id:bid,at:Date.now(),uploaded:!id,seed:m.seed??undefined,form:clone(f)})}saveImgPage();await setBase(bid)}
           vImages();
           toast('Imported')}});
     },
@@ -4544,7 +4581,7 @@ Return one JSON object only: ${panelJson('sections')}`,undefined,1500);r={panels
       const again=()=>H.hview(b),useForm=()=>{if(x.form){pg.form=clone(x.form);saveImgPage()}};
       // start from this picture and make one right away (the tap on the button is the request)
       const startFrom=async(o,ask)=>{if(ask&&!confirm(ask))return;useForm();await setBase(x.id,o);closeSheet();await vImages();$('[data-act=gen]',view)?.click()};
-      viewMade(x.id,{images:true,backLabel:'Back to Images',note:x.form?.base?.slice(0,80)||'',
+      viewMade(x.id,{images:true,backLabel:'Back to Images',note:x.form?.base?.slice(0,80)||'',noMeta:!!x.form,meta:id=>H.imp(null,null,null,id),
         more:[{label:`${I.img} Use as base image`,fn:async()=>{await setBase(x.id);closeSheet();$('#ig-base')?.scrollIntoView({block:'center'});toast('Base image set. Change the prompt or paint an area, then tap Generate.')}},
           ...(x.form?[{label:`${I.regen} Variations`,fn:()=>startFrom({strength:.8,noise:.1})},
             {label:`${I.wand} Enhance (1.5× bigger)`,fn:async()=>{const i=await loadImg(await getImgData(x.id)),[w,h]=fitSize(i.naturalWidth,i.naturalHeight,i.naturalWidth*i.naturalHeight*2.25);
@@ -4556,6 +4593,7 @@ Return one JSON object only: ${panelJson('sections')}`,undefined,1500);r={panels
           ...(x.form?[{label:`${I.edit} Use its prompt`,fn:()=>{useForm();closeSheet();vImages()}}]:[])],
         onDelete:async id=>{pg.hist=pg.hist.filter(h=>h.id!==id);if(pg.base?.id===id){pg.base=null;drawBase()}saveImgPage();if($('#ig-out'))drawOut()}})}};
   drawOut();drawBase();drawPanels();drawAcct();
+  if(imgImportId){const id=imgImportId;imgImportId=null;H.imp(null,null,null,id)}
 }
 /* ---------- profile / personas ---------- */
 // pick who you are in one chat, and add, edit or delete personas right there
