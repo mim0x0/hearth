@@ -194,16 +194,17 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .cp-t{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;white-space:pre-wrap;word-break:break-word;user-select:text}
 /* prompt boxes like NovelAI's: the text is drawn by .hl-bg behind a see-through textarea, colored by emphasis */
 .tagbox{position:relative}
-.tagbox.hl textarea{position:relative;z-index:1;background:transparent!important;color:transparent;caret-color:var(--text);scrollbar-width:none}
+/* block, so the box is exactly as tall as the colored copy behind it (an inline textarea leaves a gap under itself) */
+.tagbox.hl textarea{display:block;position:relative;z-index:1;background:transparent!important;color:transparent;-webkit-text-fill-color:transparent;caret-color:var(--text);scrollbar-width:none;-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .tagbox.hl textarea::-webkit-scrollbar{display:none}
-.tagbox.hl textarea::placeholder{color:var(--muted)}
+.tagbox.hl textarea::placeholder{color:var(--muted);-webkit-text-fill-color:var(--muted)}
 .tagbox.hl textarea::selection{color:transparent;background:color-mix(in srgb,var(--accent2) 45%,transparent)}
-.hl-bg{position:absolute;inset:0;z-index:0;background:var(--panel);border-style:solid;border-color:transparent;white-space:pre-wrap;overflow-wrap:break-word;word-break:break-word;overflow:hidden;pointer-events:none;color:var(--text)}
+.hl-bg{position:absolute;inset:0;z-index:0;background:var(--panel);border-style:solid;border-color:transparent;white-space:pre-wrap;overflow-wrap:break-word;word-break:normal;overflow:hidden;pointer-events:none;color:var(--text);-webkit-text-size-adjust:100%;text-size-adjust:100%}
 .em-up{color:#ffcf7d;background:rgba(242,200,121,calc(var(--em) * .32));border-radius:3px}
 .em-dn{color:#9db7ff;background:rgba(120,155,255,calc(var(--em) * .32));border-radius:3px}
 .em-neg{color:#ff9aa2;background:rgba(240,112,122,.3);border-radius:3px}
 .em-sym{color:var(--muted)}
-.tag-sug{position:absolute;left:0;right:0;top:100%;z-index:30;margin-top:4px;background:var(--panel2);border:1px solid var(--line);border-radius:12px;max-height:260px;overflow:auto;box-shadow:0 8px 24px #0009}
+.tag-sug{position:absolute;left:0;right:0;top:100%;z-index:30;margin-top:4px;background:var(--panel2);border:1px solid var(--line);border-radius:12px;max-height:230px;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;touch-action:pan-y;box-shadow:0 8px 24px #0009}
 .tag-it{display:flex;width:100%;justify-content:space-between;align-items:center;gap:10px;padding:9px 12px;background:none;border:0;color:var(--text);font:inherit;font-size:14px;text-align:left;cursor:pointer}
 .tag-it.on,.tag-it:hover{background:color-mix(in srgb,var(--accent2) 28%,transparent)}
 .tag-it small{color:var(--muted);flex:none}
@@ -376,7 +377,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.26.0',HEARTH_DATE='2026-10-29';
+const HEARTH_VERSION='1.26.1',HEARTH_DATE='2026-10-29';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -5104,14 +5105,19 @@ function enhanceTagField(el){
     const ins=x.tag+(f.weighted||/^\s*([,|\n}\]]|::)/.test(rest)?'':', ');
     el.value=v.slice(0,f.a)+ins+rest;const pos=f.a+ins.length;el.setSelectionRange(pos,pos);
     close();el.dispatchEvent(new Event('input',{bubbles:true}));el.focus()};
-  list.addEventListener('pointerdown',e=>{const b=e.target.closest('.tag-it');if(!b)return;e.preventDefault();pick(+b.dataset.i)});
+  // a tap picks (a click never follows a scroll, so the list can be scrolled); a mouse press keeps the box focused
+  let inList=false;
+  list.addEventListener('pointerdown',e=>{inList=true;if(e.pointerType==='mouse')e.preventDefault()});
+  list.addEventListener('click',e=>{const b=e.target.closest('.tag-it');if(b)pick(+b.dataset.i)});
+  const up=()=>{if(!el.isConnected)return removeEventListener('pointerup',up);setTimeout(()=>{if(inList){inList=false;if(document.activeElement!==el&&!list.hidden)close()}},400)};
+  addEventListener('pointerup',up,{passive:true});
   el.addEventListener('input',e=>{el._paint?.();if(e.isTrusted===false&&!e.inputType)return;clearTimeout(timer);timer=setTimeout(show,180)});
   el.addEventListener('keydown',e=>{
     if(list.hidden)return;
     if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();sel=(sel+(e.key==='ArrowDown'?1:-1)+items.length)%items.length;mark()}
     else if((e.key==='Enter'||e.key==='Tab')&&sel>=0){e.preventDefault();pick(sel)}
     else if(e.key==='Escape'){e.preventDefault();close()}});
-  el.addEventListener('blur',()=>setTimeout(close,150));
+  el.addEventListener('blur',()=>setTimeout(()=>{if(!inList)close()},150)); // stays open while a finger is on the list
 }
 const enhanceIn=n=>{if(n.nodeType!==1)return;if(n.matches('[data-tags]'))enhanceTagField(n);n.querySelectorAll('[data-tags]:not([data-tagged])').forEach(enhanceTagField)};
 new MutationObserver(ms=>{for(const m of ms)m.addedNodes.forEach(enhanceIn)}).observe(document.body,{childList:true,subtree:true});
