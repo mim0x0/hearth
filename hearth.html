@@ -192,6 +192,21 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .cp-h{display:flex;align-items:center;gap:8px;margin-bottom:4px}
 .cp-h b{flex:1;font-size:13px}
 .cp-t{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;white-space:pre-wrap;word-break:break-word;user-select:text}
+/* prompt boxes like NovelAI's: the text is drawn by .hl-bg behind a see-through textarea, colored by emphasis */
+.tagbox{position:relative}
+.tagbox.hl textarea{position:relative;z-index:1;background:transparent!important;color:transparent;caret-color:var(--text);scrollbar-width:none}
+.tagbox.hl textarea::-webkit-scrollbar{display:none}
+.tagbox.hl textarea::placeholder{color:var(--muted)}
+.tagbox.hl textarea::selection{color:transparent;background:color-mix(in srgb,var(--accent2) 45%,transparent)}
+.hl-bg{position:absolute;inset:0;z-index:0;background:var(--panel);border-style:solid;border-color:transparent;white-space:pre-wrap;overflow-wrap:break-word;word-break:break-word;overflow:hidden;pointer-events:none;color:var(--text)}
+.em-up{color:#ffcf7d;background:rgba(242,200,121,calc(var(--em) * .32));border-radius:3px}
+.em-dn{color:#9db7ff;background:rgba(120,155,255,calc(var(--em) * .32));border-radius:3px}
+.em-neg{color:#ff9aa2;background:rgba(240,112,122,.3);border-radius:3px}
+.em-sym{color:var(--muted)}
+.tag-sug{position:absolute;left:0;right:0;top:100%;z-index:30;margin-top:4px;background:var(--panel2);border:1px solid var(--line);border-radius:12px;max-height:260px;overflow:auto;box-shadow:0 8px 24px #0009}
+.tag-it{display:flex;width:100%;justify-content:space-between;align-items:center;gap:10px;padding:9px 12px;background:none;border:0;color:var(--text);font:inherit;font-size:14px;text-align:left;cursor:pointer}
+.tag-it.on,.tag-it:hover{background:color-mix(in srgb,var(--accent2) 28%,transparent)}
+.tag-it small{color:var(--muted);flex:none}
 .cp-panel{font-size:15px;margin:16px 0 2px}
 .storycards{margin-top:8px}
 .thumbs{display:grid;grid-template-columns:repeat(auto-fill,minmax(76px,1fr));gap:6px}
@@ -361,8 +376,8 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.25.0',HEARTH_DATE='2026-10-29';
-const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
+const HEARTH_VERSION='1.26.0',HEARTH_DATE='2026-10-29';
+const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
 const saveChars=()=>store.set('chars',S.chars);
@@ -723,7 +738,7 @@ function entryHTML(e,open){
     <label class="f">Title<small>only for you</small></label><input class="e-comment" value="${esc(e.comment)}">
     <label class="f">Trigger words<small>comma separated</small></label><input class="e-keys" value="${esc(e.keys.join(', '))}" autocapitalize="off" placeholder="castle, fortress">
     <label class="f">Content<small>added to the prompt when triggered</small></label><textarea class="e-content" rows="5">${esc(e.content)}</textarea>
-    <label class="f">Look<small>optional, image tags for NovelAI prompts</small></label><input class="e-look" value="${esc(e.look||'')}" autocapitalize="off" placeholder="e.g. silver sword, crescent-moon hilt, glowing blue runes">
+    <label class="f">Look<small>optional, image tags for NovelAI prompts</small></label><input class="e-look" data-tags value="${esc(e.look||'')}" autocapitalize="off" placeholder="e.g. silver sword, crescent-moon hilt, glowing blue runes">
     <div class="hint">For items, places and creatures: used word for word in image prompts whenever this entry is triggered, so it looks the same in every picture.</div>
     <div class="tg"><div>Always on<div class="hint">Added every time, no trigger word needed.</div></div><label class="sw"><input type="checkbox" class="e-const" ${e.constant?'checked':''}><span></span></label></div>
     <div class="tg"><div>Enabled</div><label class="sw"><input type="checkbox" class="e-on" ${e.enabled?'checked':''}><span></span></label></div>
@@ -2209,9 +2224,9 @@ function vEdit(id='new'){
         <div class="hint">Chats with ${esc(W.name||'this character')} on their own also get that world's description, ${esc(W.name||'their')}'s relationships there, its lorebook, and short notes on the world's other characters when they come up. Nothing is copied: edits to the world show up right away.${inW.length&&!W.homeWorld?` ${esc(W.name)} is in ${inW.map(w=>`“${esc(w.name)}”`).join(', ')}.`:''} A chat can use another world under ⋮ → World for this chat.</div>`
         :'<p class="muted small">Make a world first (Characters → + → World / group). Then you can choose it here.</p>'}`})()}
     ${world?'':`<label class="f">Looks<small>for NovelAI: never changes (body, hair, eyes, face)</small></label>
-    <textarea name="imageTags" rows="2" autocapitalize="off" placeholder="e.g. long hair, silver hair, braided bangs, sidelocks, red eyes, tsurime, pale skin, scar on cheek, medium breasts">${esc(W.imageTags||'')}</textarea>
+    <textarea name="imageTags" data-tags="hl" rows="2" autocapitalize="off" placeholder="e.g. long hair, silver hair, braided bangs, sidelocks, red eyes, tsurime, pale skin, scar on cheek, medium breasts">${esc(W.imageTags||'')}</textarea>
     <label class="f">Usual outfit<small>used unless the scene needs other clothes</small></label>
-    <textarea name="outfitTags" rows="2" autocapitalize="off" placeholder="e.g. black armor, red cape, silver gauntlets, brown belt, knee boots">${esc(W.outfitTags||'')}</textarea>
+    <textarea name="outfitTags" data-tags="hl" rows="2" autocapitalize="off" placeholder="e.g. black armor, red cape, silver gauntlets, brown belt, knee boots">${esc(W.outfitTags||'')}</textarea>
     <div class="row" style="margin-top:8px"><button class="btn ghost sm" data-act="sugg-tags">${I.wand} From the description</button><button class="btn ghost sm" data-act="sugg-pic" ${W.avatar?'':'disabled title="Add a picture first"'}>${I.img} From the picture</button></div>
     <div id="tag-miss" class="small" style="margin-top:6px"></div>
     <div class="hint">Hearth copies the Looks into every image prompt word for word, in this order, so this character looks the same in every picture. The more exact they are, the better: one exact hair color, the hairstyle and bangs, eye color and shape. “From the picture” reads them from the avatar with your vision model (most accurate for original characters). For the same face every time, also use NovelAI's character reference feature with this character's picture.</div>`}
@@ -2932,7 +2947,7 @@ Return one JSON object only: {"panels":[${panelJson('sections')}]}`,undefined,20
 // One sections block per panel, each with its own Copy button; T collects the texts the buttons copy.
 function panelsHTML(panels,T,act='cp',attrs='',after=null){
   const box=(label,text,sub='')=>{if(!text)return '';T.push(text);
-    return `<div class="cp"><div class="cp-h"><b>${label}</b><button class="btn ghost sm" data-act="${act}" data-i="${T.length-1}" ${attrs}>${I.copy} Copy</button></div>${sub?`<div class="small muted" style="margin-bottom:4px">${esc(sub)}</div>`:''}<div class="cp-t">${esc(text)}</div></div>`};
+    return `<div class="cp"><div class="cp-h"><b>${label}</b><button class="btn ghost sm" data-act="${act}" data-i="${T.length-1}" ${attrs}>${I.copy} Copy</button></div>${sub?`<div class="small muted" style="margin-bottom:4px">${esc(sub)}</div>`:''}<div class="cp-t">${S.settings.tagHighlight!==false?emphasisHTML(text):esc(text)}</div></div>`};
   return panels.map((p0,k)=>{const p=withPreset(p0);return `${panels.length>1?`<h3 class="cp-panel">Panel ${k+1}</h3>`:''}${p.caption?`<p class="muted small" style="margin:2px 0 8px">${esc(p.caption)}</p>`:''}
     ${p.onebox?box('Prompt (all in one box)',p.onebox,'Paste into the main prompt box with no character boxes.')+box('Undesired content',p.undesired)
       :box('Base prompt',p.base)+box('Undesired content',p.undesired)+p.characters.map((c,i)=>box(`Character ${i+1}${c.name?' · '+esc(c.name):''}`,c.prompt,c.position?`Position: ${c.position}`:'')+box(`Character ${i+1} undesired`,c.undesired)).join('')}${after?after(k):''}`}).join('');
@@ -3428,9 +3443,9 @@ function editImgPreset(p,isNew){
   const st=S.settings,w={...p};
   openSheet(`<h2>${isNew?'New image preset':'Edit image preset'}</h2>
     <label class="f">Name</label><input id="ipn" value="${esc(w.name)}" placeholder="e.g. Clean anime">
-    <label class="f">Artist tags<small>added at the start of the base prompt</small></label><textarea id="ipa" rows="2" placeholder="e.g. artist:name, artist:other" autocapitalize="off">${esc(w.artist)}</textarea>
+    <label class="f">Artist tags<small>added at the start of the base prompt</small></label><textarea id="ipa" data-tags="hl" rows="2" placeholder="e.g. artist:name, artist:other" autocapitalize="off">${esc(w.artist)}</textarea>
     <label class="f">Base prompt bottom lines<small>added at the end, exactly as written</small></label><textarea id="ipf" rows="3" placeholder="e.g. make the lines clear, character expression clear">${esc(w.footer)}</textarea>
-    <label class="f">Undesired tags<small>added to Undesired Content</small></label><textarea id="ipu" rows="2" placeholder="e.g. bad hands, extra fingers, blurry" autocapitalize="off">${esc(w.uc)}</textarea>
+    <label class="f">Undesired tags<small>added to Undesired Content</small></label><textarea id="ipu" data-tags="hl" rows="2" placeholder="e.g. bad hands, extra fingers, blurry" autocapitalize="off">${esc(w.uc)}</textarea>
     <div class="sheet-foot row"><button class="btn ghost" data-act="close" style="flex:1">Cancel</button>${!isNew&&st.imgPreset!==w.id?'<button class="btn ghost" data-act="use" style="flex:1">Use</button>':''}<button class="btn" data-act="save" style="flex:1">${I.check} Save</button></div>
     ${!isNew&&st.imgPresets.length>1?'<button class="btn danger block" data-act="del">Delete preset</button>':''}`,{
     save:async()=>{w.name=$('#ipn').value.trim()||'Preset';w.artist=$('#ipa').value.trim();w.footer=$('#ipf').value.trim();w.uc=$('#ipu').value.trim();
@@ -4381,7 +4396,7 @@ async function vImages(){
   const opt=(k,list,cur)=>`<select data-s="${k}">${list.map(([v,l])=>`<option value="${v}" ${String(cur)===String(v)?'selected':''}>${l}</option>`).join('')}</select>`;
   const people=[...S.chars].filter(c=>c.kind!=='world').sort((a,b)=>(b.lastUsed||0)-(a.lastUsed||0));
   const charBox=(c,k)=>`<div class="box ig-c" data-k="${k}" style="margin:8px 0"><div class="row" style="margin-bottom:6px"><b style="flex:1"><i class="ig-sw" style="background:${dotColor(k)}"></i>Character ${k+1}</b><button class="btn ghost sm" data-act="crm" data-k="${k}" title="Remove">${I.trash}</button></div>
-    <textarea class="ig-cpr" rows="3" placeholder="girl, long hair, …">${esc(c.prompt)}</textarea><textarea class="ig-cuc" rows="2" placeholder="Undesired for this character" style="margin-top:6px">${esc(c.uc)}</textarea></div>`;
+    <textarea class="ig-cpr" data-tags="hl" rows="3" placeholder="girl, long hair, …">${esc(c.prompt)}</textarea><div style="margin-top:6px"><textarea class="ig-cuc" data-tags="hl" rows="2" placeholder="Undesired for this character">${esc(c.uc)}</textarea></div></div>`;
   view.innerHTML=`<header class="top"><h1>Images</h1><button class="ib" data-act="lib" title="My pictures">${I.folder}</button></header><div class="pad">
     ${naiOn()?`<div class="box small" style="margin-bottom:12px;display:flex;gap:8px;align-items:center"><div id="ig-acct" style="flex:1" class="muted">Checking your NovelAI account…</div><button class="btn ghost sm" data-act="acct" title="Check again">${I.regen}</button></div>`:''}
     ${naiOn()?'':`<div class="box" style="margin-bottom:12px"><b>Add your NovelAI token first</b><div class="small muted" style="margin:4px 0 8px">Settings → NovelAI images. Pictures use your NovelAI subscription, like on NovelAI's site.</div><button class="btn sm" data-act="toset">Open Settings</button></div>`}
@@ -4394,8 +4409,8 @@ async function vImages(){
       <div class="small" id="ia-msg" style="margin-top:6px"></div></div>
     <div class="row" style="margin-bottom:10px;flex-wrap:wrap"><button class="btn ghost sm" data-act="imp">${I.imp} Import metadata</button><button class="btn ghost sm" data-act="gpic">${I.wand} Guess from a picture</button><button class="btn ghost sm" data-act="swap">${I.user} Put my characters in it</button></div>
     <div id="ig-pnl"></div>
-    <label class="f" style="margin-top:0">Prompt</label><textarea id="ig-b" rows="5" placeholder="1girl, outdoors, cherry blossoms, evening, …">${esc(f.base)}</textarea>
-    <label class="f">Undesired content</label><textarea id="ig-u" rows="2" placeholder="Things to keep out">${esc(f.uc)}</textarea>
+    <label class="f" style="margin-top:0">Prompt</label><textarea id="ig-b" data-tags="hl" rows="5" placeholder="1girl, outdoors, cherry blossoms, evening, …">${esc(f.base)}</textarea>
+    <label class="f">Undesired content</label><textarea id="ig-u" data-tags="hl" rows="2" placeholder="Things to keep out">${esc(f.uc)}</textarea>
     <label class="f">Base image<small>image to image and inpainting</small></label><div id="ig-base"></div>
     <label class="f">Characters<small>one box per person, like NovelAI's Character Prompts</small></label><div id="ig-cs">${f.chars.map(charBox).join('')}</div>
     <button class="btn ghost sm" data-act="cadd">${I.plus} Add character</button>
@@ -4675,7 +4690,7 @@ function editPersona(p,isNew,after=()=>vProfile()){
     <div class="pics"><div class="pic av" data-act="pick" id="ppav" style="width:90px;height:90px;border-radius:50%">${w.avatar?`<img src="${esc(w.avatar)}">`:'Add<br>picture'}</div></div>
     <label class="f">Name</label><input id="pn" value="${esc(w.name)}" placeholder="Your name in the story">
     <label class="f">Description<small>appearance, personality, background</small></label><textarea id="pd" rows="6">${esc(w.description)}</textarea>
-    <label class="f">Image tags<small>your look in NovelAI image prompts</small></label><input id="pit" value="${esc(w.imageTags||'')}" placeholder="e.g. 1boy, short black hair, brown eyes, knight armor" autocapitalize="off">
+    <label class="f">Image tags<small>your look in NovelAI image prompts</small></label><input id="pit" data-tags value="${esc(w.imageTags||'')}" placeholder="e.g. 1boy, short black hair, brown eyes, knight armor" autocapitalize="off">
     <label class="f">Prompt preset<small>used in this persona's chats</small></label><select id="ppr"><option value="">Use the default (${esc(S.settings.prompts.find(x=>x.id===S.settings.defaultPrompt)?.name||'none')})</option>${S.settings.prompts.map(x=>`<option value="${x.id}" ${w.promptId===x.id?'selected':''}>${esc(x.name)}</option>`).join('')}</select>
     <div class="hint">Tip: make an “Observer” persona that uses the Observer / narrator preset, and pick it whenever you want to watch instead of play.</div>
     <br><br><div class="row"><button class="btn" data-act="save" style="flex:2">Save</button>${!def&&!isNew?'<button class="btn ghost" data-act="def" style="flex:1">Make default</button>':''}</div>
@@ -4735,6 +4750,8 @@ function vSettings(){
     <div class="hint">All in one box: the AI writes one “base | character | character” prompt plus undesired, with no per-character undesired or positions.</div>
     <label class="f">Prompt style</label><select data-k="imgFormat">${[['mixed','Tags + one short sentence'],['few','Tags + a few sentences'],['tags','Tags only'],['natural','Natural sentences']].map(([v,l])=>`<option value="${v}" ${st.imgFormat===v?'selected':''}>${l}</option>`).join('')}</select>
     <div class="hint">“A few sentences” describes actions and positions better, especially in all-in-one-box prompts, but uses more prompt space.</div>
+    ${tg('tagSuggest','Suggest tags while typing','In prompt boxes, Looks and presets: NovelAI\'s own tag list, as on its site, with how often each tag is used. Works without a NovelAI token.')}
+    ${tg('tagHighlight','Color emphasis','1.3::tag:: and {tag} show warm (stronger), 0.7::tag:: and [tag] blue (weaker), -1::tag:: red (removed). Takes effect when a page opens.')}
     ${tg('imgMotion','Add motion tags for movement','Motion lines, speed lines, motion blur and similar whenever something moves; ^^^ for sudden reactions.')}
     ${tg('imgFx','Add emotion and manga-symbol tags','Anger vein, gloom lines, sweatdrops, blush, sparkling eyes, smug face and similar to match each character\'s feelings.')}
     <label class="f">Text in images<small>speech / thought bubbles, signs</small></label><select data-k="imgText">${[['ask','Only when I ask'],['auto','When characters speak or think'],['off','Never']].map(([v,l])=>`<option value="${v}" ${(st.imgText||'ask')===v?'selected':''}>${l}</option>`).join('')}</select>
@@ -5021,6 +5038,85 @@ async function importBackup(j){
   await saveChars();await savePersonas();await saveBooks();await saveSettings();applyFont();toast('Backup imported');route();
 }
 
+/* ---------- prompt boxes like NovelAI's: emphasis colors and tag suggestions while typing ---------- */
+// A textarea or input with data-tags gets tag suggestions; data-tags="hl" also colors emphasis: 1.3::tag::, -1::tag::, {tag}, [tag].
+const tagCache=new Map();
+// NovelAI's own tag list (what its site suggests): tags with how often they're used, capped at 10000
+function suggestTags(q){
+  q=q.toLowerCase().replace(/_/g,' ').replace(/\s+/g,' ').trim();if(q.length<2)return Promise.resolve([]);
+  if(!tagCache.has(q)){
+    const model=S.settings.imgModel==='v45'?'nai-diffusion-4-5-full':'nai-diffusion-5-full';
+    tagCache.set(q,fetch(`${naiUrl()}/ai/generate-image/suggest-tags?model=${model}&prompt=${encodeURIComponent(q)}`,naiOn()?{headers:{Authorization:'Bearer '+S.settings.naiToken.trim()}}:{})
+      .then(r=>r.ok?r.json():{tags:[]}).then(j=>arr(j.tags).filter(t=>t?.tag).slice(0,10)).catch(()=>{tagCache.delete(q);return []}));
+  }
+  return tagCache.get(q);
+}
+const tagCount=n=>n>=10000?'10k+':n>=1000?(n/1000).toFixed(1).replace(/\.0$/,'')+'k':String(n||'');
+// the prompt as HTML, colored by the weight NovelAI gives each part: warm = stronger, blue = weaker, red = negative
+function emphasisHTML(s){
+  s=String(s||'');let out='',run='',cur=1;const stack=[];
+  const weight=()=>stack.reduce((a,x)=>a*x.w,1);
+  const flush=()=>{if(!run)return;out+=cur===1?esc(run):`<span class="${cur<=0?'em-neg':cur>1?'em-up':'em-dn'}" style="--em:${cur<=0?1:Math.min(1,.25+Math.abs(Math.log(cur))/Math.log(1.6)).toFixed(2)}">${esc(run)}</span>`;run=''};
+  const sym=t=>{flush();out+=`<span class="em-sym">${esc(t)}</span>`};
+  for(let i=0;i<s.length;){
+    const rest=s.slice(i),top=stack.at(-1);let m;
+    if(top?.num&&rest.startsWith('::')){sym('::');stack.pop();cur=weight();i+=2;continue}
+    if((m=rest.match(/^(-?\d+(?:\.\d+)?)::/))&&(i===0||/[\s,|{[(]/.test(s[i-1]))){sym(m[0]);stack.push({w:+m[1],num:true});cur=weight();i+=m[0].length;continue}
+    const c=s[i];
+    if(c==='{'||c==='['){sym(c);stack.push({w:c==='{'?1.05:1/1.05,br:c});cur=weight();i++;continue}
+    if((c==='}'&&top?.br==='{')||(c===']'&&top?.br==='[')){sym(c);stack.pop();cur=weight();i++;continue}
+    run+=c;i++;
+  }
+  flush();return out+'​'; // the extra character keeps the height of a last empty line
+}
+function enhanceTagField(el){
+  if(el.dataset.tagged)return;el.dataset.tagged='1';
+  const hl=el.dataset.tags==='hl'&&el.tagName==='TEXTAREA'&&S.settings.tagHighlight!==false;
+  const wrap=document.createElement('div');wrap.className='tagbox'+(hl?' hl':'');el.before(wrap);
+  if(hl){
+    // a copy of the text behind the (see-through) box, with the colors
+    const bg=document.createElement('div');bg.className='hl-bg';wrap.append(bg);
+    const cs=getComputedStyle(el);
+    for(const k of ['fontFamily','fontSize','fontWeight','lineHeight','letterSpacing','paddingTop','paddingRight','paddingBottom','paddingLeft','borderTopWidth','borderRightWidth','borderBottomWidth','borderLeftWidth','borderRadius'])bg.style[k]=cs[k];
+    el._paint=()=>{if(el._hlv!==el.value){el._hlv=el.value;bg.innerHTML=emphasisHTML(el.value)}bg.scrollTop=el.scrollTop};
+    el.addEventListener('scroll',()=>{bg.scrollTop=el.scrollTop});
+  }
+  wrap.append(el);el._paint?.();
+  const list=document.createElement('div');list.className='tag-sug';list.hidden=true;wrap.append(list);
+  let items=[],sel=-1,timer=0;
+  // the tag being typed: from the last separator (or weight like "1.2::") up to the cursor
+  const fragment=()=>{
+    const v=el.value,c=el.selectionStart;if(c==null||c!==el.selectionEnd)return null;
+    if(/(^|\n)\s*Text:/i.test(v.slice(0,c)))return null; // words for the picture, not tags
+    let a=c;while(a>0&&!/[,|\n{}\[\]]/.test(v[a-1]))a--;
+    const pre=v.slice(a,c).match(/^\s*(-?\d+(?:\.\d+)?::)?\s*/);a+=pre[0].length;
+    const q=v.slice(a,c);return q.includes('::')||q.trim().length<2?null:{a,c,q,weighted:!!pre[1]}};
+  const close=()=>{list.hidden=true;items=[];sel=-1};
+  const mark=()=>$$('.tag-it',list).forEach((b,i)=>b.classList.toggle('on',i===sel));
+  const show=async()=>{
+    const f=fragment();if(!f||S.settings.tagSuggest===false)return close();
+    const r=await suggestTags(f.q);if(document.activeElement!==el||fragment()?.q!==f.q)return;
+    items=r;if(!items.length)return close();sel=-1;
+    list.innerHTML=items.map((x,i)=>`<button type="button" class="tag-it" data-i="${i}"><span>${esc(x.tag)}</span><small>${tagCount(x.count)}</small></button>`).join('');list.hidden=false};
+  const pick=i=>{
+    const x=items[i],f=fragment();if(!x||!f)return;const v=el.value,rest=v.slice(f.c).replace(/^[^,|\n{}\[\]:]*/,''); // the rest of a half-typed word goes
+    // right after "1.2::" the weight is still open, so no comma: add more tags or close it with ::
+    const ins=x.tag+(f.weighted||/^\s*([,|\n}\]]|::)/.test(rest)?'':', ');
+    el.value=v.slice(0,f.a)+ins+rest;const pos=f.a+ins.length;el.setSelectionRange(pos,pos);
+    close();el.dispatchEvent(new Event('input',{bubbles:true}));el.focus()};
+  list.addEventListener('pointerdown',e=>{const b=e.target.closest('.tag-it');if(!b)return;e.preventDefault();pick(+b.dataset.i)});
+  el.addEventListener('input',e=>{el._paint?.();if(e.isTrusted===false&&!e.inputType)return;clearTimeout(timer);timer=setTimeout(show,180)});
+  el.addEventListener('keydown',e=>{
+    if(list.hidden)return;
+    if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();sel=(sel+(e.key==='ArrowDown'?1:-1)+items.length)%items.length;mark()}
+    else if((e.key==='Enter'||e.key==='Tab')&&sel>=0){e.preventDefault();pick(sel)}
+    else if(e.key==='Escape'){e.preventDefault();close()}});
+  el.addEventListener('blur',()=>setTimeout(close,150));
+}
+const enhanceIn=n=>{if(n.nodeType!==1)return;if(n.matches('[data-tags]'))enhanceTagField(n);n.querySelectorAll('[data-tags]:not([data-tagged])').forEach(enhanceTagField)};
+new MutationObserver(ms=>{for(const m of ms)m.addedNodes.forEach(enhanceIn)}).observe(document.body,{childList:true,subtree:true});
+// boxes filled by the app (an import, the AI) don't send input events: repaint them when their text changes
+setInterval(()=>$$('textarea[data-tagged]').forEach(el=>el._paint?.()),400);
 /* ---------- boot ---------- */
 (async()=>{
   await store.init();
