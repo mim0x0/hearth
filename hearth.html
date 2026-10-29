@@ -361,7 +361,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.22.1',HEARTH_DATE='2026-10-28';
+const HEARTH_VERSION='1.23.0',HEARTH_DATE='2026-10-29';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -4703,7 +4703,8 @@ function vSettings(){
   <div class="sec"><h3>Backup</h3><div class="box"><p class="small muted" style="margin-top:0">Everything is stored only in this browser on this device. Keep backups, especially before clearing browser data or moving the app file.</p>
     <div class="small" id="stor-info" style="margin-bottom:10px">Checking storage…</div>
     <label class="f" style="margin-top:0">Auto backup</label><select data-k="autoBackup">${[[0,'Off'],[1,'Every day'],[3,'Every 3 days'],[7,'Every week']].map(([v,l])=>`<option value="${v}" ${+st.autoBackup===v?'selected':''}>${l}</option>`).join('')}</select>
-    <div class="hint">When a backup is due, the next time you tap anywhere in the app a backup file is saved to your Downloads folder. Last backup: <b id="lastbk">${st.lastBackup?new Date(st.lastBackup).toLocaleString():'never'}</b></div>
+    <div class="hint">When a backup is due, the next time you tap anywhere in the app a backup file is saved to your backup folder. Last backup: <b id="lastbk">${st.lastBackup?new Date(st.lastBackup).toLocaleString():'never'}</b></div>
+    <label class="f">Backup folder</label><div id="bkdir"><div class="small muted">…</div></div>
     ${tg('backupKeys','Include API keys in auto backups','Leave off if you might share backup files.')}
     <div class="row" style="margin-top:8px"><button class="btn ghost" data-act="backup" style="flex:1">${I.exp} Export backup</button><button class="btn ghost" data-act="restore" style="flex:1">${I.imp} Import backup</button></div>
     <br><button class="btn danger block" data-act="wipe">Delete all data</button></div></div>
@@ -4728,6 +4729,7 @@ function vSettings(){
     el.innerHTML=`<b>Where:</b> ${tempLink()?'<span class="err">a temporary link</span>: refreshing won\'t work and the data may not be kept. <a href="#" data-act="tb-how" style="color:var(--accent)">How to fix</a>':location.protocol==='file:'?'a file on this device (keep opening the same file)':esc(location.host)}
       <br><b>Kept permanently:</b> ${p===true?'<span class="okc">yes</span>, the browser won\'t clear it to free space':p===false?`not yet <button class="btn ghost sm" data-act="st-keep">Ask the browser</button>`:'unknown (this browser doesn\'t say)'}${use}`;
   })();
+  const drawBkDir=async()=>{const h=await backupDirHTML(),el=$('#bkdir',view);if(el)el.innerHTML=h};drawBkDir();
   usageList().then(log=>{const el=$('#use-sum');if(!el)return;const d=new Date(),day=new Date(d.getFullYear(),d.getMonth(),d.getDate()).getTime(),mon=new Date(d.getFullYear(),d.getMonth(),1).getTime();
     el.innerHTML=`Today: <b>${usageSum(log.filter(e=>e.t>=day)).text}</b><br>This month: <b>${usageSum(log.filter(e=>e.t>=mon)).text}</b>`});
   H={usage:()=>openUsage(),personas:()=>go('#/profile'),api:b=>editApi(st.apis.find(a=>a.id===b.dataset.id)),'api-new':()=>editApi(null),
@@ -4779,6 +4781,8 @@ function vSettings(){
     prompt:b=>editPrompt(st.prompts.find(p=>p.id===b.dataset.id)),
     'prompt-new':()=>editPrompt({id:uid(),name:'',text:''},true),
     'prompt-restore':async()=>{const add=BUILTIN_PROMPTS.filter(b=>!st.prompts.some(p=>p.id===b.id));st.prompts.push(...clone(add));await saveSettings();toast(add.length?`Restored ${add.length} preset${add.length>1?'s':''}`:'All built-in presets are already there');vSettings()},
+    'bkd-pick':async()=>{if(await chooseBackupDir())drawBkDir()},'bkd-new':async()=>{if(await newBackupSubfolder())drawBkDir()},'bkd-restore':()=>restoreFromDir(),
+    'bkd-off':async()=>{await setBackupDir(null);drawBkDir();toast('Backups will go to Downloads')},
     backup:exportBackup,restore:async()=>{const [f]=await pickFiles('.json,application/json');if(!f)return;try{await importBackup(JSON.parse(await readAs(f,'readAsText')))}catch(e){toast('Import failed: '+e.message,5000)}},
     wipe:async()=>{if(!confirm('Delete ALL characters, chats, personas and settings on this device?'))return;if(!confirm('Really? Export a backup first if unsure.'))return;await store.clear();location.hash='';location.reload()}};
   const addGlobalBook=async nb=>{if(!nb)return;S.lorebooks.push(nb);await saveBooks();toast(`Added “${nb.name}” (${nb.entries.length} entr${nb.entries.length===1?"y":"ies"})`);vSettings()};
@@ -4840,14 +4844,64 @@ async function allPictures(){
   for(const id of ids){const d=await getImgData(id);if(d)out.push({id,data:d})}
   return out;
 }
+// A folder you picked for backups (Chrome and Edge on a computer can do this); otherwise backups go to Downloads.
+// The folder is remembered in this browser only (not in backups), so each device picks its own.
+const canPickFolder=()=>'showDirectoryPicker' in window;
+let bkDir=null;
+async function backupDir(){if(bkDir===null){let h;try{if(!store.ls)h=await store.get('bkdir')}catch{}bkDir=h||false}return bkDir||null}
+async function setBackupDir(h){bkDir=h||false;if(!store.ls){if(h)await store.set('bkdir',h);else await store.del('bkdir')}}
+// the browser may ask again after a restart; that needs a fresh tap, so call this before anything slow
+async function dirAllowed(h){try{if(await h.queryPermission({mode:'readwrite'})==='granted')return true;return await h.requestPermission({mode:'readwrite'})==='granted'}catch{return false}}
+async function saveInDir(h,name,text){
+  let n=name;for(let i=2;;i++){try{await h.getFileHandle(n);n=name.replace(/\.json$/,`-${i}.json`)}catch{break}}
+  const w=await (await h.getFileHandle(n,{create:true})).createWritable();await w.write(text);await w.close();return n;
+}
+async function chooseBackupDir(){
+  try{const h=await showDirectoryPicker({id:'hearth-backups',mode:'readwrite',startIn:'documents'});await setBackupDir(h);toast(`Backups will be saved in “${h.name}”`,3500);return h}
+  catch(e){if(e.name!=='AbortError')toast('Could not use that folder: '+e.message,5000)}
+}
+async function newBackupSubfolder(){
+  const dir=await backupDir();if(!dir||!await dirAllowed(dir))return;
+  const n=(prompt(`Name of the new folder inside “${dir.name}”:`,'Hearth backups')||'').trim().replace(/[\\/:*?"<>|]/g,'');if(!n)return;
+  try{const h=await dir.getDirectoryHandle(n,{create:true});await setBackupDir(h);toast(`Backups will be saved in “${h.name}”`,3500);return h}
+  catch(e){toast('Could not make the folder: '+e.message,5000)}
+}
+// the Hearth backups in the folder, newest first; tap one to import it
+async function restoreFromDir(){
+  const dir=await backupDir();if(!dir)return;
+  if(!await dirAllowed(dir))return toast('The browser did not allow reading the folder',4000);
+  const files=[];
+  try{for await(const h of dir.values())if(h.kind==='file'&&/^hearth-backup.*\.json$/i.test(h.name)){const x=await h.getFile();files.push({h,name:h.name,size:x.size,at:x.lastModified})}}
+  catch(e){return toast('Could not read the folder: '+e.message,5000)}
+  files.sort((a,b)=>b.at-a.at);
+  openSheet(`<h2>Restore from “${esc(dir.name)}”</h2>${files.length?`<div class="list">${files.map((x,i)=>`<div class="li" data-act="pick" data-i="${i}">${I.imp}<div class="lt"><b>${esc(x.name)}</b><span>${new Date(x.at).toLocaleString()} · ${fmtSize(x.size)}</span></div></div>`).join('')}</div>`:'<p class="muted">No Hearth backups in this folder yet.</p>'}
+    <div class="sheet-foot"><button class="btn ghost block" data-act="close">Close</button></div>`,{
+    pick:async b=>{const x=files[+b.dataset.i];closeSheet();try{await importBackup(JSON.parse(await (await x.h.getFile()).text()))}catch(e){toast('Import failed: '+e.message,5000)}}});
+}
+async function backupDirHTML(){
+  if(!canPickFolder())return `<div class="hint" style="margin-top:0">This browser saves backups to its Downloads folder. To pick a folder, open Hearth in Chrome or Edge on a computer. On a phone, the browser's download settings may let you choose where files go.</div>`;
+  const dir=await backupDir();
+  return dir?`<div class="small">${I.folder} Saving in <b>${esc(dir.name)}</b></div>
+    <div class="row" style="margin-top:6px;flex-wrap:wrap"><button class="btn ghost sm" data-act="bkd-pick">Change</button><button class="btn ghost sm" data-act="bkd-new">${I.plus} New folder inside</button><button class="btn ghost sm" data-act="bkd-restore">${I.imp} Restore from it</button><button class="btn ghost sm" data-act="bkd-off">Use Downloads</button></div>`
+    :`<div class="small">Downloads folder (the browser decides)</div><button class="btn ghost sm" data-act="bkd-pick" style="margin-top:6px">${I.folder} Choose a folder</button>
+    <div class="hint">The folder picker also lets you make a new folder.</div>`;
+}
 async function exportBackup(auto){
   auto=auto===true;
+  // ask for the folder first, while the tap still counts
+  const dir=await backupDir(),dirOk=!!dir&&await dirAllowed(dir);
   const inclKeys=auto?!!S.settings.backupKeys:confirm('Include your API keys in the backup?\n\nOK = include keys\nCancel = leave keys out (safer to share)');
   const chats=[];for(const c of S.chatIndex){const x=await loadChat(c.id);if(x)chats.push(x)}
   const settings=clone(S.settings);if(!inclKeys){settings.apis.forEach(a=>a.key='');settings.naiToken=''}
-  download(`hearth-backup-${new Date().toISOString().slice(0,10)}${auto?'-auto':''}.json`,JSON.stringify({hearthBackup:1,exported:Date.now(),chars:S.chars,personas:S.personas,lorebooks:S.lorebooks,settings,chats,images:await allPictures(),library:await libData()}));
+  const name=`hearth-backup-${new Date().toISOString().slice(0,10)}${auto?'-auto':''}.json`,text=JSON.stringify({hearthBackup:1,exported:Date.now(),chars:S.chars,personas:S.personas,lorebooks:S.lorebooks,settings,chats,images:await allPictures(),library:await libData()});
+  let where='';
+  if(dirOk){try{where=`“${dir.name}” as ${await saveInDir(dir,name,text)}`}catch(e){toast(`Could not save in “${dir.name}” (${e.message}), so it went to Downloads`,5000)}}
+  else if(dir)toast(`The browser did not allow saving in “${dir.name}”, so it went to Downloads`,5000);
+  if(!where){download(name,text);where='your Downloads folder'}
+  else if(!auto)toast('Backup saved in '+where,4000);
   S.settings.lastBackup=Date.now();await saveSettings();
   const lb=$('#lastbk');if(lb)lb.textContent=new Date().toLocaleString();
+  return where;
 }
 let backupArmed=false;
 const backupDue=()=>+S.settings.autoBackup>0&&Date.now()-(+S.settings.lastBackup||0)>=+S.settings.autoBackup*864e5;
@@ -4855,7 +4909,7 @@ function armAutoBackup(){
   if(backupArmed||!backupDue())return;backupArmed=true;
   // browsers only allow a download right after a tap, so save on the next one
   document.addEventListener('click',async()=>{backupArmed=false;if(!backupDue())return;
-    try{await exportBackup(true);toast('Auto backup saved to your Downloads folder',4000)}catch(e){toast('Auto backup failed: '+e.message,5000)}},{once:true,capture:true});
+    try{toast('Auto backup saved in '+await exportBackup(true),4000)}catch(e){toast('Auto backup failed: '+e.message,5000)}},{once:true,capture:true});
 }
 async function importBackup(j){
   if(!j.hearthBackup)throw new Error('This is not a Hearth backup file');
