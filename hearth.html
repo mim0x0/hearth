@@ -377,7 +377,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.26.1',HEARTH_DATE='2026-10-29';
+const HEARTH_VERSION='1.27.0',HEARTH_DATE='2026-10-29';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -2918,6 +2918,25 @@ Return one JSON object only: {"panels":[${panelJson(fmt)}, ...]} with the same n
   const out=cleanPanels(j).map(p=>fixUndesired(p));if(panels.every(p=>p.own))out.forEach(p=>{p.own=true;p.file=true});
   return {panels:out,usage};
 }
+// A provider's content filter refusing the request (Z.AI's "sensitive content", OpenRouter's moderation and the like).
+const filterRefusal=e=>!!e?.status&&[400,403,422,451].includes(e.status)&&/sensitive|unsafe|moderat|flagged|1301|policy|safety|inappropriate|content.?filter|prohibited/i.test(e.message||'');
+// Change the prompt sends the whole current prompt, undesired content included, and undesired lists are full of words
+// filters dislike. When the filter refuses, try once without the undesired content and put it back unchanged after.
+async function changeWithFilter(chat,char,panel,change,msg){
+  try{return await editImagePrompt(chat,char,[panel],change)}
+  catch(e){
+    const hasUc=panel.undesired.trim()||panel.characters.some(c=>c.undesired.trim());
+    if(!filterRefusal(e))throw e;
+    const why=`Your AI's provider refused it with its content filter (${e.message.slice(0,160)}). "Write the prompt" works because it only sends your short description; "Change the prompt" also sends the whole prompt you have now.`;
+    if(!hasUc)throw new Error(`${why} Try the change with another model (Settings → API / Proxy), or edit the prompt by hand.`);
+    if(msg){msg.className='small muted';msg.textContent='The provider refused the undesired content; trying again without it…'}
+    const bare={...panel,undesired:'',characters:panel.characters.map(c=>({...c,undesired:''}))};
+    let r;try{r=await editImagePrompt(chat,char,[bare],change)}catch(e2){if(filterRefusal(e2))throw new Error(`${why} It refused again without the undesired content, so it's the prompt itself. Try another model for this, or edit the prompt by hand.`);throw e2}
+    const p=r.panels[0];p.undesired=panel.undesired;p.characters.forEach((c,i)=>{if(panel.characters[i])c.undesired=panel.characters[i].undesired});
+    r.note='Your AI\'s provider refused the undesired content, so it was left out of the change and kept as it was.';
+    return r;
+  }
+}
 // Puts the user's characters in a prompt in place of the people in it. who[i] is the character (or persona) for
 // character box i, or null to keep that person; with no character boxes, who[0] is the main person in the base prompt.
 // The AI rewrites the people; then each one's Looks are put in word for word. Without an API only the Looks swap is done.
@@ -3440,19 +3459,25 @@ function drawBoardRun(chat,run=boardBusy.get(chat.id)){
     :`<button class="btn ghost" data-act="close" style="flex:1">Close</button>${run.items.some(x=>!x.p)?`<button class="btn ghost" data-act="retry" style="flex:1">${I.regen} Write the rest</button>`:''}<button class="btn" data-act="open" style="flex:1">${I.copy} See prompts</button>`;
   return true;
 }
-function editImgPreset(p,isNew){
+// after: what to redraw once the preset is saved (the Settings page, or the Images page)
+function editImgPreset(p,isNew,after=()=>vSettings()){
   const st=S.settings,w={...p};
+  const readIn=()=>{w.name=$('#ipn').value.trim()||'Preset';w.artist=$('#ipa').value.trim();w.footer=$('#ipf').value.trim();w.uc=$('#ipu').value.trim()};
   openSheet(`<h2>${isNew?'New image preset':'Edit image preset'}</h2>
     <label class="f">Name</label><input id="ipn" value="${esc(w.name)}" placeholder="e.g. Clean anime">
     <label class="f">Artist tags<small>added at the start of the base prompt</small></label><textarea id="ipa" data-tags="hl" rows="2" placeholder="e.g. artist:name, artist:other" autocapitalize="off">${esc(w.artist)}</textarea>
     <label class="f">Base prompt bottom lines<small>added at the end, exactly as written</small></label><textarea id="ipf" rows="3" placeholder="e.g. make the lines clear, character expression clear">${esc(w.footer)}</textarea>
     <label class="f">Undesired tags<small>added to Undesired Content</small></label><textarea id="ipu" data-tags="hl" rows="2" placeholder="e.g. bad hands, extra fingers, blurry" autocapitalize="off">${esc(w.uc)}</textarea>
     <div class="sheet-foot row"><button class="btn ghost" data-act="close" style="flex:1">Cancel</button>${!isNew&&st.imgPreset!==w.id?'<button class="btn ghost" data-act="use" style="flex:1">Use</button>':''}<button class="btn" data-act="save" style="flex:1">${I.check} Save</button></div>
-    ${!isNew&&st.imgPresets.length>1?'<button class="btn danger block" data-act="del">Delete preset</button>':''}`,{
-    save:async()=>{w.name=$('#ipn').value.trim()||'Preset';w.artist=$('#ipa').value.trim();w.footer=$('#ipf').value.trim();w.uc=$('#ipu').value.trim();
-      const i=st.imgPresets.findIndex(x=>x.id===w.id);if(i<0){st.imgPresets.push(w);st.imgPreset=w.id}else st.imgPresets[i]=w;await saveSettings();closeSheet();vSettings()},
-    use:async()=>{st.imgPreset=w.id;await saveSettings();closeSheet();vSettings()},
-    del:async()=>{if(!confirm('Delete this preset?'))return;st.imgPresets=st.imgPresets.filter(x=>x.id!==w.id);if(st.imgPreset===w.id)st.imgPreset=st.imgPresets[0].id;await saveSettings();closeSheet();vSettings()}
+    ${isNew?'':`<button class="btn ghost block" data-act="dup" style="margin-top:8px">${I.copy} Duplicate</button>`}
+    ${!isNew&&st.imgPresets.length>1?'<button class="btn danger block" data-act="del" style="margin-top:8px">Delete preset</button>':''}`,{
+    save:async()=>{readIn();
+      const i=st.imgPresets.findIndex(x=>x.id===w.id);if(i<0){st.imgPresets.push(w);st.imgPreset=w.id}else st.imgPresets[i]=w;await saveSettings();closeSheet();after()},
+    use:async()=>{st.imgPreset=w.id;await saveSettings();closeSheet();after()},
+    // a copy of what's in the boxes now (the original keeps its saved tags), used from now on and opened to edit
+    dup:async()=>{readIn();const c=newImgPreset({...w,id:undefined,name:w.name+' (copy)'});c.id=uid();
+      st.imgPresets.splice(st.imgPresets.findIndex(x=>x.id===w.id)+1,0,c);st.imgPreset=c.id;await saveSettings();toast(`Made “${c.name}” and switched to it`);editImgPreset(c,false,after);after()},
+    del:async()=>{if(!confirm('Delete this preset?'))return;st.imgPresets=st.imgPresets.filter(x=>x.id!==w.id);if(st.imgPreset===w.id)st.imgPreset=st.imgPresets[0].id;await saveSettings();closeSheet();after()}
   },{modal:true});
 }
 /* image story chats: the user describes scenes, the AI answers with prompts and suggests the next scene */
@@ -4417,7 +4442,7 @@ async function vImages(){
     <button class="btn ghost sm" data-act="cadd">${I.plus} Add character</button>
     <label class="f">Character positions</label><div id="ig-pos">${posPadHTML(f,-1)}</div>
     <div class="tg"><div>Add my preset's tags<div class="hint">Artist tags, base lines and undesired tags of your image preset.</div></div><label class="sw"><input type="checkbox" id="ig-pr" ${f.usePreset?'checked':''}><span></span></label></div>
-    <div class="row"><span class="small muted">Preset</span>${presetSelect()}</div>
+    <div class="row"><span class="small muted">Preset</span>${presetSelect()}<button class="btn ghost sm" data-act="pred" title="Edit this preset">${I.edit} Edit</button><button class="btn ghost sm" data-act="prdup" title="Make a copy to change">${I.copy} Duplicate</button><button class="btn ghost sm" data-act="prnew" title="New preset">${I.plus}</button></div>
     <details style="margin-top:10px"><summary class="small" style="cursor:pointer">Image settings: ${st.imgModel==='v45'?'V4.5':'V5'} · ${`${naiSettings().w}×${naiSettings().h}`} · ${naiSettings().steps} steps${st.naiSeed?` · seed ${st.naiSeed}`:''}</summary>
       <label class="f">Model</label>${opt('imgModel',[['v5','NovelAI Diffusion V5'],['v45','NovelAI Diffusion V4.5']],st.imgModel==='v45'?'v45':'v5')}
       <label class="f">Size</label>${opt('naiSize',naiSizeList(),st.naiSize||'portrait')}
@@ -4531,16 +4556,21 @@ async function vImages(){
     const {chat,char}=imgAiCtx(pg.who);b.disabled=true;msg.className='small muted';msg.textContent=change?'Changing the prompt…':'Writing the prompt…';
     try{
       let r;
-      if(change)r=await editImagePrompt(chat,char,[formPanel({...f,usePreset:false})],d);
+      if(change)r=await changeWithFilter(chat,char,formPanel({...f,usePreset:false}),d,msg);
       else{const {j,usage}=await aiJson(SYS_NAI,`Write the prompt for one image the user describes.
 THE USER'S DESCRIPTION: ${d}
 ${novelRules(chat,char,{fmt:'sections',lore:sceneLore(chat,char,[d])})}
 Return one JSON object only: ${panelJson('sections')}`,undefined,1500);r={panels:cleanPanels(j).map(p=>finishPanel(p,chat,char)),usage}}
-      fill(r.panels[0]);msg.className='small okc';msg.textContent=`${change?'Changed':'Written'}. Check it, then tap Generate. ${usageText(r.usage)}`;
+      fill(r.panels[0]);msg.className='small okc';msg.textContent=`${change?'Changed':'Written'}. Check it, then tap Generate. ${r.note?r.note+' ':''}${usageText(r.usage)}`;
     }catch(e){msg.className='small err';msg.textContent=e.message}finally{b.disabled=false}};
   H={toset:()=>go('#/settings'),lib:()=>openLibrary(),
     who:b=>{const id=b.dataset.id,on=!pg.who.includes(id);pg.who=on?[...pg.who,id]:pg.who.filter(x=>x!==id);b.classList.toggle('on',on);saveImgPage()},
     aiw:b=>aiRun(b,false),aic:b=>aiRun(b,true),
+    // the image preset, edited or copied right here; the page redraws with what you typed kept
+    pred:()=>{read();ensureImgPresets();editImgPreset(imgPreset(),false,()=>vImages())},
+    prnew:()=>{read();editImgPreset(newImgPreset(),true,()=>vImages())},
+    prdup:async()=>{read();ensureImgPresets();const st=S.settings,src=imgPreset(),c={...src,id:uid(),name:src.name+' (copy)'};
+      st.imgPresets.splice(st.imgPresets.indexOf(src)+1,0,c);st.imgPreset=c.id;await saveSettings();vImages();toast(`Made “${c.name}” and switched to it`);editImgPreset(c,false,()=>vImages())},
     cadd:()=>{read();if(f.chars.length>=(S.settings.imgModel==='v45'?6:22))return toast('That is as many characters as the model takes');f.chars.push({pos:posAIOf(f)?'':{x:.5,y:.5},prompt:'',uc:''});drawChars();saveImgPage();const ls=$$('.ig-cpr',view);ls[ls.length-1]?.focus()},
     crm:b=>{read();f.chars.splice(+b.dataset.k,1);drawChars();saveImgPage()},
     psel:b=>{const k=+b.dataset.k;if(b.classList.contains('ig-dot')&&k===posSel)return; // a tap on the picked dot is a move, not an unpick
