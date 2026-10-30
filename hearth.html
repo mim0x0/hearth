@@ -377,7 +377,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.27.1',HEARTH_DATE='2026-10-29';
+const HEARTH_VERSION='1.28.0',HEARTH_DATE='2026-10-30';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -4811,7 +4811,8 @@ function vSettings(){
   <div class="sec"><h3>NovelAI images</h3><div class="box">
     <p class="hint" style="margin-top:0">Make the pictures right in Hearth instead of copying prompts: a Generate button shows under every image prompt and in image stories. It uses your NovelAI subscription and Anlas, like NovelAI's own site, and one tap makes one picture. The model is the one under Image prompts (${st.imgModel==='v45'?'V4.5':'V5'}).</p>
     <label class="f">NovelAI API token<small>on NovelAI: Account Settings → Get Persistent API Token</small></label><input type="password" data-k="naiToken" value="${esc(st.naiToken||'')}" placeholder="pst-…" autocomplete="off" autocapitalize="off" spellcheck="false">
-    <div class="row" style="margin-top:6px"><button class="btn ghost sm" data-act="naicheck">${I.check} Check token</button></div><div id="nai-res" class="small"></div>
+    <div class="row" style="margin-top:6px"><button class="btn ghost sm" data-act="naicheck">${I.check} Check token</button>${st.naiToken?.trim()?`<button class="btn ghost sm" data-act="naichat">${I.chat} Use it for chats too</button>`:''}</div><div id="nai-res" class="small"></div>
+    ${st.naiToken?.trim()?`<div class="hint">“Use it for chats too” adds a connection to NovelAI's writing models with this token, under API / Proxy. Pick a model there.</div>`:''}
     <label class="f">Size</label><select data-k="naiSize">${naiSizeList().map(([v,l])=>`<option value="${v}" ${(st.naiSize||'portrait')===v?'selected':''}>${l}</option>`).join('')}</select>
     <div class="grid2"><div><label class="f">Steps</label><input type="number" data-k="naiSteps" min="1" max="50" value="${st.naiSteps||23}"></div>
     <div><label class="f">Prompt guidance<small>empty = default</small></label><input type="number" data-k="naiScale" min="0" max="10" step="0.1" value="${st.naiScale||''}" placeholder="${st.imgModel==='v45'?5:7}"></div></div>
@@ -4889,6 +4890,10 @@ function vSettings(){
     'book-import':async()=>addGlobalBook(await pickBookFile()),
     'book-paste':()=>openPasteBook(addGlobalBook),
     ipr:b=>editImgPreset(st.imgPresets.find(p=>p.id===b.dataset.id)),
+    // a chat connection to NovelAI's writing models with the same token; an existing one gets the token copied in instead
+    naichat:()=>{const tok=st.naiToken.trim(),old=st.apis.find(a=>/text\.novelai\.net/i.test(a.url||''));
+      if(old)editApi({...old,key:tok});else editApi(null,{name:'NovelAI',url:NAI_TEXT_URL,key:tok});
+      toast(old?'Your NovelAI connection has the token now. Tap Save.':'Pick a model (Fetch models), then tap Save & use.',4500)},
     naicheck:async b=>{
       const tok=$('[data-k=naiToken]',view).value.trim(),r=$('#nai-res');if(!tok){r.innerHTML='<span class="err">Paste your token first.</span>';return}
       b.disabled=true;r.className='small muted';r.textContent='Asking NovelAI…';
@@ -4952,14 +4957,17 @@ function editPrompt(p,isNew){
     del:async()=>{if(!confirm('Delete this prompt preset? Personas and chats using it will switch to the default.'))return;st.prompts=st.prompts.filter(x=>x.id!==p.id);if(st.defaultPrompt===p.id)st.defaultPrompt=st.prompts[0].id;await saveSettings();closeSheet();vSettings()}
   },{modal:true});
 }
-function editApi(a){
-  const isNew=!a;const w=a?{...a}:{id:uid(),name:'',url:'',key:'',model:''};const st=S.settings;
+// pre: what a new connection starts with (e.g. NovelAI's writing address and the NovelAI token)
+const NAI_TEXT_URL='https://text.novelai.net/oa/v1';
+function editApi(a,pre={}){
+  const isNew=!a;const w=a?{...a}:{id:uid(),name:'',url:'',key:'',model:'',...pre};const st=S.settings;
   openSheet(`<h2>${isNew?'Add connection':'Edit connection'}</h2>
     <label class="f">Name</label><input id="an" value="${esc(w.name)}" placeholder="e.g. My proxy">
     <label class="f">Proxy / API URL</label><input id="au" type="url" value="${esc(w.url)}" placeholder="https://…/v1 or …/v1/chat/completions" autocapitalize="off">
-    <div class="chips"><span class="chip" data-act="preset" data-u="https://openrouter.ai/api/v1">OpenRouter</span><span class="chip" data-act="preset" data-u="https://api.deepseek.com/v1">DeepSeek</span><span class="chip" data-act="preset" data-u="https://api.openai.com/v1">OpenAI</span></div>
+    <div class="chips"><span class="chip" data-act="preset" data-u="https://openrouter.ai/api/v1">OpenRouter</span><span class="chip" data-act="preset" data-u="https://api.deepseek.com/v1">DeepSeek</span><span class="chip" data-act="preset" data-u="https://api.openai.com/v1">OpenAI</span><span class="chip" data-act="preset" data-u="${NAI_TEXT_URL}" data-nai="1">NovelAI (writing)</span></div>
     <div class="hint" id="aurl"></div>
     <label class="f">API key<small>stored only on this device</small></label><input id="ak" type="password" value="${esc(w.key)}" placeholder="sk-…" autocomplete="off" autocapitalize="off">
+    ${naiOn()?`<div class="row" style="margin-top:6px"><button class="btn ghost sm" data-act="naikey">${I.copy} Use my NovelAI token</button><span class="small muted">the one under NovelAI images</span></div>`:''}
     <label class="f">Model</label><input id="am" value="${esc(w.model)}" list="mlist" placeholder="e.g. deepseek/deepseek-chat-v3" autocapitalize="off"><datalist id="mlist"></datalist>
     <div class="row" style="margin-top:8px"><button class="btn ghost sm" data-act="models">Fetch models</button><button class="btn ghost sm" data-act="test">Test connection</button></div>
     <div class="grid2"><div><label class="f">Price in<small>$ per 1M tokens</small></label><input id="api-pin" type="number" min="0" step="0.01" value="${w.priceIn||''}" placeholder="optional"></div>
@@ -4968,7 +4976,11 @@ function editApi(a){
     <div id="ares" class="small" style="margin-top:8px"></div>
     <br><div class="row"><button class="btn" data-act="save" style="flex:2">Save${isNew?' & use':''}</button>${!isNew&&st.activeApi!==w.id?'<button class="btn ghost" data-act="use" style="flex:1">Use</button>':''}${!isNew?`<button class="btn ghost" data-act="dup" style="flex:1">${I.copy} Duplicate</button>`:''}</div>
     ${!isNew?'<br><button class="btn danger block" data-act="del">Delete connection</button>':''}`,{
-    preset:b=>{$('#au').value=b.dataset.u;showUrl()},
+    // NovelAI's writing models take the same persistent token as its images: fill it in when the key box is empty
+    preset:b=>{$('#au').value=b.dataset.u;
+      if(b.dataset.nai){if(!$('#an').value.trim())$('#an').value='NovelAI';if(naiOn()&&!$('#ak').value.trim()){$('#ak').value=S.settings.naiToken.trim();toast('Your NovelAI token is filled in. Tap Fetch models to pick one.',4000)}}
+      showUrl()},
+    naikey:()=>{$('#ak').value=S.settings.naiToken.trim();toast('NovelAI token copied into the key')},
     models:async()=>{const r=$('#ares');r.textContent='Loading models…';r.className='small';try{const k=$('#ak').value.trim();const res=await fetch(modelsUrl($('#au').value),{headers:k?{Authorization:'Bearer '+k}:{}});if(!res.ok)throw new Error('HTTP '+res.status);const j=await res.json();const ids=(j.data||j.models||[]).map(m=>m.id||m.name||m).filter(x=>typeof x==='string').sort();$('#mlist').innerHTML=ids.map(i=>`<option value="${esc(i)}">`).join('');r.innerHTML=`<span class="okc">${ids.length} models found.</span> Tap the model box to pick one.`}catch(e){r.innerHTML=`<span class="err">Could not list models (${esc(e.message)}). Type the model name instead.</span>`}},
     test:async()=>{const r=$('#ares');r.textContent='Testing…';r.className='small';const t={...w,url:$('#au').value,key:$('#ak').value,model:$('#am').value.trim()};
       try{const {text:out,thought}=await callApi(t,[{role:'user',content:'Reply with just the word OK.'}],undefined,()=>{},{stream:false,maxTokens:30});r.innerHTML=`<span class="okc">Connected!</span> ${t.model?esc(t.model)+' ':''}${testSaid(out,thought)}`}catch(e){r.innerHTML=`<span class="err">${esc(e.message)}</span>`}},
