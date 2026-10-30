@@ -387,7 +387,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.30.0',HEARTH_DATE='2026-10-30';
+const HEARTH_VERSION='1.30.1',HEARTH_DATE='2026-10-31';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -1392,7 +1392,7 @@ function openGallery(c,chatId){
 }
 
 /* ---------- router ---------- */
-let H={},SH={},dirty=false,prevHash='',skipRoute=false,GEN=null,curChat=null;
+let H={},SH={},dirty=false,prevHash='',skipRoute=false,GEN=null,curChat=null,chatMsgRedraw=null;
 let view=$('#view');const navStack=[];
 function markDirty(){if(location.hash.startsWith('#/edit/'))dirty=true}
 function route(){
@@ -2615,6 +2615,12 @@ async function vChat(id){
   const story=chat.mode==='image';
   const reader=()=>story&&chat.view==='story'; // image stories: "Prompts" (the chat) or "Story" (pictures and story text only)
   if(chat.lastImage&&!chat.images){chat.images=[{id:uid(),at:chat.lastImage.at,request:'',panels:chat.lastImage.panels}];delete chat.lastImage}
+  // prompts made before they remembered their message: the message just before the prompt (a changed prompt: its original's)
+  if(!story&&chat.images?.some(e=>e.msgId===undefined)){
+    for(const e of chat.images)if(e.msgId===undefined)e.msgId=['image','board','quick','story'].includes(e.from)?'':chat.images.find(x=>x.id===e.from)?.msgId??[...chat.messages].reverse().find(m=>(m.time||0)<=e.at)?.id??'';
+    saveChat(chat,true)}
+  const promptPics=m=>story?[]:(chat.images||[]).filter(e=>e.msgId===m.id).flatMap(e=>(e.pics||[]).flatMap(l=>l||[]));
+  chatMsgRedraw=id=>{const i=chat.messages.findIndex(m=>m.id===id);if(i>=0)updateOne(i)};
   const draw=()=>{
     const p=personaFor(chat),api=activeApi();
     view.innerHTML=`<div class="chat" ${char.banner?`style="--chatbg:url('${esc(char.banner)}')"`:''}>
@@ -2642,6 +2648,7 @@ async function vChat(id){
     const canRegen=!u&&isLast&&!m.greeting;
     const sw=!u&&isLast&&(m.swipes.length>1||!m.greeting)?`<div class="swipes"><button data-act="swl" ${m.sw===0||GEN?'disabled':''}>‹</button><span>${m.sw+1}/${m.swipes.length}</span><button data-act="swr" ${GEN||(m.greeting&&m.sw>=m.swipes.length-1)?'disabled':''}>›</button></div>`:'';
     return `<div class="msg ${u?'user':'bot'}${hasScene(chat,m)?' hasscene':''}" data-i="${i}"><img class="av" data-act="zoom" src="${esc(u?avatar(who):chatAvatar(chat,char,m))}" alt=""><div class="mw"><div class="nm">${esc(name)}</div><div class="bubble">${body}</div>${generating||!S.settings.showTokens?'':tokLine(m)}${lk?`<div class="lookups">Looked up: ${lk.map(esc).join(' · ')}</div>`:''}${sceneLinksHTML(chat,m)}
+      ${promptPics(m).length?thumbs(promptPics(m),'cview'):''}
       ${story&&!u&&!generating&&m.imgs?.[m.sw]?`${m.pics?.[m.sw]?.length?thumbs(m.pics[m.sw],'sview'):''}<div class="row" style="margin-top:6px;flex-wrap:wrap">${naiOn()?`<button class="btn sm" data-act="ngenm">${I.img} Generate picture</button>`:''}<button class="btn ghost sm" data-act="attach">${I.img} Attach picture</button><button class="btn ghost sm" data-act="toimgs">${I.edit} Open on Images page</button></div>${m.story?.[m.sw]?`<div class="storytxt">${paras(macro(m.story[m.sw],char.name,p?.name||'You'))}</div>`:''}${storyCardsHTML(m.imgs[m.sw],i)}`:''}
       ${story&&!u&&isLast&&!generating&&m.next?.[m.sw]?`<div class="nextsug"><div><b>Next:</b> ${esc(m.next[m.sw])}</div><button class="btn sm" data-act="usenext" ${GEN?'disabled':''}>Use this ›</button></div>`:''}
       ${!story&&!u&&isLast&&!generating&&m.cut?.[m.sw]?`<div class="controw"><button class="btn ghost sm" data-act="cont" ${GEN?'disabled':''}>Continue ›</button><span>This reply was cut off.</span></div>`:''}
@@ -2823,6 +2830,10 @@ async function vChat(id){
     toimgs:async b=>{const m=chat.messages[idxOf(b)],img=m.imgs?.[m.sw];if(!img)return;if(!m.id){m.id=uid();await saveChat(chat)}
       openOnImages(img,{chatId:chat.id,title:chat.title||char.name,caption:img.caption||'',msgId:m.id,sw:m.sw})},
     // a picture you attached is in the gallery; one NovelAI made here stays with the message until you save it
+    // a picture made from this message's image prompt (in the prompt sheet or on the Images page)
+    cview:b=>{const id=b.dataset.id,e=chat.images?.find(x=>x.pics?.some(l=>l?.includes(id)));if(!e)return;const j=e.pics.findIndex(l=>l?.includes(id)),i=idxOf(b);
+      viewMade(id,{c:char,chatId:chat.id,note:e.panels[j]?.caption,backLabel:'Back to the chat',more:[{label:`${I.copy} Show its prompt`,fn:()=>showImagePrompts(chat,char,e,i)}],
+        onDelete:async()=>{e.pics[j]=e.pics[j].filter(x=>x!==id);await saveChat(chat);updateOne(i)}})},
     sview:b=>{const id=b.dataset.id,drop=async()=>{for(const m of chat.messages)m.pics?.forEach((l,k)=>{if(l)m.pics[k]=l.filter(x=>x!==id)});await saveChat(chat);renderMsgs()};
       const m=chat.messages[idxOf(b)];
       if(char.gallery?.some(g=>g.id===id))viewPicture(char,id,'gallery',()=>{if(!char.gallery.some(g=>g.id===id))drop();else renderMsgs()});
@@ -2984,8 +2995,9 @@ async function aiJson(sys,prompt,signal,maxTokens){
 }
 const usageText=u=>u?`${u.est?'≈ ':''}↑ ${Math.round(u.in).toLocaleString()} · ↓ ${Math.round(u.out).toLocaleString()} tokens${u.cost!=null?` · ${u.costEst?'≈ ':''}${fmtCost(u.cost)}`:''}`:'';
 // every prompt made in a chat is kept, newest last
-function addImage(chat,panels,request,from,usage){
-  const e={id:uid(),at:Date.now(),request:request||'',panels,from:from||'',usage:usage||null};
+// msgId: the message the prompt was made for; pictures made from it show under that message
+function addImage(chat,panels,request,from,usage,msgId){
+  const e={id:uid(),at:Date.now(),request:request||'',panels,from:from||'',usage:usage||null,msgId:msgId||''};
   (chat.images??=[]).push(e);if(chat.images.length>100)chat.images.shift();saveChat(chat);return e;
 }
 async function makeImagePrompt(chat,char,upto,opts){
@@ -3379,18 +3391,18 @@ function showImagePrompts(chat,char,entry,upto){
     cp:b=>copyText(T[+b.dataset.i]),
     ngen:async b=>{
       const j=+b.dataset.k,box=b.closest('.nai-p'),msg=$('.nai-msg',box);b.disabled=true;msg.className='small muted nai-msg';msg.textContent='Making the image…';
-      try{const id=await naiPicture(entry.panels[j]);((entry.pics??=[])[j]??=[]).push(id);await saveChat(chat);if(box.isConnected){box.outerHTML=naiPanelHTML(kept(j),j);hydrate($('#sheet'))}}
+      try{const id=await naiPicture(entry.panels[j]);((entry.pics??=[])[j]??=[]).push(id);await saveChat(chat);if(curChat===chat)chatMsgRedraw?.(entry.msgId);if(box.isConnected){box.outerHTML=naiPanelHTML(kept(j),j);hydrate($('#sheet'))}}
       catch(e){if(msg.isConnected){msg.className='small err nai-msg';msg.textContent=e.message}}finally{if(b.isConnected)b.disabled=false}},
     toimgs:b=>{const j=+b.dataset.k;openOnImages(entry.panels[j],{chatId:chat.id,title:chat.title||char.name,caption:entry.panels[j].caption||'',entryId:entry.id,k:j})},
     nview:b=>{const j=+b.closest('.nai-p').dataset.k;viewMade(b.dataset.id,{c:char,chatId:chat.id,note:entry.panels[j]?.caption,backLabel:'Back to the prompt',back:()=>showImagePrompts(chat,char,entry,upto),
-      onDelete:async id=>{entry.pics[j]=(entry.pics[j]||[]).filter(x=>x!==id);await saveChat(chat)}})},
+      onDelete:async id=>{entry.pics[j]=(entry.pics[j]||[]).filter(x=>x!==id);await saveChat(chat);if(curChat===chat)chatMsgRedraw?.(entry.msgId)}})},
     hist:()=>showImageHistory(chat,char,upto),
     reguess:()=>openFromImage(chat,char,null,fileOf.get(entry.id)),
     again:()=>openImageSheet(chat,char,upto),
     apply:async b=>{
       const change=$('#ip-ch',pn).value.trim(),msg=$('#ip-msg',pn);if(!change){msg.className='small err';msg.textContent='Type what to change first.';return}
       b.disabled=true;msg.className='small muted';msg.textContent='Changing…';
-      try{const r=await editImagePrompt(chat,char,entry.panels,change);showImagePrompts(chat,char,addImage(chat,r.panels,'Change: '+change,entry.id,r.usage),upto)}
+      try{const r=await editImagePrompt(chat,char,entry.panels,change);showImagePrompts(chat,char,addImage(chat,r.panels,'Change: '+change,entry.id,r.usage,entry.msgId),upto)}
       catch(e){if(msg.isConnected){msg.className='small err';msg.textContent=e.message}}finally{if(b.isConnected)b.disabled=false}
     }
   });
@@ -3434,7 +3446,7 @@ function openImageSheet(chat,char,upto){
       const opts={panels:$('#im-sb',pn).hidden?1:+$('#im-n',pn).value,extra:$('#im-x',pn).value.trim(),text:$('#im-t',pn).checked?true:S.settings.imgText==='off'?false:'ask',
         comic:comic?{n:+$('#im-cn',pn).value,layout:$('#im-cl',pn).value}:null};
       b.disabled=true;msg.className='small muted';msg.textContent=opts.panels>1?`Writing ${opts.panels} panels… (this can take a minute)`:'Writing the prompt…';
-      try{const r=await makeImagePrompt(chat,char,upto,opts);showImagePrompts(chat,char,addImage(chat,r.panels,opts.extra||(opts.panels>1?`Storyboard, ${opts.panels} panels`:''),'',r.usage),upto)}
+      try{const r=await makeImagePrompt(chat,char,upto,opts);showImagePrompts(chat,char,addImage(chat,r.panels,opts.extra||(opts.panels>1?`Storyboard, ${opts.panels} panels`:''),'',r.usage,chat.messages[upto]?.id),upto)}
       catch(e){if(msg.isConnected){msg.className='small err';msg.textContent=e.message}}
       finally{if(b.isConnected)b.disabled=false}
     }
@@ -4809,7 +4821,7 @@ Return one JSON object only: ${panelJson('sections')}`,undefined,1500);r={panels
       const startFrom=async(o,ask)=>{if(ask&&!confirm(ask))return;useForm();await setBase(x.id,o);closeSheet();await vImages();$('[data-act=gen]',view)?.click()};
       viewMade(x.id,{images:true,backLabel:'Back to Images',note:x.form?.base?.slice(0,80)||'',noMeta:!!x.form,meta:id=>H.imp(null,null,null,id),
         more:[...(fr?[{label:`${I.back} ${x.sent?`Sent to ${esc(fr.title||'the chat')} ✓ · send again`:`Send to the ${fr.entryId?'chat':'story'}: ${esc(fr.title||'')}`}`,
-            fn:async()=>{try{await sendBack(x.id,fr);x.sent=(x.sent||0)+1;saveImgPage();toast(`Added next to the prompt in ${fr.title||'the chat'}`);again()}catch(e){toast(e.message,5000)}}}]:[]),
+            fn:async()=>{try{await sendBack(x.id,fr);x.sent=(x.sent||0)+1;saveImgPage();toast(`Added under its message in ${fr.title||'the chat'}`);again()}catch(e){toast(e.message,5000)}}}]:[]),
           {label:`${I.img} Use as base image`,fn:async()=>{await setBase(x.id);closeSheet();$('#ig-base')?.scrollIntoView({block:'center'});toast('Base image set. Change the prompt or paint an area, then tap Generate.')}},
           ...(x.form?[{label:`${I.regen} Variations`,fn:()=>startFrom({strength:.8,noise:.1})},
             {label:`${I.wand} Enhance (1.5× bigger)`,fn:async()=>{const i=await loadImg(await getImgData(x.id)),[w,h]=fitSize(i.naturalWidth,i.naturalHeight,i.naturalWidth*i.naturalHeight*2.25);
