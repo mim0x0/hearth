@@ -235,6 +235,10 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .fbar .chip{flex:none;display:inline-flex;align-items:center;gap:6px;padding:6px 12px;font-size:13px;margin:0}
 .fbar .chip svg{width:15px;height:15px;vertical-align:0}
 .fbar .n{color:var(--muted);font-size:11.5px}
+.mpick{margin-top:8px;border:1px solid var(--line);border-radius:12px;padding:8px;background:var(--panel2)}
+.mp-l{max-height:260px;overflow-y:auto;margin-top:6px;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+.mp-i{display:block;width:100%;text-align:left;padding:9px 10px;background:none;border:0;border-radius:8px;color:var(--text);font:inherit;font-size:13.5px;cursor:pointer;word-break:break-all}
+.mp-i.on,.mp-i:hover{background:color-mix(in srgb,var(--accent2) 28%,transparent)}
 .vtabs{display:flex;gap:6px;padding:6px 10px;border-bottom:1px solid var(--line);background:var(--panel)}
 .vtabs button{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:7px;border-radius:10px;border:1px solid var(--line);background:none;color:var(--muted);font:inherit;font-size:13.5px;cursor:pointer}
 .vtabs button.on{background:var(--panel2);color:var(--text);border-color:var(--accent2)}
@@ -377,7 +381,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.28.0',HEARTH_DATE='2026-10-30';
+const HEARTH_VERSION='1.28.1',HEARTH_DATE='2026-10-30';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -820,6 +824,19 @@ function openBookEditor(book,{title,onSave,onDelete}){
 /* ---------- API / proxy ---------- */
 function endpoint(url){const u=(url||'').trim().replace(/\/+$/,'');return /\/chat\/completions$/i.test(u)?u:u+'/chat/completions'}
 const modelsUrl=url=>endpoint(url).replace(/\/chat\/completions$/i,'/models');
+// A model list that works on phones (a <datalist> there only shows names matching what's already in the box): a search
+// box and the models as buttons, shown after `after`; tapping one fills in the input, which saves as if typed.
+function modelPicker(input,ids,after){
+  after.parentNode.querySelector(':scope > .mpick')?.remove();
+  const box=document.createElement('div');box.className='mpick';
+  box.innerHTML=`<input class="mp-q" placeholder="Search ${ids.length} models" autocapitalize="off" autocomplete="off"><div class="mp-l"></div><div class="row" style="margin-top:6px"><button type="button" class="btn ghost sm mp-x">Close</button></div>`;
+  const draw=()=>{const q=$('.mp-q',box).value.toLowerCase().trim(),cur=input.value.trim(),list=ids.filter(i=>!q||i.toLowerCase().includes(q));
+    $('.mp-l',box).innerHTML=list.slice(0,300).map(i=>`<button type="button" class="mp-i ${i===cur?'on':''}" data-m="${esc(i)}">${esc(i)}</button>`).join('')||'<div class="small muted" style="padding:8px">No model matches.</div>'};
+  box.addEventListener('click',e=>{const b=e.target.closest('.mp-i');
+    if(b){input.value=b.dataset.m;input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new Event('change',{bubbles:true}));box.remove();toast('Model: '+b.dataset.m)}
+    else if(e.target.closest('.mp-x'))box.remove()});
+  $('.mp-q',box).oninput=draw;draw();after.after(box);
+}
 // What requests cost in dollars: OpenRouter reports it exactly; other proxies use the prices set on the connection
 // (only for the model they were set for). addCost adds one request's cost into a running total.
 const priceCost=(api,i,o)=>api&&(+api.priceIn||+api.priceOut)&&api.model===api.priceModel?((+i||0)*(+api.priceIn||0)+(+o||0)*(+api.priceOut||0))/1e6:null;
@@ -4904,7 +4921,8 @@ function vSettings(){
       if(!api){r.innerHTML='<span class="err">Add a connection first.</span>';return}
       r.textContent='Loading models…';b.disabled=true;
       try{const ids=await listModels(api,f.vision);$('#dl-'+k).innerHTML=ids.map(i=>`<option value="${esc(i)}">`).join('');
-        r.innerHTML=`<span class="okc">${ids.length} models${f.vision?' that can see images':''} from ${esc(api.name||api.url)}.</span> Tap the box above to pick one.`}
+        r.innerHTML=`<span class="okc">${ids.length} models${f.vision?' that can see images':''} from ${esc(api.name||api.url)}.</span> Pick one below, or search.`;
+        modelPicker($(`[data-k=${k}]`,view),ids,r)}
       catch(e){r.innerHTML=`<span class="err">Could not list models (${esc(e.message)}). Type the model name instead.</span>`}
       finally{b.disabled=false}},
     mtest:async b=>{
@@ -4981,7 +4999,7 @@ function editApi(a,pre={}){
       if(b.dataset.nai){if(!$('#an').value.trim())$('#an').value='NovelAI';if(naiOn()&&!$('#ak').value.trim()){$('#ak').value=S.settings.naiToken.trim();toast('Your NovelAI token is filled in. Tap Fetch models to pick one.',4000)}}
       showUrl()},
     naikey:()=>{$('#ak').value=S.settings.naiToken.trim();toast('NovelAI token copied into the key')},
-    models:async()=>{const r=$('#ares');r.textContent='Loading models…';r.className='small';try{const k=$('#ak').value.trim();const res=await fetch(modelsUrl($('#au').value),{headers:k?{Authorization:'Bearer '+k}:{}});if(!res.ok)throw new Error('HTTP '+res.status);const j=await res.json();const ids=(j.data||j.models||[]).map(m=>m.id||m.name||m).filter(x=>typeof x==='string').sort();$('#mlist').innerHTML=ids.map(i=>`<option value="${esc(i)}">`).join('');r.innerHTML=`<span class="okc">${ids.length} models found.</span> Tap the model box to pick one.`}catch(e){r.innerHTML=`<span class="err">Could not list models (${esc(e.message)}). Type the model name instead.</span>`}},
+    models:async b=>{const r=$('#ares');r.textContent='Loading models…';r.className='small';try{const k=$('#ak').value.trim();const res=await fetch(modelsUrl($('#au').value),{headers:k?{Authorization:'Bearer '+k}:{}});if(!res.ok)throw new Error('HTTP '+res.status+(res.status===401?': the key was not accepted':''));const j=await res.json();const ids=(j.data||j.models||[]).map(m=>m.id||m.name||m).filter(x=>typeof x==='string').sort();if(!ids.length)throw new Error('the list came back empty');$('#mlist').innerHTML=ids.map(i=>`<option value="${esc(i)}">`).join('');r.innerHTML=`<span class="okc">${ids.length} models found.</span> Pick one below, or search.`;modelPicker($('#am'),ids,b.closest('.row'))}catch(e){r.innerHTML=`<span class="err">Could not list models (${esc(e.message)}). Type the model name instead.</span>`}},
     test:async()=>{const r=$('#ares');r.textContent='Testing…';r.className='small';const t={...w,url:$('#au').value,key:$('#ak').value,model:$('#am').value.trim()};
       try{const {text:out,thought}=await callApi(t,[{role:'user',content:'Reply with just the word OK.'}],undefined,()=>{},{stream:false,maxTokens:30});r.innerHTML=`<span class="okc">Connected!</span> ${t.model?esc(t.model)+' ':''}${testSaid(out,thought)}`}catch(e){r.innerHTML=`<span class="err">${esc(e.message)}</span>`}},
     save:async()=>{w.name=$('#an').value.trim()||'Connection';w.url=$('#au').value.trim();w.key=$('#ak').value.trim();w.model=$('#am').value.trim();if(!w.url){toast('Enter the proxy URL');return}
