@@ -259,6 +259,12 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .storytxt{margin-top:8px;padding:8px 12px 2px;border-left:3px solid var(--accent2);background:var(--panel2);border-radius:8px;font-size:14.5px;line-height:1.6}
 .controw{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px;color:var(--muted)}
 .thumbs img.picked{outline:3px solid var(--accent);outline-offset:-3px;opacity:.85}
+.albums{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px}
+.album{display:flex;flex-direction:column;gap:2px;padding:0 0 8px;border:1px solid var(--line);border-radius:12px;background:var(--panel);color:inherit;text-align:left;cursor:pointer;overflow:hidden;font:inherit;min-width:0}
+.album img,.album .al-e{width:100%;aspect-ratio:4/3;object-fit:cover;object-position:top;background:var(--panel2);display:flex;align-items:center;justify-content:center;color:var(--muted)}
+.album b,.album small{padding:0 8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.album small{color:var(--muted)}
+.album.add{border-style:dashed;justify-content:center;align-items:center;padding:8px;color:var(--muted);min-height:80px}
 .ig-pad{position:relative;width:min(100%,240px);margin:8px auto 0;background:var(--panel2);border:1px solid var(--line);border-radius:10px;touch-action:pan-y}
 .ig-pad.live{touch-action:none;cursor:crosshair}
 .ig-pad .g5{position:absolute;inset:0;border-radius:10px;background-image:linear-gradient(to right,var(--line) 1px,transparent 1px),linear-gradient(to bottom,var(--line) 1px,transparent 1px);background-size:20% 20%;opacity:.7;pointer-events:none}
@@ -381,7 +387,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.29.0',HEARTH_DATE='2026-10-30';
+const HEARTH_VERSION='1.30.0',HEARTH_DATE='2026-10-30';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -1289,9 +1295,13 @@ async function viewPicture(c,id,kind,after){
       <button data-act="dl">${I.imp} Save to device</button>
       <button data-act="main">${I.user} Use as main picture</button>
       ${kind==='gallery'?`<button data-act="pool">${I.regen} Add to profile pictures</button>`:''}
+      ${kind==='gallery'&&g?`<button data-act="galmv">${I.folder} Move to album<small class="muted" style="margin-left:6px">now: ${esc(galAlbumName(c,g))}</small></button>`:''}
       <button data-act="tometa" hidden>${I.edit} Use its prompt on the Images page</button>
       <button class="danger" data-act="del">${I.trash} ${kind==='pool'?'Remove from profile pictures':'Delete picture'}</button>
-    </div>`,{
+    </div>
+    ${after?`<div class="sheet-foot"><button class="btn ghost block" data-act="back">${I.back} Back</button></div>`:''}`,{
+    back:()=>{closeSheet();after()},
+    galmv:()=>galMove(c,[id],()=>viewPicture(c,id,kind,after),()=>viewPicture(c,id,kind,after)),
     dl:async()=>{const b=await dataToBlob(d);download(`${safeName(c.name)}-${id}.${(b.type.split('/')[1]||'png').replace('jpeg','jpg')}`,b)},
     main:async()=>{c.avatar=await fileToImage(new File([await dataToBlob(d)],'p',{type:'image/png'}),768);await saveChars();closeSheet();toast('Main picture changed');after?.()},
     pool:async()=>{const nid=await putImg(await fileToImage(new File([await dataToBlob(d)],'p',{type:'image/png'}),768));(c.avatarPool??=[]).push(nid);await saveChars();closeSheet();toast('Added to profile pictures');after?.()},
@@ -1303,19 +1313,78 @@ async function viewPicture(c,id,kind,after){
   metaOf(id).then(m=>{const x=$('[data-act=tometa]',$('#sheet'));if(m&&x)x.hidden=false});
   const n=$('#gnote');if(n)n.onchange=async()=>{if(g){g.note=n.value.trim();await saveChars()}};
 }
+// The gallery in albums: one per chat (made by itself), "Not from a chat" (e.g. saved from the Images page) and albums you make.
+// A picture is in one album: the album you moved it to (g.folder), otherwise its chat's.
+function galAlbum(c,g){
+  if(g.folder&&c.galFolders?.some(f=>f.id===g.folder))return 'f:'+g.folder;
+  if(!g.chatId)return 'none';
+  return S.chatIndex.some(x=>x.id===g.chatId)?'chat:'+g.chatId:'gone';
+}
+const chatKind=x=>x?.mode==='image'?(x.quick?'Quick images':'Image story'):'Chat';
+function galAlbums(c){
+  const by=new Map();for(const g of c.gallery||[]){const k=galAlbum(c,g);if(!by.has(k))by.set(k,[]);by.get(k).push(g)}
+  const last=k=>Math.max(0,...by.get(k).map(g=>g.at||0));
+  const chats=[...by.keys()].filter(k=>k.startsWith('chat:')).sort((a,b)=>last(b)-last(a));
+  return [...(c.galFolders||[]).map(f=>({k:'f:'+f.id,id:f.id,name:f.name,sub:'Your album',own:true})),{k:'none',name:'Not from a chat'},
+    ...chats.map(k=>{const x=S.chatIndex.find(y=>y.id===k.slice(5));return {k,name:x?.title||'Chat',sub:chatKind(x)}}),{k:'gone',name:'From deleted chats'}]
+    .map(a=>({...a,list:by.get(a.k)||[]})).filter(a=>a.own||a.list.length);
+}
+const galAlbumName=(c,g)=>{const k=galAlbum(c,g);return k==='none'?'Not from a chat':k==='gone'?'From deleted chats':galAlbums(c).find(a=>a.k===k)?.name||''};
+// move gallery pictures to an album you made, a chat's album, or "Not from a chat"; done gets the album key
+function galMove(c,ids,done,back){
+  const chats=S.chatIndex.filter(x=>x.charId===c.id).sort((a,b)=>(b.updated||0)-(a.updated||0));
+  const li=(k,ic,name,sub)=>`<div class="li" data-act="to" data-k="${k}">${ic}<div class="lt"><b>${esc(name)}</b>${sub?`<span>${esc(sub)}</span>`:''}</div></div>`;
+  openSheet(`<h2>Move ${ids.length>1?`${ids.length} pictures`:'the picture'} to</h2><div class="list">
+    ${(c.galFolders||[]).map(f=>li('f:'+f.id,I.folder,f.name,'Your album')).join('')}${li('new',I.plus,'New album…','')}
+    ${li('none',I.img,'Not from a chat','')}${chats.map(x=>li('chat:'+x.id,I.chat,x.title||'Chat',chatKind(x))).join('')}</div>
+    <div class="sheet-foot"><button class="btn ghost block" data-act="back">${I.back} Back</button></div>`,{
+    to:async b=>{let k=b.dataset.k;
+      if(k==='new'){const n=prompt('Album name')?.trim();if(!n)return;const f={id:uid(),name:n};(c.galFolders??=[]).push(f);k='f:'+f.id}
+      // an album you made keeps the chat, so the picture goes back to its chat if the album is deleted
+      for(const g of c.gallery||[])if(ids.includes(g.id)){if(k.startsWith('f:'))g.folder=k.slice(2);else{g.folder='';g.chatId=k==='none'?'':k.slice(5)}}
+      await saveChars();toast(`Moved ${ids.length>1?`${ids.length} pictures`:'the picture'}`);done(k)},
+    back:()=>back()});
+}
 function openGallery(c,chatId){
-  let only=!!chatId;libData(); // so the button shows when there are saved pictures
+  let cur=chatId?'chat:'+chatId:'',sel=null;libData(); // cur: the open album ('' = the list of albums); sel: pictures picked to move
   const draw=()=>{
-    const list=(c.gallery||[]).filter(g=>!only||g.chatId===chatId).slice().reverse();
-    const pn=openSheet(`<h2>${esc(c.name)} · Gallery</h2>
-      ${chatId?`<div class="chips" style="margin-bottom:10px"><button type="button" class="chip ${only?'on':''}" data-act="f" data-v="1">This chat</button><button type="button" class="chip ${only?'':'on'}" data-act="f" data-v="">All</button></div>`:''}
-      ${thumbs(list.map(g=>g.id),'gview',`<button class="thumb-add" data-act="gadd" title="Add pictures">+</button>`)}
-      ${list.length?'':'<p class="muted small">No pictures yet. Tap + to add some.</p>'}
-      ${lib?.items.length?`<button class="btn ghost sm" data-act="glib" style="margin-top:10px">${I.folder} Add from My pictures</button>`:''}`,{
-      f:b=>{only=!!b.dataset.v;draw()},
-      glib:()=>openLibrary({pick:{c,chatId,after:draw}}),
-      gadd:async()=>{await addPictures(c,'gallery',chatId);draw()},
-      gview:b=>viewPicture(c,b.dataset.id,'gallery',draw)
+    const al=galAlbums(c),gal=c.gallery||[];
+    let a=cur==='all'?{k:'all',name:'All pictures',list:gal}:al.find(x=>x.k===cur);
+    if(!a&&cur.startsWith('chat:')){const x=S.chatIndex.find(y=>y.id===cur.slice(5));a={k:cur,name:x?.title||'Chat',sub:chatKind(x),list:[]}}
+    if(!a){cur='';sel=null}
+    const card=(k,name,sub,list)=>`<button type="button" class="album" data-act="aopen" data-k="${k}">${list.length?`<img data-img="${list.at(-1).id}" src="${BLANK}" alt="">`:`<span class="al-e">${I.folder}</span>`}<b>${esc(name)}</b><small>${sub?esc(sub)+' · ':''}${list.length}</small></button>`;
+    // where pictures added here go
+    const into=()=>a.k.startsWith('chat:')?{chatId:a.k.slice(5)}:a.k.startsWith('f:')?{folder:a.k.slice(2)}:{};
+    const list=a?a.list.slice().reverse():[],canAdd=a&&a.k!=='gone';
+    const pn=!a?openSheet(`<h2>${esc(c.name)} · Gallery</h2>
+      ${gal.length?'':'<p class="muted small">No pictures yet.</p>'}
+      <div class="albums">${gal.length?card('all','All pictures','',gal):''}${al.map(x=>card(x.k,x.name,x.sub,x.list)).join('')}<button type="button" class="album add" data-act="anew">${I.plus} New album</button></div>
+      <p class="hint">Pictures from a chat go in that chat's album by themselves. Make your own albums for the rest, then move pictures there: open a picture, or tap Select in an album.</p>`,{
+      aopen:b=>{cur=b.dataset.k;draw()},
+      anew:async()=>{const n=prompt('Album name')?.trim();if(!n)return;const f={id:uid(),name:n};(c.galFolders??=[]).push(f);await saveChars();cur='f:'+f.id;draw()}
+    }):openSheet(`<div class="row" style="margin-bottom:6px"><button class="btn ghost sm" data-act="aback">${I.back} Albums</button><span style="flex:1"></span>
+        ${list.length?sel?`<button class="btn ghost sm" data-act="sall">${sel.size===list.length?'Pick none':'Pick all'}</button>`:`<button class="btn ghost sm" data-act="sel">Select</button>`:''}</div>
+      <h2 style="margin-bottom:2px">${esc(a.name)}</h2><div class="small muted" style="margin-bottom:10px">${esc(c.name)} · ${list.length} picture${list.length===1?'':'s'}${a.sub?' · '+esc(a.sub):''}</div>
+      ${a.own||a.k.startsWith('chat:')?`<div class="row" style="margin-bottom:10px;flex-wrap:wrap">${a.own?`<button class="btn ghost sm" data-act="aren">${I.edit} Rename</button><button class="btn ghost sm" data-act="adel">${I.trash} Delete album</button>`
+        :`<button class="btn ghost sm" data-act="achat">${I.chat} Open the chat</button>`}</div>`:''}
+      ${sel?'<p class="hint" style="margin-top:0">Tap the pictures to move.</p>':''}
+      ${thumbs(list.map(g=>g.id),'gview',sel||!canAdd?'':`<button class="thumb-add" data-act="gadd" title="Add pictures">+</button>`).replace(/data-act="gview" data-id="([^"]+)"/g,(m,id)=>sel?.has(id)?m+' class="picked"':m)}
+      ${list.length||!canAdd?'':'<p class="muted small">No pictures here yet. Tap + to add some.</p>'}
+      ${!sel&&canAdd&&lib?.items.length?`<button class="btn ghost sm" data-act="glib" style="margin-top:10px">${I.folder} Add from My pictures</button>`:''}
+      ${sel?`<div class="sheet-foot row"><button class="btn ghost" data-act="scancel" style="flex:1">Cancel</button><button class="btn" data-act="smove" id="ga-mv" style="flex:2">${I.folder} Move ${sel.size||''} to…</button></div>`:''}`,{
+      aback:()=>{cur='';sel=null;draw()},
+      sel:()=>{sel=new Set();draw()},
+      sall:()=>{sel=sel.size===list.length?new Set():new Set(list.map(g=>g.id));draw()},
+      scancel:()=>{sel=null;draw()},
+      smove:()=>{if(!sel.size)return toast('Tap the pictures to move first');galMove(c,[...sel],()=>{sel=null;draw()},draw)},
+      aren:async()=>{const f=c.galFolders.find(x=>x.id===a.id),n=prompt('Album name',f.name)?.trim();if(!n)return;f.name=n;await saveChars();draw()},
+      adel:async()=>{if(!confirm(`Delete the album “${a.name}”? Its pictures are kept and go back to their chats (or Not from a chat).`))return;
+        c.galFolders=c.galFolders.filter(x=>x.id!==a.id);for(const g of c.gallery||[])if(g.folder===a.id)g.folder='';await saveChars();cur='';draw()},
+      achat:()=>{closeSheet();go('#/chat/'+a.k.slice(5))},
+      glib:()=>openLibrary({pick:{c,...into(),after:draw}}),
+      gadd:async()=>{const t=into(),ids=await addPictures(c,'gallery',t.chatId);if(t.folder){for(const g of c.gallery||[])if(ids.includes(g.id))g.folder=t.folder;await saveChars()}draw()},
+      gview:b=>{const id=b.dataset.id;if(sel){sel.has(id)?sel.delete(id):sel.add(id);b.classList.toggle('picked',sel.has(id));$('#ga-mv').innerHTML=`${I.folder} Move ${sel.size||''} to…`;return}
+        viewPicture(c,id,'gallery',draw)}
     });
     hydrate(pn);
   };
@@ -1522,7 +1591,7 @@ function vChar(id){
   ${chats.length?`<div class="sec"><h3>Chats</h3><div class="list">${chats.map(x=>chatRow(x,false)).join('')}</div></div>`:''}
   <div class="sec"><h3>Gallery${c.gallery?.length?` (${c.gallery.length})`:''}</h3>
     ${thumbs((c.gallery||[]).slice(-11).reverse().map(g=>g.id),'gview',`<button class="thumb-add" data-act="gadd" title="Add pictures">+</button>`)}
-    ${(c.gallery?.length||0)>11?`<button class="btn ghost sm" data-act="gall" style="margin-top:8px">See all ${c.gallery.length}</button>`:''}</div>
+    ${c.gallery?.length?`<button class="btn ghost sm" data-act="gall" style="margin-top:8px">${I.folder} Albums · all ${c.gallery.length} pictures</button>`:''}</div>
   <div class="sec"><h3>Profile pictures</h3>
     <p class="hint" style="margin:-4px 0 8px">${c.avatarPool?.length?'The picture changes at random between these and the main picture (outlined).':'Add pictures here and the profile picture will change at random between them.'}</p>
     ${thumbs([],'',`${c.avatar?`<img class="main" src="${esc(c.avatar)}" data-act="zoom" alt="Main picture">`:''}${(c.avatarPool||[]).map(id=>`<img data-img="${id}" src="${BLANK}" data-act="pview" data-id="${id}" alt="">`).join('')}<button class="thumb-add" data-act="padd" title="Add profile pictures">+</button>`)}
@@ -3213,16 +3282,16 @@ function openLibrary(o={}){
         viewLibItem(L.items.find(x=>x.id===id),draw)},
       lup:async()=>{const files=await pickFiles('image/*',true);for(const fl of files){try{const id=await putImg(await fileToStored(fl));L.items.push({id,folder:cur&&cur!=='none'?cur:'',note:'',at:Date.now()})}catch(e){toast(`${fl.name}: ${e.message}`)}}await saveLib();draw()},
       ladd:async()=>{if(!sel.size)return toast('Tap the pictures to give first');const keep=$('#lb-keep').checked;
-        for(const id of sel){const x=L.items.find(i=>i.id===id);if(x)await giveToChar(o.pick.c,x,keep,o.pick.chatId)}
+        for(const id of sel){const x=L.items.find(i=>i.id===id);if(x)await giveToChar(o.pick.c,x,keep,o.pick.chatId,o.pick.folder)}
         toast(`Gave ${sel.size} picture${sel.size>1?'s':''} to ${o.pick.c.name}`);closeSheet();o.pick.after?.()}
     });hydrate(pn);
   };draw();
 }
 // a picture of My pictures into a character's gallery: moved (the same picture), or copied when keep is on
-async function giveToChar(c,x,keep,chatId){
+async function giveToChar(c,x,keep,chatId,folder){
   const L=await libData();let id=x.id;
   if(keep){const d=await getImgData(x.id);if(!d)return;id=await putImg(d)}else L.items=L.items.filter(i=>i!==x);
-  (c.gallery??=[]).push({id,chatId:chatId||'',note:x.note||'',seed:x.seed,at:Date.now()});await saveChars();await saveLib();
+  (c.gallery??=[]).push({id,chatId:chatId||'',...(folder?{folder}:{}),note:x.note||'',seed:x.seed,at:Date.now()});await saveChars();await saveLib();
 }
 function viewLibItem(x,back){
   if(!x)return back();
