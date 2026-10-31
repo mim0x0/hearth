@@ -387,7 +387,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.30.2',HEARTH_DATE='2026-10-31';
+const HEARTH_VERSION='1.30.3',HEARTH_DATE='2026-10-31';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -410,11 +410,10 @@ async function saveChat(chat,keepTime){
 // What the Chats list shows: the kind of chat, what it's about (your title, the story outline, the scenario or the memory) and the latest moment.
 const autoTitle=t=>/\d{1,4}[\/.\-]\d{1,2}[\/.\-]\d{1,4}\s*$/.test(t||''); // made by the app: "Name · … · date"
 const CHAT_META_V=4; // list entries made by an older version get rebuilt from the saved chat (3: the latest attached picture; 4: also from image prompts)
-// the newest picture of a chat, for the Chats list: the one made or added last (chat.lastPic) while it's still there,
-// otherwise the last one by message: with a story message, or made from an image prompt (under its message)
+// the picture for the Chats list: the last one of the newest message that has pictures (a story message's own,
+// or ones made from an image prompt, which show under their message)
 function latestPic(chat){
   const ofPrompts=l=>l.flatMap(e=>(e.pics||[]).flatMap(x=>x||[])).at(-1),imgs=chat.images||[];
-  if(chat.lastPic&&(chat.messages.some(m=>m.pics?.[m.sw]?.includes(chat.lastPic))||imgs.some(e=>e.pics?.some(l=>l?.includes(chat.lastPic)))))return chat.lastPic;
   for(const m of [...chat.messages].reverse()){const id=m.pics?.[m.sw]?.at(-1)||ofPrompts(imgs.filter(e=>e.msgId&&e.msgId===m.id));if(id)return id}
   return ofPrompts(imgs.filter(e=>!e.msgId))||''; // prompts not linked to a message yet
 }
@@ -2822,13 +2821,13 @@ async function vChat(id){
     // make the picture with NovelAI and keep it with the message
     ngenm:async b=>{const i=idxOf(b),m=chat.messages[i],img=m.imgs?.[m.sw];if(!img)return;
       b.disabled=true;const was=b.innerHTML;b.textContent='Making the picture…';
-      try{const id=await naiPicture(img);((m.pics??=[])[m.sw]??=[]).push(id);chat.lastPic=id;await saveChat(chat);updateOne(i)}
+      try{const id=await naiPicture(img);((m.pics??=[])[m.sw]??=[]).push(id);await saveChat(chat);updateOne(i)}
       catch(e){toast(e.message,5000);if(b.isConnected){b.disabled=false;b.innerHTML=was}}},
     // keep the picture NovelAI made for this prompt next to it, and in the character's gallery
     // from the device, or a picture already in Hearth (the Images page, My pictures, a gallery); it's kept in the character's gallery too
     attach:b=>{const i=idxOf(b),m=chat.messages[i],cap=m.imgs?.[m.sw]?.caption||'';
       const put=async ids=>{if(!ids.length)return;for(const g of char.gallery)if(ids.includes(g.id)&&!g.note)g.note=cap;await saveChars();
-        ((m.pics??=[])[m.sw]??=[]).push(...ids);chat.lastPic=ids.at(-1);await saveChat(chat);updateOne(i)};
+        ((m.pics??=[])[m.sw]??=[]).push(...ids);await saveChat(chat);updateOne(i)};
       const ask=()=>openSheet(`<h2>Attach picture</h2><div class="menu"><button data-act="dev">${I.imp} From this device</button><button data-act="app">${I.img} From Hearth</button></div>
         <p class="hint">From Hearth: a picture from the Images page, My pictures or a gallery. It's also saved to ${esc(char.name)}'s gallery.</p>
         <div class="sheet-foot"><button class="btn ghost block" data-act="close">Cancel</button></div>`,{
@@ -3399,7 +3398,7 @@ function showImagePrompts(chat,char,entry,upto){
     cp:b=>copyText(T[+b.dataset.i]),
     ngen:async b=>{
       const j=+b.dataset.k,box=b.closest('.nai-p'),msg=$('.nai-msg',box);b.disabled=true;msg.className='small muted nai-msg';msg.textContent='Making the image…';
-      try{const id=await naiPicture(entry.panels[j]);((entry.pics??=[])[j]??=[]).push(id);chat.lastPic=id;await saveChat(chat);if(curChat===chat)chatMsgRedraw?.(entry.msgId);if(box.isConnected){box.outerHTML=naiPanelHTML(kept(j),j);hydrate($('#sheet'))}}
+      try{const id=await naiPicture(entry.panels[j]);((entry.pics??=[])[j]??=[]).push(id);await saveChat(chat);if(curChat===chat)chatMsgRedraw?.(entry.msgId);if(box.isConnected){box.outerHTML=naiPanelHTML(kept(j),j);hydrate($('#sheet'))}}
       catch(e){if(msg.isConnected){msg.className='small err nai-msg';msg.textContent=e.message}}finally{if(b.isConnected)b.disabled=false}},
     toimgs:b=>{const j=+b.dataset.k;openOnImages(entry.panels[j],{chatId:chat.id,title:chat.title||char.name,caption:entry.panels[j].caption||'',entryId:entry.id,k:j})},
     nview:b=>{const j=+b.closest('.nai-p').dataset.k;viewMade(b.dataset.id,{c:char,chatId:chat.id,note:entry.panels[j]?.caption,backLabel:'Back to the prompt',back:()=>showImagePrompts(chat,char,entry,upto),
@@ -3952,7 +3951,7 @@ async function sendBack(id,from){
   if(from.entryId){const e=chat.images?.find(x=>x.id===from.entryId);if(!e?.panels[from.k])throw new Error('That prompt was deleted.');list=((e.pics??=[])[from.k]??=[])}
   else{const m=chat.messages.find(x=>x.id===from.msgId);if(!m?.imgs?.[from.sw])throw new Error('That part of the story was deleted.');list=((m.pics??=[])[from.sw]??=[])}
   const rec=await store.get('img:'+id);if(!rec?.data)throw new Error('Picture not found');
-  const nid=await putImg(rec.data,{seed:rec.seed,made:true});list.push(nid);chat.lastPic=nid;await saveChat(chat);
+  list.push(await putImg(rec.data,{seed:rec.seed,made:true}));await saveChat(chat);
 }
 // choose a picture already in Hearth: made on the Images page, in My pictures or in a gallery (o.first: that character's gallery first)
 async function pickAppPicture(done,back,o={}){
