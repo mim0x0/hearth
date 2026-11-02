@@ -397,7 +397,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.34.0',HEARTH_DATE='2026-11-02';
+const HEARTH_VERSION='1.35.0',HEARTH_DATE='2026-11-02';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -2689,7 +2689,7 @@ async function vChat(id){
     const p=personaFor(chat),api=activeApi();
     view.innerHTML=`<div class="chat" ${char.banner?`style="--chatbg:url('${esc(char.banner)}')"`:''}>
     <header class="top"><button class="ib" data-act="back">${I.back}</button><img data-act="zoom" src="${esc(chatAvatar(chat,char))}" alt="${esc(char.name)}">
-      <div class="ct"><b>${esc(char.name)}</b><small>${story?`${chat.comic?'Comic':'Image story'} · ${{observer:'watching',pov:`POV as ${esc(p?.name||'You')}`}[storyRole(chat)]||`as ${esc(p?.name||'You')}`} · ${esc(imgPreset().name)} preset`:`as ${esc(p?.name||'You')} · ${esc(promptFor(chat).name)}`} · ${esc(api?.model||'no model set')}</small></div><button class="ib" data-act="menu">${I.dots}</button></header>
+      <div class="ct"><b>${esc(char.name)}</b><small>${story?`${chat.comic?'Comic':'Image story'} · ${{observer:'watching',pov:`POV as ${esc(p?.name||'You')}`}[storyRole(chat)]||`as ${esc(p?.name||'You')}`} · ${esc(imgPreset().name)} preset${chat.promptId&&promptFor(chat).id===chat.promptId?` · ${esc(promptFor(chat).name)}`:''}`:`as ${esc(p?.name||'You')} · ${esc(promptFor(chat).name)}`} · ${esc(api?.model||'no model set')}</small></div><button class="ib" data-act="menu">${I.dots}</button></header>
     ${story?`<div class="vtabs"><button data-act="vmode" data-v="" class="${reader()?'':'on'}">${I.code} Prompts</button><button data-act="vmode" data-v="story" class="${reader()?'on':''}">${I.book} Story</button></div>`:''}
     <div class="msgwrap"><div class="msgs" id="msgs"></div><button class="jump" id="jump" data-act="jump" hidden></button></div>
     <div class="composer" ${reader()?'hidden':''}><textarea id="inp" rows="1" placeholder="${story?'Describe a scene, ask for a change, or say next…':`Message ${esc(char.name)}…`}"></textarea><button class="btn" id="sendbtn" data-act="send">${I.send}</button></div></div>`;
@@ -3049,7 +3049,9 @@ function novelRules(chat,char,o={}){
 - Cartoonish faces (chibi, super deformed, jitome, @_@, x_x, >_<, o_o, solid circle eyes, chibi inset): ${{never:'never use them.',often:'use them freely whenever the mood is light or funny, and for every absurd moment (see below).'}[st.imgComic]||'use them for comedic, exaggerated or absurd moments; keep normal faces for sincerely serious, sad or romantic beats.'}${st.imgComic!=='never'?`
 - Absurd moments get cartoonish faces no matter the mood of the scene: ridiculous situations, over-the-top reactions, deadpan nonsense, slapstick, someone doing something silly or out of character, a joke or misunderstanding in the middle of a serious, sad or romantic scene. Only the characters caught in the absurd beat get them (for example the one who says something ridiculous gets a smug or blank o_o face while the others get jitome or @_@); add chibi or super deformed if the absurdity is strong.`:''}
 ${textMode==='off'?'- Text: never put words, speech bubbles or thought bubbles in the image; leave "text" empty.'
-:textMode==='sfx'?'- Text: no dialogue, narration, speech bubbles or thought bubbles in the image (the words are written outside the picture). Only when a sound matters (a hit, a crash, a door slam, a scream, footsteps) add the tags sound effects and onomatopoeia and put one short sound word in "text", in capitals (like BAM, CRASH, THUD or ZZZ); otherwise leave "text" empty. Manga symbols such as !, ?, hearts, musical notes, sweatdrops and anger veins are tags, not text: use them freely. Add speech bubble to the undesired content.'
+:textMode==='sfx'?`- Text: no dialogue, narration, speech bubbles or thought bubbles in the image (the words are written outside the picture). But a comic shows its sounds: every punch, kick, hit, clash of blades, blast, crash, fall, slam, scream, heartbeat, footsteps or sudden fast move gets a sound effect drawn in the picture. Add the tags sound effects and onomatopoeia, and put the sound word in "text" in capitals, like BAM, WHAM, POW, CLANG, SLASH, KRAK, BOOM, THUD, WHOOSH, SWISH, DOKI DOKI, GASP or ZZZ (one short word, or the same word twice). In a fight or action scene most panels have one; only quiet panels leave "text" empty.
+- Manga symbols: give every panel with a strong feeling or reaction its symbols as tags in that character's prompt (they are not text): !, ?, !?, ^^^, emphasis lines, speed lines, impact lines, anger vein, sweatdrop, flying sweatdrops, spoken heart, musical note, steam, puff of air. In a fight: impact lines, speed lines, motion lines, debris, sparks.
+- Add speech bubble to the undesired content.`
 :`- Text: ${textMode==='auto'?'when characters speak or think in this moment, show their words':'only when the user asks for speech bubbles, thought bubbles, signs or other text, show them; otherwise leave "text" empty and add no text tags'}. Add the tags text, ${v5?'english text (or japanese text if the user asks for Japanese)':'english text'}, and speech bubble or thought bubble; say in a short sentence who is speaking or thinking. Put the exact words in "text": one bubble per line in reading order, separated by a blank line, nothing else. Keep each bubble short (about 8 words) and all text under ${v5?360:110} characters.${v5?'':' English only.'}`}
 - Comic pages: when asked for several panels in one image (a comic page, manga page or 4koma), add comic (and 4koma for a vertical four-panel strip), then describe the layout and each panel in reading order with short sentences in the base prompt, like "Panel 1, top left: ...". Keep each character's look and outfit identical in every panel.
 ${oneBox?`- Write everything as ONE prompt: the base prompt first, then each character's prompt, separated by " | " (like: 2girls, park, sunset | girl, red hair, smile | girl, blue hair, waving). No per-character undesired content, names or positions.`
@@ -3060,8 +3062,16 @@ ${o.noCast?'':`
 CHARACTERS (keep their look the same in every image. Looks and Usual outfit win over descriptions: when a description mentions other clothes, use the Usual outfit. Only the scene itself, or an "In this scenario" note, can change what they wear):
 ${cast.map(c=>`### ${c.name}\n${c.imageTags?`Looks (copy exactly, in this order, right after girl / boy / other): ${c.imageTags}`:`Description: ${(c.personality||'').slice(0,1500)}`}${c.outfitTags?`\nUsual outfit (use exactly, unless the scene calls for other clothes): ${c.outfitTags}`:''}${castNote(scn,c.id)?`\nIn this scenario (can change their age, clothes or look): ${castNote(scn,c.id)}`:''}`).join('\n\n')}
 ${char.kind==='world'?`\nWORLD (other characters may appear too): ${(char.personality||'').slice(0,2500)}\n${worldLinks(char,scn)?worldLinks(char,scn)+'\n':''}`
-  :cw?`\nWORLD ${char.name} LIVES IN (${cw.name}): ${(cw.personality||'').slice(0,1500)}\n${ownLinks(cw,char).length?`${char.name}'s relationships:\n${ownLinks(cw,char).join('\n')}\n`:''}`:''}`}${loreBlock(o.lore,true)}`;
+  :cw?`\nWORLD ${char.name} LIVES IN (${cw.name}): ${(cw.personality||'').slice(0,1500)}\n${ownLinks(cw,char).length?`${char.name}'s relationships:\n${ownLinks(cw,char).join('\n')}\n`:''}`:''}`}${loreBlock(o.lore,true)}${o.story?storyPreset(chat,char):''}`;
 }
+// An image story's own prompt preset (chosen for that chat; Automatic adds none): its tone, style and content rules for
+// the story text, the words and the pictures. The JSON the story asks for still wins over anything it says about replies.
+function storyPreset(chat,char){
+  const p=chat?.promptId&&(S.settings.prompts||[]).find(x=>x.id===chat.promptId);if(!p?.text?.trim())return '';
+  return `\nTHE USER'S PROMPT PRESET “${p.name}”: follow its tone, style and content rules for the story text, the words and the pictures. Ignore what it says about playing a character in a chat, reply length or reply format: the JSON asked for here always wins.\n${macro(p.text.trim(),char.name,personaFor(chat)?.name||'You').slice(0,6000)}\n`;
+}
+// the prompt presets an image story can use: none (only its own rules) or one of the user's
+const storyPresetSelect=(cur='')=>`<select class="sp-sel" style="width:auto;max-width:60%;padding:5px 10px"><option value="">None</option>${(S.settings.prompts||[]).map(p=>`<option value="${p.id}" ${p.id===cur?'selected':''}>${esc(p.name)}</option>`).join('')}</select>`;
 // the JSON shape the AI returns: separate sections, or one "base | char | char" prompt (fewer output tokens)
 const panelJson=(fmt=S.settings.imgOutput)=>fmt==='onebox'?'{"caption":"one sentence","prompt":"base prompt | girl, ... | boy, ...","text":"bubble text or \\"\\"","undesired":"..."}'
   :'{"caption":"one sentence","base":"...","characters":[{"name":"...","prompt":"...","undesired":"...","position":"..."}],"text":"bubble text or \\"\\"","undesired":"..."}';
@@ -3744,20 +3754,25 @@ function comicRules(chat){
 - One clear moment per panel, with only the people and props that panel needs: often one or two people; a close-up shows one face. Keep backgrounds simple in close-ups and detailed in wide shots.
 - Continuity: everyone keeps the same look and outfit in every panel, the place and light stay the same unless the story moves on, and people stay on the same side of the frame while they talk.
 - Reading order: left to right, top to bottom.${page?`
-- The whole page is ONE picture: add comic (and 4koma for a vertical strip of four), then describe the layout and each panel in reading order with short sentences in the base prompt, like "Panel 1, top, wide: ...". Few panels draw much better than many.`:`
+- The whole page is ONE picture: add comic (and 4koma for a vertical strip of four), then describe the layout and each panel in reading order with short sentences in the base prompt, like "Panel 1, top, wide: ...". Few panels draw much better than many.${comicTextMode(chat)==='sfx'?' Put the sound effects of all panels in "text", one per line in reading order, and say in the base prompt which panel each one is in.':''}`:`
 - Each panel is its own full picture, with its own prompt: no comic, panel, border or multiple views tags.
 - Shape of each panel's picture: "wide" (landscape: places, action across the frame, several people), "tall" (portrait: one standing figure, falling, something tall), "square" (a face, a reaction) or "strip" (very wide and short: eyes, a skyline, a quick beat). Mix shapes so the page has rhythm.`}
-- Words: what the characters say or think, and the narration, go in "words" for each panel. They are written under the page, not drawn: a short narration line when it helps, and each spoken or thought line as Name: "line". A few lines per panel at most; "" for a silent panel.`;
+${comicWordsRule(chat)}`;
 }
+// what goes in "words": the story is told by them, mostly by what the characters say and think
+const comicWordsRule=chat=>`- Words: the "words" of each panel tell the story, because they are written under the page instead of in the picture. Mostly they are what the characters say and think: in almost every panel someone speaks or thinks. Write each line on its own line, speech as Name: "line" and thoughts as Name (thinks): "line"; in a fight, battle cries, taunts, gasps, orders and quick thoughts. Add a short narration line (${storyVoice(chat)}) only now and then: a new place, a time jump, or something nobody says aloud. Narration alone is not enough for a page. Give every panel its words, one to four lines; at most one panel per page may be silent, and only on purpose (a wordless reaction or a big splash).`;
 // the JSON shape of one planned page
-const comicPageJson=chat=>chat.comic.draw==='page'
-  ?`{"caption":"one sentence about the page","panels":[{"size":"big, normal or small","shot":"the camera, in a few words","words":"..."}],"image":${panelJson()}}`
-  :`{"caption":"one sentence about the page","panels":[${panelJson().replace(/^\{/,'{"size":"big, normal or small","shape":"wide, tall, square or strip","words":"...",')}]}`;
+const COMIC_WORDS_JSON='"words":"Name: \\"line\\"\\nName (thinks): \\"line\\"\\nnarration"';
+const comicPageJson=chat=>(chat.comic.draw==='page'
+  ?`{"caption":"one sentence about the page","panels":[{"size":"big, normal or small","shot":"the camera, in a few words",${COMIC_WORDS_JSON}}],"image":${panelJson()}}`
+  :`{"caption":"one sentence about the page","panels":[${panelJson().replace(/^\{/,`{"size":"big, normal or small","shape":"wide, tall, square or strip",${COMIC_WORDS_JSON},`)}]}`)
+  // a comic panel's "text" is its sound effect (all of the page's, when the page is one picture)
+  .replace('"text":"bubble text or \\"\\""',()=>({sfx:`"text":"${chat.comic.draw==='page'?'the sound effects, one per line':'the sound effect word'}, or \\"\\""`,none:'"text":""'})[chat.comic.words||'sfx']||'"text":"bubble text or \\"\\""');
 // the page the AI planned, cleaned; null when it has nothing to draw
 function comicPage(j,chat,char){
   const draw=chat.comic.draw==='page'?'page':'panels';
   const panels=arr(j?.panels).filter(x=>x&&typeof x==='object').slice(0,comicMax(chat.comic)).map(x=>{
-    const o={size:['big','small'].includes(x.size)?x.size:'normal',words:str(x.words).trim()};
+    const o={size:['big','small'].includes(x.size)?x.size:'normal',words:wordsText(x.words)};
     if(draw==='panels'){o.shape=comicShape(x.shape);o.p=finishPanel(cleanPanel(x),chat,char)}else o.shot=str(x.shot).trim();
     return o}).filter(x=>draw==='page'||panelOk(x.p));
   if(!panels.length)return null;
@@ -3765,6 +3780,8 @@ function comicPage(j,chat,char){
   if(draw==='page'){const img=j.image&&typeof j.image==='object'?finishPanel(cleanPanel(j.image),chat,char):null;if(!panelOk(img))return null;img.comic=true;if(!img.caption)img.caption=pg.caption;pg.image=img}
   return pg;
 }
+// a panel's words as lines; the AI sometimes sends a list of lines, or of {name, line} objects
+const wordsText=v=>(Array.isArray(v)?v:[v]).map(l=>l&&typeof l==='object'?((n,t)=>n?`${n}${l.thinks||/thought|think/i.test(str(l.type))?' (thinks)':''}: "${t.replace(/^"|"$/g,'')}"`:t)(str(l.name||l.speaker||l.character).trim(),str(l.line||l.text||l.words||l.say).trim()):str(l).trim()).filter(Boolean).join('\n');
 // the words under the page: one paragraph per panel, the speakers in bold
 const comicWords=pg=>pg.panels.map((x,k)=>x.words?`**${k+1}.** ${x.words.replace(/^([^\n:"“*]{1,40}):\s*/gm,'**$1:** ')}`:'').filter(Boolean).join('\n\n');
 // a planned page as its message's fields: the prompt kept as its image (the whole page, or the first panel standing for it) and the words as its story text
@@ -3961,9 +3978,11 @@ WORDS AFTER THIS PAGE:
 ${text(secs.slice(k+1,k+3))||'(nothing yet)'}
 
 ${want?`WHAT THE USER WANTS: ${want}\n`:''}${avoid?`WHAT THE USER DOESN'T WANT: ${avoid}\n`:''}
-Write new words for every panel: a short narration line when it helps (${storyVoice(chat)}), and each spoken or thought line as Name: "line". A few lines per panel at most; "" for a silent panel. Follow the user's wishes; keep what they didn't mention. The words must still match each panel's picture and connect to the pages before and after. ${storyUser(chat).text}
-Return one JSON object only: {"panels":[{"words":"..."}]} with exactly ${pg.panels.length} panels, in order.`,undefined,1500);
-    const ws=arr(r.j.panels).map(x=>str(x?.words).trim());if(!ws.some(Boolean))throw new Error('The AI returned no words. Try again.');
+Write new words for every panel.
+${comicWordsRule(chat)}
+Follow the user's wishes; keep what they didn't mention. The words must still match each panel's picture and connect to the pages before and after. ${storyUser(chat).text}
+${storyPreset(chat,char)}Return one JSON object only: {"panels":[{"words":"..."}]} with exactly ${pg.panels.length} panels, in order.`,undefined,1500);
+    const ws=arr(r.j.panels).map(x=>wordsText(x?.words));if(!ws.some(Boolean))throw new Error('The AI returned no words. Try again.');
     const words=pg.panels.map((x,n)=>ws[n]??x.words);
     return {text:comicWords({panels:pg.panels.map((x,n)=>({...x,words:words[n]}))}),words,usage:r.usage};
   }
@@ -3984,7 +4003,7 @@ ${text(secs.slice(k+1,k+3))||'(nothing yet)'}
 
 ${want?`WHAT THE USER WANTS: ${want}\n`:''}${avoid?`WHAT THE USER DOESN'T WANT: ${avoid}\n`:''}
 Write new text for this image: ${long?'1 to 3 short paragraphs':'2 to 4 sentences'}, like an illustrated novel: ${storyVoice(chat)}, what happens in this picture and what the characters say, think or feel (dialogue in quotes). Follow the user's wishes; keep what they didn't mention. It must still match the picture and connect smoothly to the text before and after. Never describe the art or mention prompts. ${storyUser(chat).text}
-Return one JSON object only: {"story":"..."}`,undefined,long?1200:600);
+${storyPreset(chat,char)}Return one JSON object only: {"story":"..."}`,undefined,long?1200:600);
   const t=str(j.story).trim();if(!t)throw new Error('The AI returned no text. Try again.');
   return {text:t,usage};
 }
@@ -4040,11 +4059,15 @@ function openStoryStart(c){
     <div class="hint" id="ss-h"></div>${povTextChips(voice)}
     <div class="tg"><div>Make it a comic<div class="hint">Each turn makes a comic page with several panels, instead of one picture.</div></div><label class="sw"><input type="checkbox" id="ss-c"><span></span></label></div>
     <div id="ss-cm" hidden>${comicOptsHTML()}</div>
+    <div class="row" style="margin-top:10px"><span class="small muted">Image preset</span>${presetSelect()}</div>
+    <div class="row" style="margin-top:8px"><span class="small muted">Prompt preset</span>${storyPresetSelect()}</div>
+    <div class="hint">The prompt preset's style and content rules are used for the story text and the pictures. Change both later in ⋮.</div>
     <div class="sheet-foot row"><button class="btn ghost" data-act="close" style="flex:1">Cancel</button><button class="btn" data-act="go" style="flex:2">${I.img} Start</button></div>`,{
     pp:b=>{pid=b.dataset.id;draw()},role:b=>{role=b.dataset.r;draw()},voice:b=>{voice=b.dataset.v;draw()},
-    go:()=>{const comic=$('#ss-c',pn).checked?comicOpts(pn):null;closeSheet();startImageStory(c.id,{personaId:pid,storyRole:roleOf(),povText:voice,comic})}
+    go:()=>{const comic=$('#ss-c',pn).checked?comicOpts(pn):null,promptId=$('.sp-sel',pn).value;closeSheet();startImageStory(c.id,{personaId:pid,storyRole:roleOf(),povText:voice,comic,promptId})}
   },{modal:true});
   $('#ss-c',pn).onchange=e=>$('#ss-cm',pn).hidden=!e.target.checked;comicOptsWire(pn);
+  $('.ip-pr',pn).onchange=e=>{S.settings.imgPreset=e.target.value;saveSettings()};
   const draw=()=>{
     $$('#ss-p .li',pn).forEach(x=>x.classList.toggle('on',x.dataset.id===pid));
     $$('[data-act=role]',pn).forEach(x=>x.classList.toggle('on',x.dataset.r===roleOf()));
@@ -4055,7 +4078,7 @@ function openStoryStart(c){
 }
 async function startImageStory(charId,o={}){
   const c=getChar(charId),world=c.kind==='world';
-  const chat={id:uid(),charId,mode:'image',personaId:o.personaId||S.settings.activePersona||S.personas[0]?.id,storyRole:o.storyRole,povText:o.povText,...(o.comic?{comic:o.comic}:{}),title:`${c.name} · ${o.comic?'Comic':'Image story'} · ${new Date().toLocaleDateString()}`,created:Date.now(),memory:'',vars:{},storyOutline:'',images:[],
+  const chat={id:uid(),charId,mode:'image',personaId:o.personaId||S.settings.activePersona||S.personas[0]?.id,storyRole:o.storyRole,povText:o.povText,...(o.comic?{comic:o.comic}:{}),...(o.promptId?{promptId:o.promptId}:{}),title:`${c.name} · ${o.comic?'Comic':'Image story'} · ${new Date().toLocaleDateString()}`,created:Date.now(),memory:'',vars:{},storyOutline:'',images:[],
     messages:[{id:uid(),role:'assistant',greeting:true,swipes:[o.comic?`Let's make a comic ${world?`set in ${c.name}`:`with ${c.name}`}! What is it about? Tell me the plot, the mood and roughly how many pages you want, and I'll suggest the first page. Or tell me what happens and I'll plan the page right away.`
       :`Let's make an image story ${world?`set in ${c.name}`:`with ${c.name}`}! What is it about? Tell me the plot, the mood and roughly how many images you want, and I'll suggest the first scene. Or describe a scene and I'll build it right away.`],sw:0,time:Date.now()}]};
   c.lastUsed=Date.now();await saveChars();await saveChat(chat);go('#/chat/'+chat.id);
@@ -4106,6 +4129,7 @@ function openQuick(c){
     <div class="chips" style="margin-top:8px"><button type="button" class="chip" data-act="role" data-r="character">${I.user} In the story</button><button type="button" class="chip" data-act="role" data-r="pov">${I.img} Through my eyes</button><button type="button" class="chip" data-act="role" data-r="observer">${I.book} Just watching</button></div>
     <div class="hint" id="qk-h"></div>${povTextChips(voice)}
     <div class="row" style="margin-top:10px"><span class="small muted">Image preset</span>${presetSelect()}</div>
+    <div class="row" style="margin-top:8px"><span class="small muted">Prompt preset</span>${storyPresetSelect()}</div>
     <div class="tg"><div>Put it in a “Quick images” folder<div class="hint">On the Chats page, so these don't mix with your stories.</div></div><label class="sw"><input type="checkbox" id="qk-f" checked><span></span></label></div>
     <div id="qk-msg" class="small" style="margin-top:8px"></div>
     <div class="sheet-foot row"><button class="btn ghost" data-act="close" style="flex:1">Cancel</button><button class="btn" data-act="go" style="flex:2">${I.wand} Make it</button></div>`,{
@@ -4116,7 +4140,7 @@ function openQuick(c){
       if(!activeApi()){msg.className='small err';msg.textContent='Add an API / proxy in Settings first.';return}
       const comic=$('#qk-c',pn).checked?comicOpts(pn):null;
       b.disabled=true;msg.className='small muted';msg.textContent=comic?`Planning ${n>1?`${n} comic pages`:'the comic page'}… (this can take a minute)`:n>1?`Writing ${n} images and their story… (this can take a minute)`:'Writing the image and its story…';
-      const chat={id:uid(),charId:c.id,mode:'image',quick:true,view:'story',personaId:pid,storyRole:roleOf(),povText:voice,...(comic?{comic}:{}),created:Date.now(),memory:'',vars:{},storyOutline:idea,images:[],
+      const chat={id:uid(),charId:c.id,mode:'image',quick:true,view:'story',personaId:pid,storyRole:roleOf(),povText:voice,...(comic?{comic}:{}),...($('.sp-sel',pn).value?{promptId:$('.sp-sel',pn).value}:{}),created:Date.now(),memory:'',vars:{},storyOutline:idea,images:[],
         messages:[{id:uid(),role:'assistant',greeting:true,swipes:[`${comic?'A quick comic':'Quick images'} with ${c.name}. Describe what happens next to keep going, or ask for a change.`],sw:0,time:Date.now()},{id:uid(),role:'user',swipes:[idea],sw:0,time:Date.now()}]};
       try{
         if(comic){
@@ -4723,11 +4747,11 @@ function chatMenu(chat,char,redraw){
       ok:async()=>{chat.storyOutline=$('#so').value.trim();await saveChat(chat);closeSheet();toast('Outline saved')}}),
     ipreset:()=>openSheet(`<h2>Image preset</h2><div class="list">${S.settings.imgPresets.map(p=>`<div class="li ${p.id===imgPreset().id?'on':''}" data-act="pick" data-id="${p.id}"><div class="lt"><b>${esc(p.name)}</b><span>${esc(joinTags(p.artist,p.footer.replace(/\n/g,' '),p.uc)||'Empty')}</span></div></div>`).join('')}</div><p class="hint">Edit presets in Settings → Image prompts.</p>`,{
       pick:async b=>{S.settings.imgPreset=b.dataset.id;await saveSettings();closeSheet();redraw();toast('Preset: '+imgPreset().name)}}),
-    prompt:()=>{const cur=chat.promptId||'',auto=promptFor({...chat,promptId:''});
-      openSheet(`<h2>Prompt preset for this chat</h2><div class="list"><div class="li ${!cur?'on':''}" data-act="pick" data-id=""><div class="lt"><b>Automatic</b><span>Follows the persona or the default: ${esc(auto.name)}</span></div></div>
+    prompt:()=>{const cur=chat.promptId||'',auto=promptFor({...chat,promptId:''}),story=chat.mode==='image';
+      openSheet(`<h2>Prompt preset for this chat</h2><div class="list"><div class="li ${!cur?'on':''}" data-act="pick" data-id=""><div class="lt"><b>${story?'None':'Automatic'}</b><span>${story?'Only the image story rules':`Follows the persona or the default: ${esc(auto.name)}`}</span></div></div>
         ${S.settings.prompts.map(p=>`<div class="li ${cur===p.id?'on':''}" data-act="pick" data-id="${p.id}"><div class="lt"><b>${esc(p.name)}</b><span>${esc(p.text.slice(0,90))}</span></div></div>`).join('')}</div>
-        <p class="hint">Edit or add presets in Settings → Prompt presets.</p>`,{
-        pick:async b=>{chat.promptId=b.dataset.id;await saveChat(chat);closeSheet();redraw();toast('Prompt: '+promptFor(chat).name)}})},
+        <p class="hint">${story?'In an image story, the preset\'s tone, style and content rules are used for the story text, the words and the pictures. ':''}Edit or add presets in Settings → Prompt presets.</p>`,{
+        pick:async b=>{chat.promptId=b.dataset.id;await saveChat(chat);closeSheet();redraw();toast('Prompt: '+(story&&!chat.promptId?'none':promptFor(chat).name))}})},
     cguests:()=>{
       const cands=S.chars.filter(x=>x.kind!=='world'&&!(char.members||[]).includes(x.id)).sort((a,b)=>(b.lastUsed||0)-(a.lastUsed||0)),on=new Set(guestsOf(chat,char).map(g=>g.id));
       const pn=openSheet(`<h2>Guests in this chat</h2><p class="hint">Characters from outside ${esc(char.name)} who visit this chat only. They keep their own personality, looks and abilities, but not their own world's lore. They don't join ${esc(char.name)}, and their own page stays as it is.</p>
