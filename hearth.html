@@ -401,8 +401,8 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.38.0',HEARTH_DATE='2026-11-03';
-const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
+const HEARTH_VERSION='1.39.0',HEARTH_DATE='2026-11-03';
+const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiNoMark:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
 const saveChars=()=>store.set('chars',S.chars);
@@ -1317,11 +1317,12 @@ async function dataToBlob(d){return (await fetch(d)).blob()}
 // big view of one picture with what you can do with it
 async function viewPicture(c,id,kind,after){
   const d=await getImgData(id);if(!d)return toast('Picture not found');
-  const g=(c.gallery||[]).find(x=>x.id===id);
+  const g=(c.gallery||[]).find(x=>x.id===id),rec=await store.get('img:'+id);
   openSheet(`<img src="${d}" alt="" style="width:100%;max-height:60dvh;object-fit:contain;border-radius:12px;background:#000">
     ${kind==='gallery'?`<label class="f">Note<small>optional</small></label><input id="gnote" value="${esc(g?.note||'')}" placeholder="e.g. Panel 3, the festival">`:''}
     <div class="menu" style="margin-top:8px">
       <button data-act="dl">${I.imp} Save to device</button>
+      ${naiOn()?`<button data-act="unmark">${I.wand} Remove watermark</button>`:''}${rec?.before?`<button data-act="remark">${I.regen} Undo watermark removal</button>`:''}
       <button data-act="main">${I.user} Use as main picture</button>
       ${kind==='gallery'?`<button data-act="pool">${I.regen} Add to profile pictures</button>`:''}
       ${kind==='gallery'&&g?`<button data-act="galmv">${I.folder} Move to album<small class="muted" style="margin-left:6px">now: ${esc(galAlbumName(c,g))}</small></button>`:''}
@@ -1330,6 +1331,8 @@ async function viewPicture(c,id,kind,after){
     </div>
     ${after?`<div class="sheet-foot"><button class="btn ghost block" data-act="back">${I.back} Back</button></div>`:''}`,{
     back:()=>{closeSheet();after()},
+    unmark:()=>openUnmark(id,()=>viewPicture(c,id,kind,after),after),
+    remark:async()=>{await undoMarks(id);toast('Put back as it was');viewPicture(c,id,kind,after)},
     galmv:()=>galMove(c,[id],()=>viewPicture(c,id,kind,after),()=>viewPicture(c,id,kind,after)),
     dl:async()=>{const b=await dataToBlob(d);download(`${safeName(c.name)}-${id}.${(b.type.split('/')[1]||'png').replace('jpeg','jpg')}`,b)},
     main:async()=>{c.avatar=await fileToImage(new File([await dataToBlob(d)],'p',{type:'image/png'}),768);await saveChars();closeSheet();toast('Main picture changed');after?.()},
@@ -2840,7 +2843,7 @@ async function vChat(id){
         back:again,dev:async()=>add(await addPictures(char,'gallery',chat.id)),
         app:()=>pickAppPicture(async id=>{try{await add([char.gallery?.some(g=>g.id===id)?id:await saveToGallery(char,id,x.p.caption,chat.id)])}catch(e){toast(e.message)}},again,{first:char.id,hint:''})}),
       toimgs:async()=>{if(!m.id){m.id=uid();await saveChat(chat)}openOnImages(x.p,{chatId:chat.id,title:chat.title||char.name,caption:`Panel ${k+1}${x.p.caption?`: ${x.p.caption}`:''}`,msgId:m.id,sw:m.sw,panel:k})},
-      pview:b=>{const id=b.dataset.id;viewMade(id,{c:char,chatId:chat.id,note:x.p.caption,backLabel:'Back to the panel',back:again,
+      pview:b=>{const id=b.dataset.id;viewMade(id,{c:char,chatId:chat.id,note:x.p.caption,backLabel:'Back to the panel',back:again,onChange:after,
         more:id===x.pics.at(-1)?[]:[{label:`${I.check} Use this one in the page`,fn:async()=>{x.pics=[...x.pics.filter(y=>y!==id),id];await after();again()}}],
         onDelete:async()=>{x.pics=x.pics.filter(y=>y!==id);await after()}})}
     });hydrate(pn);
@@ -3277,6 +3280,8 @@ const NAI_SIZES={portrait:[832,1216,'Portrait 832×1216'],landscape:[1216,832,'L
 const NAI_SAMPLERS=[['k_euler_ancestral','Euler Ancestral'],['k_euler','Euler'],['k_dpmpp_2s_ancestral','DPM++ 2S Ancestral'],['k_dpmpp_2m_sde','DPM++ 2M SDE'],['k_dpmpp_2m','DPM++ 2M'],['k_dpmpp_sde','DPM++ SDE']];
 const NAI_UC={heavy:'lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page',
   light:'lowres, artistic error, scan artifacts, worst quality, bad quality, jpeg artifacts, multiple views, very displeasing, too many watermarks, negative space, blank page',none:''};
+// signatures, watermarks and usernames artists put in a corner, kept out of every picture unless turned off (naiNoMark)
+const NAI_NOMARK='1.2::signature, watermark, artist name::, twitter username, patreon username, web address, dated, copyright notice';
 // the sizes to pick from, plus one read from a picture's metadata when it isn't one of them
 const naiSizeList=()=>[...Object.entries(NAI_SIZES).map(([v,[,,l]])=>[v,l]),...(S.settings.naiSize==='custom'&&S.settings.naiW?[['custom',`${S.settings.naiW}×${S.settings.naiH} (from a picture)`]]:[])];
 const naiSettings=()=>{const st=S.settings,v5=st.imgModel!=='v45',[w,h]=st.naiSize==='custom'&&st.naiW?[st.naiW,st.naiH]:NAI_SIZES[st.naiSize]||NAI_SIZES.portrait;
@@ -3301,7 +3306,7 @@ function naiRequest(p0,seed,o={}){
   const qual=st.naiQuality===false?'':'very aesthetic, masterpiece'+(p.text?.trim()?'':', no text');
   const addQ=s=>{if(!qual)return s;const i=s.search(/\n?Text:/);return i<0?joinTags(s,qual):joinTags(s.slice(0,i),qual)+s.slice(i)};
   // a comic page is several views on purpose: NovelAI's undesired preset would fight it
-  const uc=joinTags((NAI_UC[st.naiUc||'heavy']??'').split(', ').filter(t=>!(p.comic&&t==='multiple views')).join(', '),p.undesired);
+  const uc=joinTags((NAI_UC[st.naiUc||'heavy']??'').split(', ').filter(t=>!(p.comic&&t==='multiple views')).join(', '),st.naiNoMark===false?'':NAI_NOMARK,p.undesired);
   let base,chars=[];
   if(p.onebox){const [b,...rest]=p.onebox.split('|');base=[addQ(b.trim()),...rest.map(s=>s.trim())].join(' | ')}
   else{base=addQ(p.base);chars=p.characters.filter(c=>c.prompt?.trim()).map(c=>{const o=c.position&&typeof c.position==='object'?c.position:null;
@@ -3367,7 +3372,8 @@ async function naiGenerate(p,signal,o){
 }
 // pictures in and out of NovelAI's tools
 // a picture's shape at about the given area, in steps of 64 (what NovelAI takes)
-function fitSize(w,h,area){const r=w/h,W=Math.sqrt(area*r);return [Math.max(64,Math.round(W/64)*64),Math.max(64,Math.round(W/r/64)*64)]}
+// the same shape on NovelAI's 64 grid, never over area (so a 1 MP limit stays free on Opus)
+function fitSize(w,h,area){const r=w/h;for(let a=area;;a*=.97){const W=Math.sqrt(a*r),x=Math.max(64,Math.round(W/64)*64),y=Math.max(64,Math.round(W/r/64)*64);if(x*y<=area||a<16384)return [x,y]}}
 async function imgB64(src,w,h){const i=await loadImg(src),c=document.createElement('canvas');w=w||i.naturalWidth;h=h||i.naturalHeight;c.width=w;c.height=h;c.getContext('2d').drawImage(i,0,0,w,h);return c.toDataURL('image/png').split(',')[1]}
 // NovelAI's picture tools: upscale (×2) and the director tools; some send more than one picture
 const NAI_TOOLS={upscale:'Upscale ×2','bg-removal':'Remove background',lineart:'Line art',sketch:'Sketch',colorize:'Colorize',emotion:'Change emotion',declutter:'Declutter'};
@@ -3399,6 +3405,7 @@ async function viewMade(id,o={}){
       ${c?`<button data-act="gsave" ${saved?'disabled':''}>${saved?`${I.check} Saved to ${esc(c.name)}'s gallery`:`${I.plus} Save to ${esc(c.name)}'s gallery`}</button>`:''}
       <button data-act="gother">${I.folder} Save to ${c?'another':'a'} gallery…</button>
       <button data-act="dl">${I.imp} Save to device</button>
+      ${naiOn()?`<button data-act="unmark">${I.wand} Remove watermark</button>`:''}${rec?.before?`<button data-act="remark">${I.regen} Undo watermark removal</button>`:''}
       ${(o.more||[]).map((x,k)=>`<button data-act="more" data-k="${k}">${x.label}</button>`).join('')}
       ${o.images?'':`<button data-act="toimg">${I.img} Edit on the Images page</button>`}
       ${o.noMeta?'':`<button data-act="tometa" hidden>${I.edit} Use its prompt ${o.images?'and settings':'on the Images page'}</button>`}
@@ -3412,6 +3419,8 @@ async function viewMade(id,o={}){
       await saveToGallery(t,id,o.note,t.id===c?.id?o.chatId:'');toast(`Saved to ${t.name}'s gallery`);viewMade(id,o)},()=>viewMade(id,o)),
     dl:async()=>download(`hearth-${rec.seed??id}.png`,await dataToBlob(rec.data)),
     more:b=>o.more[+b.dataset.k].fn(),
+    unmark:()=>openUnmark(id,()=>viewMade(id,o),o.onChange),
+    remark:async()=>{await undoMarks(id);await o.onChange?.();toast('Put back as it was');viewMade(id,o)},
     // a copy goes to the Images page, for image to image, inpainting and the tools
     toimg:async()=>{const pg=await imgPageData(),nid=await putImg(rec.data,{seed:rec.seed,made:true});pg.hist.unshift({id:nid,at:Date.now(),seed:rec.seed,form:null});saveImgPage();closeSheet();go('#/images');toast('Added to the Images page: tap it there for image to image and the tools')},
     tometa:()=>o.meta?o.meta(id):importToImages(id),
@@ -4296,6 +4305,7 @@ function stripNaiExtras(base,uc){
   const q=head.match(/,?\s*very aesthetic, (masterpiece|amazing quality)(, no text)?\s*$/);
   if(q){base=head.slice(0,q.index)+tail;quality=true}
   for(const k of ['heavy','light'])if(uc.startsWith(NAI_UC[k])){uc=uc.slice(NAI_UC[k].length).replace(/^\s*,\s*/,'');ucp=k;break}
+  if(uc.startsWith(NAI_NOMARK))uc=uc.slice(NAI_NOMARK.length).replace(/^\s*,\s*/,'');
   return {base,uc,quality,ucp};
 }
 // A picture made with one of your image presets: its artist tags, base lines and undesired tags are all in the prompt.
@@ -4951,6 +4961,49 @@ async function inpaintBlend(orig,result,g,w,h){
   try{const meta=readPngText(await (await fetch(result)).arrayBuffer());for(const k of ['Title','Description','Software','Source','Comment'])if(meta[k])blob=pngWithText(await blob.arrayBuffer(),k,meta[k])}catch{}
   return blobToData(blob);
 }
+// Remove watermark: NovelAI draws the edges where signatures sit again (the bottom corners, all four corners, the edges
+// or a spot you paint), from the picture's own prompt when it has one, and only those parts change. The picture is
+// replaced where it is, so it's clean everywhere it's used; the original is kept so it can be put back.
+const MARK_AREAS={bottom:['Bottom corners','Where most signatures are'],corners:['All four corners',''],edges:['All edges','Strips along every side']};
+function markMask(area,w,h){
+  const c=document.createElement('canvas');c.width=w;c.height=h;const x=c.getContext('2d');x.fillStyle='#000';x.fillRect(0,0,w,h);x.fillStyle='#fff';
+  const cw=Math.round(w*.3),ch=Math.round(h*.13),ew=Math.round(w*.09),eh=Math.round(h*.08);
+  if(area==='edges'){x.fillRect(0,0,w,eh);x.fillRect(0,h-eh,w,eh);x.fillRect(0,0,ew,h);x.fillRect(w-ew,0,ew,h)}
+  else{x.fillRect(0,h-ch,cw,ch);x.fillRect(w-cw,h-ch,cw,ch);if(area==='corners'){x.fillRect(0,0,cw,ch);x.fillRect(w-cw,0,cw,ch)}}
+  return c.toDataURL('image/png').split(',')[1];
+}
+// the size NovelAI works at for a picture: its own, or the same shape at 1 MP at most
+const markSize=async data=>{const i=await loadImg(data),nw=i.naturalWidth,nh=i.naturalHeight;return [nw,nh,...fitSize(nw,nh,Math.min(nw*nh,1048576))]};
+// mask: an area of MARK_AREAS, or a painted mask (base64 PNG at the working size)
+async function removeMarks(id,mask){
+  const rec=await store.get('img:'+id);if(!rec?.data)throw new Error('Picture not found');
+  const [nw,nh,w,h]=await markSize(rec.data),m=await metaOf(id),f=m&&(m.whole||m.form);
+  const p=f?{caption:'',base:f.base,characters:(m.form.chars||[]).map(c=>({name:'',prompt:c.prompt,undesired:c.uc||'',position:c.pos||''})),undesired:f.uc||'',text:'',own:true}
+    :{caption:'',base:'detailed background',characters:[],undesired:'',text:''};
+  const mk=await inpaintMask(MARK_AREAS[mask]?markMask(mask,w,h):mask,w,h);
+  const {data}=await naiGenerate(p,undefined,{image:await imgB64(rec.data,w,h),w,h,mask:mk.b64,inpaint:1});
+  const out=await inpaintBlend(rec.data,data,mk.grid,nw,nh);
+  await store.set('img:'+id,{...rec,data:out,before:rec.before||rec.data});markShown(id,out);
+}
+async function undoMarks(id){const rec=await store.get('img:'+id);if(!rec?.before)return;const {before,...r}=rec;await store.set('img:'+id,{...r,data:before});markShown(id,before)}
+const markShown=(id,d)=>{imgCache.set(id,d);metaSeen.delete(id);$$(`img[data-img="${id}"]`).forEach(el=>el.src=d)};
+// the sheet: back reopens the picture, changed runs after the picture changed (a comic page is put together again)
+function openUnmark(id,back,changed,painted){
+  const run=async mask=>{const msg=$('#um-msg');$$('#sheet .li').forEach(x=>x.style.pointerEvents='none');msg.className='small muted';msg.textContent='Removing it… (NovelAI is redrawing that part)';
+    try{await removeMarks(id,mask);await changed?.();toast('Watermark removed. Open the picture to undo it.',4000);back()}
+    catch(e){if(msg.isConnected){msg.className='small err';msg.textContent=e.message;$$('#sheet .li').forEach(x=>x.style.pointerEvents='')}}};
+  openSheet(`<h2>Remove watermark</h2><p class="hint">NovelAI draws the part you choose again, without the signature or watermark, using the picture's own prompt when it has one. The rest of the picture stays the same, and you can undo it.</p>
+    <div class="list">${Object.entries(MARK_AREAS).map(([k,[l,s]])=>`<div class="li" data-act="area" data-k="${k}"><div class="lt"><b>${l}</b>${s?`<span>${s}</span>`:''}</div></div>`).join('')}
+      <div class="li" data-act="paint"><div class="lt"><b>Paint the spot</b><span>Paint over the watermark yourself</span></div></div></div>
+    <div class="small" id="um-msg" style="margin-top:8px"></div>
+    <div class="hint">On Opus it should cost no Anlas up to 1024×1024 with 28 steps or fewer; bigger pictures are redrawn at that size and blended back in.</div>
+    <div class="sheet-foot"><button class="btn ghost block" data-act="back">${I.back} Back</button></div>`,{
+    back,area:b=>run(b.dataset.k),
+    paint:async()=>{const rec=await store.get('img:'+id);if(!rec?.data)return toast('Picture not found');const [,,w,h]=await markSize(rec.data);
+      openMaskEditor(rec.data,w,h,null,b64=>b64?openUnmark(id,back,changed,b64):openUnmark(id,back,changed),()=>openUnmark(id,back,changed))}
+  });
+  if(painted)run(painted);
+}
 // NovelAI's upscaler and director tools for one picture; done(the pictures it sent, the tool's name)
 function openNaiTools(src,done,back){
   openSheet(`<h2>Picture tools</h2><p class="hint">NovelAI's upscaler and director tools. They may cost Anlas, depending on the picture's size.</p>
@@ -5026,6 +5079,7 @@ async function vImages(){
       <div class="grid2"><div><label class="f">Steps</label><input type="number" data-s="naiSteps" min="1" max="50" value="${st.naiSteps||23}"></div><div><label class="f">Guidance</label><input type="number" data-s="naiScale" min="0" max="10" step="0.1" value="${st.naiScale||''}" placeholder="${st.imgModel==='v45'?5:7}"></div></div>
       <div class="grid2"><div><label class="f">Sampler</label>${opt('naiSampler',NAI_SAMPLERS,st.naiSampler||'k_euler_ancestral')}</div><div><label class="f">Seed<small>empty = random</small></label><input type="number" data-s="naiSeed" min="0" value="${st.naiSeed||''}" placeholder="random"></div></div>
       <div class="grid2"><div><label class="f">Quality tags</label>${opt('naiQuality',[['1','On'],['','Off']],st.naiQuality===false?'':'1')}</div><div><label class="f">Undesired preset</label>${opt('naiUc',[['heavy','Heavy'],['light','Light'],['none','None']],st.naiUc||'heavy')}</div></div>
+      <label class="f">Signatures and watermarks</label>${opt('naiNoMark',[['1','Keep them out'],['','Allow']],st.naiNoMark===false?'':'1')}
     </details>
     <button class="btn block" data-act="gen" id="ig-go" style="margin-top:14px">${I.img} Generate</button>
     <div class="small muted" id="ig-msg" style="margin-top:6px;text-align:center"></div>
@@ -5104,7 +5158,7 @@ async function vImages(){
   };
   view.oninput=e=>{const t=e.target,k=t.dataset.s;
     if(t.dataset.b&&pg.base){pg.base[t.dataset.b]=+t.value;$('#bv-'+t.dataset.b).textContent=t.value;saveImgPage();return}
-    if(k){S.settings[k]=k==='naiQuality'?!!t.value:t.type==='number'?(t.value===''?'':+t.value):t.value;saveSettings();freeNote();
+    if(k){S.settings[k]=k==='naiQuality'||k==='naiNoMark'?!!t.value:t.type==='number'?(t.value===''?'':+t.value):t.value;saveSettings();freeNote();
       if(k==='imgModel'||k==='naiSize')drawPos();return} // the positions follow the picture's shape and the model's grid
     if(t.id==='ig-pai'){f.posAI=t.checked;if(!t.checked)spreadDots(f);drawPos();saveImgPage();return}
     read()};
@@ -5392,6 +5446,7 @@ function vSettings(){
     <div class="grid2"><div><label class="f">Sampler</label><select data-k="naiSampler">${NAI_SAMPLERS.map(([v,l])=>`<option value="${v}" ${(st.naiSampler||'k_euler_ancestral')===v?'selected':''}>${l}</option>`).join('')}</select></div>
     <div><label class="f">Seed<small>empty = random</small></label><input type="number" data-k="naiSeed" min="0" value="${st.naiSeed||''}" placeholder="random"></div></div>
     ${tg('naiQuality','Add quality tags',"NovelAI's “very aesthetic, masterpiece, no text”, like the Quality Tags switch on NovelAI. “no text” is left out when a picture has speech bubbles.")}
+    ${tg('naiNoMark','Keep out signatures and watermarks','Adds signature, watermark, artist name, usernames and web addresses to the undesired content of every picture. Sound effects and titles still work. Any that slip through: open the picture → Remove watermark.')}
     <label class="f">Undesired content preset<small>added before your undesired tags</small></label><select data-k="naiUc">${[['heavy','Heavy'],['light','Light'],['none','None']].map(([v,l])=>`<option value="${v}" ${(st.naiUc||'heavy')===v?'selected':''}>${l}</option>`).join('')}</select>
     <div class="hint">On Opus, pictures are free up to 1024×1024 with 28 steps or fewer. Larger sizes and more steps cost Anlas. Your image preset's artist tags and undesired tags are always included.</div>
   </div></div>
