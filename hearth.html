@@ -401,7 +401,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.39.0',HEARTH_DATE='2026-11-03';
+const HEARTH_VERSION='1.40.0',HEARTH_DATE='2026-11-03';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiNoMark:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -2725,7 +2725,7 @@ async function vChat(id){
     const sw=!u&&isLast&&(m.swipes.length>1||!m.greeting)?`<div class="swipes"><button data-act="swl" ${m.sw===0||GEN?'disabled':''}>‹</button><span>${m.sw+1}/${m.swipes.length}</span><button data-act="swr" ${GEN||(m.greeting&&m.sw>=m.swipes.length-1)?'disabled':''}>›</button></div>`:'';
     return `<div class="msg ${u?'user':'bot'}${hasScene(chat,m)?' hasscene':''}" data-i="${i}"><img class="av" data-act="zoom" src="${esc(u?avatar(who):chatAvatar(chat,char,m))}" alt=""><div class="mw"><div class="nm">${esc(name)}</div><div class="bubble">${body}</div>${generating||!S.settings.showTokens?'':tokLine(m)}${lk?`<div class="lookups">Looked up: ${lk.map(esc).join(' · ')}</div>`:''}${sceneLinksHTML(chat,m)}
       ${promptPics(m).length?thumbs(promptPics(m),'cview'):''}
-      ${story&&!u&&!generating&&comicOf(m)?.draw==='panels'?`${m.pics?.[m.sw]?.length?thumbs(m.pics[m.sw],'sview').replace('class="thumbs"','class="thumbs cpage"'):''}${comicTilesHTML(m)}${m.pics?.[m.sw]?.length?'':`<div class="row" style="margin-top:6px"><button class="btn ghost sm" data-act="attach">${I.img} Attach a finished page</button></div>`}${m.story?.[m.sw]?`<div class="storytxt">${paras(macro(m.story[m.sw],char.name,p?.name||'You'))}</div>`:''}`
+      ${story&&!u&&!generating&&comicOf(m)?.draw==='panels'?`${m.pics?.[m.sw]?.length?thumbs(m.pics[m.sw],'sview').replace('class="thumbs"','class="thumbs cpage"'):''}${pageShown(m)?`<div class="row" style="margin-top:6px"><button class="btn ghost sm" data-act="bubbles">${I.chat} Speech bubbles</button></div>`:''}${comicTilesHTML(m)}${m.pics?.[m.sw]?.length?'':`<div class="row" style="margin-top:6px"><button class="btn ghost sm" data-act="attach">${I.img} Attach a finished page</button></div>`}${m.story?.[m.sw]?`<div class="storytxt">${paras(macro(m.story[m.sw],char.name,p?.name||'You'))}</div>`:''}`
       :story&&!u&&!generating&&m.imgs?.[m.sw]?`${m.pics?.[m.sw]?.length?thumbs(m.pics[m.sw],'sview').replace('class="thumbs"',comicOf(m)?'class="thumbs cpage"':'class="thumbs"'):''}<div class="row" style="margin-top:6px;flex-wrap:wrap">${naiOn()?`<button class="btn sm" data-act="ngenm">${I.img} Generate picture</button>`:''}<button class="btn ghost sm" data-act="attach">${I.img} Attach picture</button><button class="btn ghost sm" data-act="toimgs">${I.edit} Open on Images page</button></div>${m.story?.[m.sw]?`<div class="storytxt">${paras(macro(m.story[m.sw],char.name,p?.name||'You'))}</div>`:''}${storyCardsHTML(m.imgs[m.sw],i)}`:''}
       ${story&&!u&&isLast&&!generating&&m.next?.[m.sw]?`<div class="nextsug"><div><b>Next:</b> ${esc(m.next[m.sw])}</div><button class="btn sm" data-act="usenext" ${GEN?'disabled':''}>Use this ›</button></div>`:''}
       ${!story&&!u&&isLast&&!generating&&m.cut?.[m.sw]?`<div class="controw"><button class="btn ghost sm" data-act="cont" ${GEN?'disabled':''}>Continue ›</button><span>This reply was cut off.</span></div>`:''}
@@ -2786,6 +2786,35 @@ async function vChat(id){
     if(failed)openSheet(`<h2 class="err">Couldn't build the prompts</h2><div class="box pre small">${esc(failed.message)}</div><br><button class="btn ghost block" data-act="close">Close</button>`);
   }
   // one panel of a comic page drawn panel by panel: its pictures, Generate, Attach, the Images page and its prompt
+  // a page's speech bubbles: on or off, their size, and dragged where they read best; Done puts the page together again
+  async function bubbleSheet(i){
+    const m=chat.messages[i],pg=comicOf(m);if(!pg?.pageId)return;
+    const w=clone(pg); // changed here, and kept only with Done
+    let r=null,drag=null,busy=false;const cv=document.createElement('canvas');
+    const redraw=async()=>{r=await comicCanvas(w,{imgs:r?.imgs,canvas:cv})};
+    const pn=openSheet(`<h2>Speech bubbles</h2>
+      <div class="tg"><div>Bubbles on this page<div class="hint">The words under the page, lettered on the panels.</div></div><label class="sw"><input type="checkbox" id="bb-on" ${w.letters?'checked':''}><span></span></label></div>
+      <div id="bb-box" ${w.letters?'':'hidden'}><div class="chips" style="margin-top:0">${[['small','Small'],['','Normal'],['big','Big']].map(([v,l])=>`<button type="button" class="chip bb-s ${(w.lsize||'')===v?'on':''}" data-act="bsize" data-v="${v}">${l} text</button>`).join('')}</div>
+        <p class="hint">Drag a bubble to move it. To change the words, use Edit text or Rewrite.</p></div>
+      <div class="noswipe bb-wrap" style="margin-top:8px"></div>
+      <div class="sheet-foot row"><button class="btn ghost" data-act="breset" style="flex:1">${I.regen} Reset places</button><button class="btn" data-act="bdone" style="flex:2">${I.check} Done</button></div>`,{
+      bsize:async b=>{if(b.dataset.v)w.lsize=b.dataset.v;else delete w.lsize;$$('.bb-s',pn).forEach(x=>x.classList.toggle('on',x===b));await redraw()},
+      breset:async()=>{w.panels.forEach(x=>delete x.bub);await redraw()},
+      bdone:async b=>{b.disabled=true;for(const k of ['letters','lsize'])if(w[k])pg[k]=w[k];else delete pg[k];pg.panels.forEach((x,n)=>{if(w.panels[n]?.bub)x.bub=w.panels[n].bub;else delete x.bub});await comicRebuild(m,m.sw);await saveChat(chat);closeSheet();renderMsgs();toast('Page updated')}
+    },{modal:true});
+    cv.style.cssText='width:100%;display:block;border-radius:8px;touch-action:none;background:#fff';$('.bb-wrap',pn).append(cv);
+    $('#bb-on',pn).onchange=async e=>{if(e.target.checked)w.letters=true;else delete w.letters;$('#bb-box',pn).hidden=!w.letters;await redraw()};
+    const at=e=>{const b=cv.getBoundingClientRect();return [(e.clientX-b.left)/b.width*cv.width,(e.clientY-b.top)/b.height*cv.height]};
+    cv.onpointerdown=e=>{if(!r)return;const [px,py]=at(e),hit=[...r.boxes].reverse().find(b=>px>=b.x-30&&px<=b.x+b.w+30&&py>=b.y-30&&py<=b.y+b.h+30);if(!hit)return;
+      e.preventDefault();cv.setPointerCapture?.(e.pointerId);drag={hit,dx:px-hit.cx,dy:py-hit.cy}};
+    cv.onpointermove=async e=>{if(!drag||busy)return;const [px,py]=at(e),{hit}=drag,rc=hit.rect,b=(w.panels[hit.panel].bub??=[]);
+      // the other bubbles of the panel stay where they are now, so nothing jumps when one is moved
+      r.boxes.filter(o=>o.panel===hit.panel).forEach(o=>{b[o.k]??={x:(o.cx-rc.x)/rc.w,y:(o.cy-rc.y)/rc.h}});
+      b[hit.k]={x:Math.min(1,Math.max(0,(px-drag.dx-rc.x)/rc.w)),y:Math.min(1,Math.max(0,(py-drag.dy-rc.y)/rc.h))};
+      busy=true;await redraw();busy=false;drag.hit=r.boxes.find(o=>o.panel===hit.panel&&o.k===hit.k)||hit};
+    cv.onpointerup=cv.onpointercancel=()=>{drag=null};
+    await redraw();
+  }
   // the cover in the header follows the one chosen
   const redrawTop=()=>{const hi=$('.top img',view);if(!hi)return;if(chat.cover){hi.dataset.img=chat.cover;delete hi.dataset.loaded;hydrate($('.top',view))}else{delete hi.dataset.img;hi.src=chatAvatar(chat,char)}};
   // the comic's cover: versions like a panel's, made here, attached, or copied from one of its pages
@@ -2998,6 +3027,7 @@ async function vChat(id){
       if(char.gallery?.some(g=>g.id===id))viewPicture(char,id,'gallery',()=>{if(!char.gallery.some(g=>g.id===id))drop();else renderMsgs()});
       else viewMade(id,{c:char,chatId:chat.id,note:m?.imgs?.[m.sw]?.caption,backLabel:'Back to the story',onDelete:drop})},
     cover:()=>coverSheet(),
+    bubbles:b=>bubbleSheet(idxOf(b)),
     cpanel:b=>comicPanel(idxOf(b),+b.dataset.k||0),
     // a comic drawn panel by panel: one tap makes the picture of the next panel that has none
     cgen:async b=>{const i=idxOf(b),m=chat.messages[i],pg=comicOf(m),k=pg?.panels.findIndex(x=>!x.pics?.length)??-1;if(k<0)return;
@@ -3031,7 +3061,7 @@ async function vChat(id){
     rsave:async b=>{const i=idxOf(b),m=chat.messages[i],t=$('textarea',b.closest('.rd-sec')).value.trim();(m.story??=[])[m.sw]=t;
       // a comic page: the numbered paragraphs go back to their panels
       const pg=comicOf(m),by={};if(pg){for(const para of t.split(/\n\s*\n/)){const r=para.match(/^\*\*(\d+)\.\*\*\s*([^]*)$/);if(r)by[+r[1]-1]=r[2].replace(/\*\*([^*\n]+?):\*\*/g,'$1:').trim()}
-        if(Object.keys(by).length)pg.panels.forEach((x,n)=>x.words=by[n]||'')}
+        if(Object.keys(by).length)pg.panels.forEach((x,n)=>x.words=by[n]||'');if(pg.letters)await comicRebuild(m,m.sw)}
       await saveChat(chat);renderMsgs()},
     fillstory:async b=>{if(!activeApi())return toast('Add an API / proxy in Settings first',4000);b.disabled=true;b.textContent='Writing…';
       try{const r=await fillStory(chat,char);renderMsgs();toast(`Wrote the story for ${r.n} image${r.n===1?'':'s'}${r.usage?` · ${usageText(r.usage)}`:''}`,4500)}
@@ -3044,7 +3074,7 @@ async function vChat(id){
         const r=await rewriteStory(chat,char,i,w.want,w.avoid);
         msg.className='small';msg.innerHTML=`<div class="storytxt" style="margin-top:8px">${paras(macro(r.text,char.name,personaFor(chat)?.name||'You'))}</div><div class="tokl">${usageText(r.usage)}</div>
           <div class="row" style="margin-top:8px"><button class="btn sm" data-act="use">${I.check} Use this</button><span class="small muted">or change the wishes and tap Redo again</span></div>`;
-        SH.use=async()=>{const m=chat.messages[i];(m.story??=[])[m.sw]=r.text;if(r.words)comicOf(m)?.panels.forEach((x,n)=>x.words=r.words[n]);await saveChat(chat);closeSheet();renderMsgs();toast('Story text updated')}})},
+        SH.use=async()=>{const m=chat.messages[i];(m.story??=[])[m.sw]=r.text;if(r.words){comicOf(m)?.panels.forEach((x,n)=>x.words=r.words[n]);if(comicOf(m)?.letters)await comicRebuild(m,m.sw)}await saveChat(chat);closeSheet();renderMsgs();toast('Story text updated')}})},
     // the whole reply again (prompts and story text), steered by the user's wishes
     redonotes:()=>{if(GEN)return toast('Wait for the reply to finish');
       if(!story)return wishSheet('Redo with notes','Makes a new version of this reply that follows your notes. The current one stays: swipe back to compare.',async(w,pn)=>{
@@ -3800,7 +3830,9 @@ const COMIC_SHAPES={wide:[1216,832,'Wide'],tall:[832,1216,'Tall'],square:[1024,1
 const comicShape=s=>COMIC_SHAPES[s]?s:'wide';
 const comicMax=c=>c?.draw==='page'?4:6;
 const comicOf=m=>m?.comic?.[m.sw]||null;
-const COMIC_WORDS={sfx:'Sound effects only',bubbles:'Speech bubbles too',none:'No words at all'};
+const COMIC_WORDS={sfx:'Sound effects only',bubbles:'NovelAI draws bubbles',none:'No words at all'};
+// Hearth letters the words in speech bubbles: panel by panel only, on unless turned off or NovelAI draws its own
+const comicLetters=c=>!!c&&c.draw!=='page'&&c.letters!==false&&c.words!=='bubbles';
 const comicTextMode=chat=>({bubbles:true,none:false}[chat.comic?.words]??'sfx');
 function comicRules(chat){
   const c=chat.comic,max=comicMax(c),n=Math.min(+c.count||0,max),page=c.draw==='page';
@@ -3813,7 +3845,8 @@ function comicRules(chat){
 - Reading order: left to right, top to bottom.${page?`
 - The whole page is ONE picture: add comic (and 4koma for a vertical strip of four), then describe the layout and each panel in reading order with short sentences in the base prompt, like "Panel 1, top, wide: ...". Few panels draw much better than many.${comicTextMode(chat)==='sfx'?' Put the sound effects of all panels in "text", one per line in reading order, and say in the base prompt which panel each one is in.':''}`:`
 - Each panel is its own full picture, with its own prompt: no comic, panel, border or multiple views tags${c.insets?' (except the one inset described below)':''}.
-- Shape of each panel's picture: "wide" (landscape: places, action across the frame, several people), "tall" (portrait: one standing figure, falling, something tall), "square" (a face, a reaction) or "strip" (very wide and short: eyes, a skyline, a quick beat). Mix shapes so the page has rhythm.`}
+- Shape of each panel's picture: "wide" (landscape: places, action across the frame, several people), "tall" (portrait: one standing figure, falling, something tall), "square" (a face, a reaction) or "strip" (very wide and short: eyes, a skyline, a quick beat). Mix shapes so the page has rhythm.${comicLetters(c)?`
+- Speech bubbles: Hearth letters each panel's words in bubbles on its picture, mostly in the upper part. Where someone speaks, leave some calm space there (sky, a wall, background), keep faces away from the very top edge, and keep each spoken line short (about 15 words at most).`:''}`}
 ${!page&&c.insets?`- Insets: a big panel may have one small inset, a small frame in a corner of the same picture that shows a detail of the same moment: a close-up of eyes, a hand on a sword hilt, an object, or a quick reaction face. Use it only when it adds to the moment: most pages have none, and never more than one per page. For that panel, write in "inset" what the inset shows and where (like "top right: close-up of her narrowed eyes"), add the tag inset to its base prompt, and describe the inset there in one short sentence. Every other panel has "inset":"".
 `:''}${comicWordsRule(chat)}`;
 }
@@ -3836,7 +3869,7 @@ function comicPage(j,chat,char){
   panels.filter(x=>x.inset).forEach((x,k)=>{if(k){delete x.inset;const un=t=>t.split(',').filter(y=>y.trim().toLowerCase()!=='inset').join(',');if(x.p.onebox)x.p.onebox=x.p.onebox.split('|').map(un).join('|');else x.p.base=un(x.p.base);return}x.p.comic=true;
     if(!/\binset\b/i.test(x.p.onebox||x.p.base)){if(x.p.onebox){const [b,...r]=x.p.onebox.split('|');x.p.onebox=[joinTags(b,'inset',x.inset),...r].join(' |')}else x.p.base=joinTags(x.p.base,'inset',x.inset)}});
   if(!panels.length)return null;
-  const pg={draw,caption:str(j.caption).trim()||panels[0].p?.caption||'',panels};
+  const pg={draw,caption:str(j.caption).trim()||panels[0].p?.caption||'',panels};if(comicLetters(chat.comic))pg.letters=true;
   if(draw==='page'){const img=j.image&&typeof j.image==='object'?finishPanel(cleanPanel(j.image),chat,char):null;if(!panelOk(img))return null;img.comic=true;if(!img.caption)img.caption=pg.caption;pg.image=img}
   return pg;
 }
@@ -3856,18 +3889,107 @@ function comicRows(panels){
     const cap=[...cur,k].every(j=>panels[j].size==='small')?3:2;if(cur.length>=cap)flush();cur.push(k)});
   flush();return rows;
 }
-// the panels' pictures (the newest of each) as one page: the panels of a row get the same height and fill its width
-async function buildComicPage(pg){
-  const ids=pg.panels.map(x=>x.pics?.at(-1));if(ids.some(x=>!x))return null;
-  const imgs=[];for(const id of ids){const d=await getImgData(id);if(!d)return null;imgs.push(await loadImg(d))}
-  const W=1280,M=28,G=14,B=4,maxH=W*.9;
+/* Speech bubbles drawn by Hearth (pg.letters): each panel's words are lettered on its picture, like a printed comic.
+   Spoken lines get an oval with a tail toward the speaker, thoughts a cloud with little bubbles, and narration a box
+   in a corner. They're placed at the top in reading order, near whoever speaks (from the characters' positions), and
+   can be dragged elsewhere (panel.bub: centers as fractions of the panel). pg.lsize scales the lettering. */
+const LETTER_FONT='"Comic Neue","Comic Sans MS","Chalkboard SE","Marker Felt",system-ui,sans-serif';
+let letterFontP=null;
+const letterFont=()=>letterFontP??=(async()=>{try{
+  if(!$('#comic-font')){const l=document.createElement('link');l.id='comic-font';l.rel='stylesheet';l.href='https://fonts.googleapis.com/css2?family=Comic+Neue:wght@700&display=swap';document.head.append(l);
+    await new Promise(ok=>{l.onload=l.onerror=ok;setTimeout(ok,4000)})}
+  await Promise.race([document.fonts.load('700 20px "Comic Neue"','AB'),new Promise(ok=>setTimeout(ok,4000))]);
+}catch{}})();
+// a panel's words as bubbles: say (Name: "line"), think (Name (thinks): "line") or cap (narration)
+function letterLines(words){
+  return String(words||'').split('\n').map(l=>l.replace(/\*+/g,'').trim()).filter(Boolean).map(l=>{
+    const r=l.match(/^([^:"“]{1,40}?)\s*(\((?:thinks?|thinking|thoughts?)\))?\s*:\s*["“](.+?)["”]?\s*$/i);
+    return r?{kind:r[2]?'think':'say',who:r[1].trim(),text:r[3].trim()}:{kind:'cap',text:l.replace(/^["“]|["”]$/g,'')}});
+}
+// where a speaker is across the panel (0 to 1), from their character position; null when it isn't known
+function speakerX(p,who){
+  const cs=(p?.characters||[]).filter(c=>c.prompt||c.name),w=String(who||'').toLowerCase(),first=w.split(/\s+/)[0];
+  const c=cs.find(c=>(c.name||'').toLowerCase()===w)||cs.find(c=>first&&(c.name||'').toLowerCase().split(/\s+/)[0]===first);
+  const pos=c&&(typeof c.position==='object'&&c.position?c.position:naiCenter(c.position));
+  return pos?.x!=null?Math.min(.9,Math.max(.1,+pos.x)):null;
+}
+function wrapText(x,text,maxW){
+  const out=[];let cur='';
+  for(const w of text.split(/\s+/)){const t=cur?cur+' '+w:w;if(x.measureText(t).width<=maxW||!cur)cur=t;else{out.push(cur);cur=w}}
+  if(cur)out.push(cur);return out;
+}
+// letters one panel at (px,py), pw×ph on the page; returns the bubbles' boxes on the page (for dragging them)
+function letterPanel(x,pan,px,py,pw,ph,scale=1){
+  const lines=letterLines(pan.words);if(!lines.length)return [];
+  const boxes=[];
+  for(let fit=0;fit<4;fit++){
+    const fs=Math.round(Math.max(13,Math.min(24,pw/22))*scale*Math.pow(.86,fit)),lh=fs*1.18,pad=fs*.7,maxW=Math.max(fs*7,Math.min(pw*.46,fs*15));
+    x.font=`700 ${fs}px ${LETTER_FONT}`;
+    // sizes first, then places: narration in the top left (or bottom left after the speech), bubbles near their speaker
+    const items=lines.map((l,k)=>{const t=wrapText(x,l.kind==='cap'?l.text:l.text.toUpperCase(),maxW),tw=Math.max(...t.map(s=>x.measureText(s).width)),th=t.length*lh;
+      const [w,h]=l.kind==='cap'?[tw+pad*1.6,th+pad*1.2]:l.kind==='think'?[tw*1.32+pad*2.4,th*1.45+pad*2.2]:[tw*1.22+pad*2,th*1.38+pad*1.6];
+      return {...l,k,t,w,h,sx:speakerX(pan.p,l.who)}});
+    const placed=[],m=fs*.5,firstSay=items.findIndex(i=>i.kind!=='cap');
+    let total=0;
+    items.forEach((it,n)=>{
+      const own=pan.bub?.[it.k];let cx,cy;
+      if(own){cx=own.x*pw;cy=own.y*ph}
+      else if(it.kind==='cap'){const low=firstSay>=0&&n>firstSay;cx=m+it.w/2;
+        cy=low?ph-m-it.h/2-placed.filter(b=>b.low).reduce((t,b)=>t+b.h+m,0):m+it.h/2+placed.filter(b=>b.kind==='cap'&&!b.low).reduce((t,b)=>t+b.h+m,0);it.low=low}
+      else{const said=items.slice(0,n).filter(i=>i.kind!=='cap').length,want=(it.sx??(said%2?.68:.32))*pw,clamp=v=>Math.min(pw-m-it.w/2,Math.max(m+it.w/2,v));
+        // below everything already placed that it would overlap, and never level with an earlier bubble to its right
+        // (reading order); of the places tried (near the speaker, or beside an earlier bubble) the highest, then the nearest
+        const topAt=cx=>{let top=m;for(const b of placed){if(b.low)continue;const over=Math.abs(b.cx-cx)<(b.w+it.w)/2+m*.5,left=cx<b.cx&&b.kind!=='cap';if(over||left)top=Math.max(top,b.cy+b.h/2+m*(over?.6:-2.2))}return top};
+        const tries=[want,...placed.filter(b=>!b.low).flatMap(b=>[b.cx+(b.w+it.w)/2+m,b.cx-(b.w+it.w)/2-m])].map(clamp);
+        cx=tries.reduce((a,v)=>topAt(v)+Math.abs(v-want)*.35<topAt(a)+Math.abs(a-want)*.35?v:a,tries[0]);
+        cy=topAt(cx)+it.h/2}
+      cx=Math.min(pw-it.w/2,Math.max(it.w/2,cx));cy=Math.min(ph-it.h/2,Math.max(it.h/2,cy));
+      placed.push({...it,cx,cy});total+=it.h});
+    if(total>ph*.62&&fit<3&&!pan.bub)continue;
+    // drawn in order, so later bubbles go over earlier ones
+    x.lineJoin='round';
+    for(const b of placed){
+      const bx=px+b.cx,by=py+b.cy,tipX=px+(b.sx??b.cx/pw)*pw,tipY=Math.min(py+ph*.62,by+b.h/2+fs*2.4);
+      x.strokeStyle='#111';x.fillStyle=b.kind==='cap'?'#fff6cf':'#fff';
+      if(b.kind==='cap'){x.lineWidth=Math.max(2,fs*.12);x.fillRect(bx-b.w/2,by-b.h/2,b.w,b.h);x.strokeRect(bx-b.w/2,by-b.h/2,b.w,b.h)}
+      else if(b.kind==='say'){
+        // the tail leaves the bottom of the oval toward the speaker; stroked first, then filled, so the oval and tail are one shape
+        const bx0=bx+Math.max(-b.w*.18,Math.min(b.w*.18,(tipX-bx)*.4)),base=fs*.55,ty=by+b.h*.36;
+        const oval=()=>{x.beginPath();x.ellipse(bx,by,b.w/2,b.h/2,0,0,Math.PI*2)},tail=()=>{x.beginPath();x.moveTo(bx0-base,ty);x.lineTo(bx0+(tipX-bx0)*.7,tipY);x.lineTo(bx0+base,ty);x.closePath()};
+        x.lineWidth=Math.max(4,fs*.22);oval();x.stroke();tail();x.stroke();oval();x.fill();tail();x.fill();
+      }else{
+        // a cloud: bumps around an oval, and two little bubbles toward the thinker
+        const bumps=Math.max(8,Math.round((b.w+b.h)/(fs*1.6))),cloud=()=>{x.beginPath();for(let i=0;i<bumps;i++){const a=i/bumps*Math.PI*2,r=Math.min(b.w,b.h)*.2;x.moveTo(bx+Math.cos(a)*(b.w/2-r*.6)+r,by+Math.sin(a)*(b.h/2-r*.6));x.arc(bx+Math.cos(a)*(b.w/2-r*.6),by+Math.sin(a)*(b.h/2-r*.6),r,0,Math.PI*2)}
+          x.moveTo(bx+b.w*.42,by);x.ellipse(bx,by,b.w*.42,b.h*.38,0,0,Math.PI*2)};
+        x.lineWidth=Math.max(3,fs*.16);cloud();x.stroke();cloud();x.fill();
+        for(const [f,r] of [[.45,fs*.32],[.8,fs*.2]]){const cx2=bx+(tipX-bx)*f*.6,cy2=by+b.h/2+(tipY-by-b.h/2)*f+fs*.3;x.beginPath();x.arc(cx2,cy2,r,0,Math.PI*2);x.lineWidth=Math.max(2,fs*.12);x.stroke();x.fill()}
+      }
+      x.fillStyle='#111';x.textAlign='center';x.textBaseline='middle';x.font=`${b.kind==='cap'?'italic ':''}700 ${fs}px ${LETTER_FONT}`;
+      b.t.forEach((s,i)=>x.fillText(s,bx,by-(b.t.length-1)*lh/2+i*lh));
+      boxes.push({k:b.k,x:bx-b.w/2,y:by-b.h/2,w:b.w,h:b.h,cx:bx,cy:by});
+    }
+    return boxes;
+  }
+  return boxes;
+}
+// the panels' pictures (the newest of each) as one page: the panels of a row get the same height and fill its width.
+// o.imgs: the pictures already loaded (the bubble editor draws the page again and again). Returns the canvas, the
+// pictures and where each bubble ended up ({panel, k, x, y, w, h, rect} on the page).
+async function comicCanvas(pg,o={}){
+  let imgs=o.imgs;
+  if(!imgs){const ids=pg.panels.map(x=>x.pics?.at(-1));if(ids.some(x=>!x))return null;imgs=[];for(const id of ids){const d=await getImgData(id);if(!d)return null;imgs.push(await loadImg(d))}}
+  if(pg.letters)await letterFont();
+  const W=1280,M=28,G=14,B=4,maxH=W*.9,boxes=[];
   const lay=comicRows(pg.panels).map(r=>{const ar=r.map(k=>imgs[k].naturalWidth/imgs[k].naturalHeight),h=Math.min(maxH,(W-G*(r.length-1))/ar.reduce((a,b)=>a+b,0)),ws=ar.map(a=>a*h);
     return {r,h,ws,x0:(W-ws.reduce((a,b)=>a+b,0)-G*(r.length-1))/2}});
-  const c=document.createElement('canvas');c.width=W+2*M;c.height=Math.round(lay.reduce((t,l)=>t+l.h,0)+G*(lay.length-1)+2*M);
-  const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);x.lineWidth=B;x.strokeStyle='#111';
-  let y=M;for(const l of lay){let cx=M+l.x0;l.r.forEach((k,j)=>{const w=l.ws[j];x.drawImage(imgs[k],cx,y,w,l.h);x.strokeRect(cx+B/2,y+B/2,w-B,l.h-B);cx+=w+G});y+=l.h+G}
-  return c.toDataURL('image/jpeg',.9);
+  const c=o.canvas||document.createElement('canvas');c.width=W+2*M;c.height=Math.round(lay.reduce((t,l)=>t+l.h,0)+G*(lay.length-1)+2*M);
+  const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);
+  let y=M;for(const l of lay){let cx=M+l.x0;l.r.forEach((k,j)=>{const w=l.ws[j];x.drawImage(imgs[k],cx,y,w,l.h);
+    if(pg.letters){x.save();x.beginPath();x.rect(cx,y,w,l.h);x.clip();for(const b of letterPanel(x,pg.panels[k],cx,y,w,l.h,{small:.85,big:1.2}[pg.lsize]||1))boxes.push({...b,panel:k,rect:{x:cx,y,w,h:l.h}});x.restore()}
+    x.lineWidth=B;x.strokeStyle='#111';x.strokeRect(cx+B/2,y+B/2,w-B,l.h-B);cx+=w+G});y+=l.h+G}
+  return {c,imgs,boxes};
 }
+async function buildComicPage(pg){const r=await comicCanvas(pg);return r?r.c.toDataURL('image/jpeg',.9):null}
 // after a panel's picture changes: once every panel has one, the page is put together again, in place of the old page
 async function comicRebuild(m,sw){
   const pg=m.comic?.[sw];if(pg?.draw!=='panels')return false;
@@ -3891,12 +4013,13 @@ const comicOptsHTML=(c={})=>`<label class="f">How it's drawn</label><div class="
   <div class="hint cm-dh"></div>
   <div class="grid2"><div><label class="f">Panels per page</label><select class="cm-n"><option value="0">AI decides</option>${[1,2,3,4,5,6].map(n=>`<option value="${n}" ${+c.count===n?'selected':''}>${n}</option>`).join('')}</select></div>
     <div><label class="f">Words in the pictures</label><select class="cm-w">${Object.entries(COMIC_WORDS).map(([v,l])=>`<option value="${v}" ${(c.words||'sfx')===v?'selected':''}>${l}</option>`).join('')}</select></div></div>
+  <div class="tg cm-lb"><div>Speech bubbles by Hearth<div class="hint">Hearth letters the words in clean bubbles on each panel, so they're always readable. You can drag them where you want.</div></div><label class="sw"><input type="checkbox" class="cm-l" ${c.letters!==false?'checked':''}><span></span></label></div>
   <div class="tg cm-ib"><div>Small insets in big panels<div class="hint">Now and then a big panel gets a small frame in a corner, like a close-up of eyes or a hand. Off: every panel is one clean picture.</div></div><label class="sw"><input type="checkbox" class="cm-i" ${c.insets?'checked':''}><span></span></label></div>
   <div class="hint">What the characters say and the narration are written under each page, so nothing gets cut off. “Sound effects only” still allows manga symbols like !, ?, ♪, hearts and sweat drops. “AI decides” gives big moments bigger panels and fewer of them.</div>`;
-const comicOpts=pn=>{const draw=$('.cm-d.on',pn)?.dataset.v==='page'?'page':'panels';return {draw,count:Math.min(+$('.cm-n',pn).value||0,draw==='page'?4:6),words:$('.cm-w',pn).value,...(draw==='panels'&&$('.cm-i',pn)?.checked?{insets:true}:{})}};
+const comicOpts=pn=>{const draw=$('.cm-d.on',pn)?.dataset.v==='page'?'page':'panels';return {draw,count:Math.min(+$('.cm-n',pn).value||0,draw==='page'?4:6),words:$('.cm-w',pn).value,...(draw==='panels'&&$('.cm-i',pn)?.checked?{insets:true}:{}),...($('.cm-l',pn)&&!$('.cm-l',pn).checked?{letters:false}:{})}};
 function comicOptsWire(pn){
-  const upd=()=>{const o=comicOpts(pn);$('.cm-dh',pn).textContent=COMIC_DRAW_HINT[o.draw];$('.cm-ib',pn).hidden=o.draw==='page';$$('.cm-n option',pn).forEach(x=>x.hidden=o.draw==='page'&&+x.value>4);if(o.draw==='page'&&+$('.cm-n',pn).value>4)$('.cm-n',pn).value='4'};
-  $$('.cm-d',pn).forEach(b=>b.onclick=()=>{$$('.cm-d',pn).forEach(x=>x.classList.toggle('on',x===b));upd()});upd();
+  const upd=()=>{const o=comicOpts(pn);$('.cm-dh',pn).textContent=COMIC_DRAW_HINT[o.draw];$('.cm-ib',pn).hidden=o.draw==='page';$('.cm-lb',pn).hidden=o.draw==='page'||$('.cm-w',pn).value==='bubbles';$$('.cm-n option',pn).forEach(x=>x.hidden=o.draw==='page'&&+x.value>4);if(o.draw==='page'&&+$('.cm-n',pn).value>4)$('.cm-n',pn).value='4'};
+  $$('.cm-d',pn).forEach(b=>b.onclick=()=>{$$('.cm-d',pn).forEach(x=>x.classList.toggle('on',x===b));upd()});$('.cm-w',pn).onchange=upd;upd();
 }
 // comic chats: each turn plans one page instead of one image
 function comicStoryPrompt(chat,char,history,notes){
@@ -4011,6 +4134,9 @@ function storySections(chat){
   return out;
 }
 const paras=t=>String(t).split(/\n\s*\n/).filter(p=>p.trim()).map(p=>`<p>${fmt(p.trim())}</p>`).join('');
+// a comic page Hearth put together is showing, and whether its words are lettered on it
+const pageShown=m=>{const pg=comicOf(m);return !!(pg?.pageId&&m.pics?.[m.sw]?.includes(pg.pageId))};
+const lettered=m=>pageShown(m)&&!!comicOf(m).letters;
 function readerHTML(chat,char){
   const secs=storySections(chat),un=personaFor(chat)?.name||'You',missing=secs.filter(s=>!s.story&&!comicOf(s.m)).length,panels=s=>comicOf(s.m)?.draw==='panels';
   if(!secs.length)return coverSlotHTML(chat)+`<div class="empty"><b>No images yet</b>Switch to Prompts and describe the first scene. Each image and its story text will show up here.</div>`;
@@ -4021,8 +4147,8 @@ function readerHTML(chat,char){
       ${s.pics.length?`<div class="rd-pics">${s.pics.map(id=>`<img data-img="${id}" src="${BLANK}" data-act="sview" data-id="${id}" alt="">`).join('')}</div>`
         :panels(s)?`<div class="rd-comic">${comicTilesHTML(s.m)}</div>`
         :`<div class="rd-nopic"><span>${esc(s.img.caption||`Image ${k+1}`)}</span>${naiOn()?`<button class="btn sm" data-act="ngenm">${I.img} Generate</button>`:''}<button class="btn ghost sm" data-act="attach">${I.img} Attach the picture</button><button class="btn ghost sm" data-act="toimgs">${I.edit} Images page</button></div>`}
-      <div class="rd-text">${s.story?paras(macro(s.story,char.name,un)):`<p class="muted"><i>${esc(s.img.caption||'')}</i></p>`}</div>
-      <div class="rd-act"><button data-act="redit">${I.edit} Edit text</button><button data-act="rwrite">${I.regen} Rewrite</button>${panels(s)?`<button data-act="cpanel" data-k="0">${I.copy} Panels</button>`:s.pics.length?`<button data-act="attach">${I.img} Add picture</button><button data-act="toimgs">${I.edit} Images page</button>`:''}</div>
+      <div class="rd-text">${lettered(s.m)?'':s.story?paras(macro(s.story,char.name,un)):`<p class="muted"><i>${esc(s.img.caption||'')}</i></p>`}</div>
+      <div class="rd-act"><button data-act="redit">${I.edit} Edit text</button><button data-act="rwrite">${I.regen} Rewrite</button>${pageShown(s.m)?`<button data-act="bubbles">${I.chat} Bubbles</button>`:''}${panels(s)?`<button data-act="cpanel" data-k="0">${I.copy} Panels</button>`:s.pics.length?`<button data-act="attach">${I.img} Add picture</button><button data-act="toimgs">${I.edit} Images page</button>`:''}</div>
     </section>`).join('')}
     <div class="row" style="justify-content:center;margin:18px 0 8px"><button class="btn ghost sm" data-act="rexport">${I.exp} Save as a web page</button></div>
   </article>`;
@@ -4113,7 +4239,7 @@ async function exportStory(chat,char){
   const cover=chat.cover&&await getImgData(chat.cover);if(cover)body.push(`<img class="cover" src="${cover}" alt="Cover">`);
   for(const s of storySections(chat)){
     const pics=[];for(const id of s.pics){const d=await getImgData(id);if(d)pics.push(`<img src="${d}" alt="">`)}
-    body.push(`<section>${pics.join('')}${s.story?paras(macro(s.story,char.name,un)):`<p><i>${esc(s.img.caption||'')}</i></p>`}</section>`);
+    body.push(`<section>${pics.join('')}${lettered(s.m)?'':s.story?paras(macro(s.story,char.name,un)):`<p><i>${esc(s.img.caption||'')}</i></p>`}</section>`);
   }
   const css='body{margin:0;background:#faf7f2;color:#2a2530;font:17px/1.75 Georgia,"Noto Serif",serif}main{max-width:720px;margin:0 auto;padding:28px 16px 60px}h1{font-size:26px;line-height:1.3;margin:0 0 28px}section{margin:0 0 44px}img{width:100%;border-radius:10px;display:block;margin:0 0 14px}img.cover{width:min(100%,460px);margin:0 auto 36px;box-shadow:0 8px 28px #0005}p{margin:0 0 .8em}@media(prefers-color-scheme:dark){body{background:#16131a;color:#ece7f2}}';
   download(safeName(chat.title)+'.html',`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(chat.title)}</title><style>${css}</style></head><body><main><h1>${esc(chat.title)}</h1>${body.join('\n')}</main></body></html>`,'text/html');
