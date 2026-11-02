@@ -401,7 +401,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.42.0',HEARTH_DATE='2026-11-03';
+const HEARTH_VERSION='1.42.1',HEARTH_DATE='2026-11-03';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiNoMark:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -3147,6 +3147,7 @@ function novelRules(chat,char,o={}){
   return `HOW TO WRITE NOVELAI DIFFUSION ${v5?'V5':'V4.5'} PROMPTS:
 - Base prompt: subject count tags (like 2girls, 1boy, or no humans), setting and background, time of day, lighting, camera framing and angle, mood and composition${v5?'. Add "high complexity" unless the image should be simple or stylized':''}. Never put one character's traits in the base prompt. Do not add artist tags or quality tags: the user adds their own.
 - One character prompt per visible person (${v5?'up to 22':'at most 6'}). Start it with girl, boy or other (no numbers). Then their Danbooru character tag if they are a known canon character (like fern (sousou no frieren)), appearance (hair, eyes, body, clothing), expression, pose and action. For interactions put source#action on the one acting and target#action on the one receiving, or mutual#action on both (like source#hug and target#hug).
+- Pose: every character prompt states one clear pose with a Danbooru pose tag (standing, sitting, kneeling, on one knee, lying, squatting, crouching, walking, running, …) plus what the arms and hands do. Never leave the pose out and never mix poses (no standing with kneeling). Pick a framing that shows it: full body or a wide shot for kneeling, sitting, lying or squatting, never a crop that cuts the legs off.${o.story?' Take each pose from THE SCENE RIGHT NOW unless this picture changes it.':''} Hearth keeps the other poses out of the picture by itself.
 - ${style} English only, no emoji or non-Latin text.
 - Emphasis: 1.3::tag:: only for what must stand out, always closed with ::.${st.imgMotion!==false?`
 - Movement: whenever someone or something moves (running, jumping, swinging, falling, turning, waving, hair or clothes blowing), add matching motion tags such as motion lines, speed lines, motion blur, afterimage, dynamic pose, wind. For sudden reactions (startled, shocked, flinching) add ^^^ or emphasis lines. Put them in the prompt of the character who moves, or in the base prompt for the whole scene.`:''}${st.imgFx!==false?`
@@ -3353,7 +3354,7 @@ function naiCenter(s){
 // o (optional): image to image or inpainting from a base picture: image (base64 PNG at w×h), w, h, strength, noise,
 // mask (base64 PNG, white = redraw) and for a mask its own strength (inpaint, 1 = redraw fully)
 function naiRequest(p0,seed,o={}){
-  const p=withPreset(p0),st=S.settings,n=naiSettings();
+  const p=withPreset(lockPose(p0)),st=S.settings,n=naiSettings();
   // quality tags go at the end of the prompt but before a "Text:" block; "no text" is left out when the image has words
   const qual=st.naiQuality===false?'':'very aesthetic, masterpiece'+(p.text?.trim()?'':', no text');
   const addQ=s=>{if(!qual)return s;const i=s.search(/\n?Text:/);return i<0?joinTags(s,qual):joinTags(s.slice(0,i),qual)+s.slice(i)};
@@ -4630,7 +4631,32 @@ function lockLooks(p,cast,single){
   return p;
 }
 // the image prompt steps every new prompt goes through
-const finishPanel=(p,chat,char)=>{const cast=castOf(chat,char);return fixUndesired(lockLooks(p,cast,char.kind==='world'?null:char),cast)};
+const finishPanel=(p,chat,char)=>{const cast=castOf(chat,char);return lockPose(fixUndesired(lockLooks(p,cast,char.kind==='world'?null:char),cast))};
+// The pose a prompt states holds from one picture to the next (Generate another, the next image): its pose tag gets a
+// little more weight, and the poses it rules out go in that character's undesired content. Runs again before every
+// request (it changes nothing the second time), so older prompts get it too. Prompts read from a picture file stay as they are.
+const POSES=[[/^(standing|standing on one leg|walking|running|jumping)$/,['sitting','kneeling','lying']],
+  [/^(sitting|seiza|wariza|indian style|lotus position|crossed legs|sitting on .+)$/,['standing','lying']],
+  [/^(kneeling|on one knee|on knees|all fours)$/,['standing','sitting','lying']],
+  [/^(lying|on back|on stomach|on side|lying on .+)$/,['standing','sitting','kneeling']],
+  [/^(squatting|crouching)$/,['standing','lying']]];
+function lockPose(p){
+  if(!p||p.own||p.form)return p; // and what you write on the Images page is sent as you wrote it
+  const bare=t=>t.replace(/-?\d*\.?\d+::|::/g,'').trim().toLowerCase();
+  // one prompt: its first pose tag weighted, and what it rules out (leaving out any pose the prompt names itself)
+  const fix=s=>{const tags=String(s||'').split(','),all=new Set(tags.map(bare));let out=[];
+    for(let i=0;i<tags.length;i++){const b=bare(tags[i]),g=POSES.find(([re])=>re.test(b));if(!g)continue;
+      if(!tags[i].includes('::'))tags[i]=tags[i].match(/^\s*/)[0]+'1.2::'+tags[i].trim()+'::';out=g[1].filter(t=>!all.has(t));break}
+    return [tags.join(','),out]};
+  const addUc=(uc,list)=>{const have=new Set(String(uc||'').split(',').map(bare));return joinTags(uc,...list.filter(t=>!have.has(t)))};
+  if(p.onebox){const seg=p.onebox.split('|');let out=[];
+    seg.forEach((s,k)=>{if(k===0&&seg.length>1)return;const [t,o]=fix(s);seg[k]=t;if(seg.length<=2)out=o});
+    return {...p,onebox:seg.join('|'),undesired:addUc(p.undesired,out)}}
+  let posed=false;const characters=(p.characters||[]).map(c=>{const [t,o]=fix(c.prompt);if(t!==c.prompt||o.length)posed=true;return {...c,prompt:t,undesired:addUc(c.undesired,o)}});
+  // one person whose pose is in the base prompt
+  if(!posed&&characters.length<=1){const [t,o]=fix(p.base);return {...p,characters,base:t,undesired:addUc(p.undesired,o)}}
+  return {...p,characters};
+}
 // o.layout: 'auto' (spot comic pages), 'single', 'page' (a comic page as one prompt) or 'split' (one prompt per panel)
 // o.story: also write story text per image (image story chats)
 async function guessPrompt(chat,char,file,o={}){
@@ -5233,7 +5259,7 @@ let imgPage=null,imgSaveT=0;
 const imgPageData=async()=>imgPage??={form:{base:'',uc:'',chars:[],usePreset:true},hist:[],who:[],...((await store.get('imgpage'))||{})};
 const saveImgPage=()=>{clearTimeout(imgSaveT);imgSaveT=setTimeout(()=>store.set('imgpage',imgPage),400)};
 // the picture's prompt as a panel, the same shape the chat prompts use
-const formPanel=f=>({caption:'',base:f.base.split(/\n?Text:/)[0].trim(),undesired:f.uc.trim(),text:(f.base.match(/Text:([\s\S]*)$/)||[,''])[1].trim(),own:!f.usePreset,
+const formPanel=f=>({form:true,caption:'',base:f.base.split(/\n?Text:/)[0].trim(),undesired:f.uc.trim(),text:(f.base.match(/Text:([\s\S]*)$/)||[,''])[1].trim(),own:!f.usePreset,
   characters:f.chars.filter(c=>c.prompt.trim()).map(c=>({name:'',prompt:c.prompt.trim(),undesired:c.uc.trim(),position:posAIOf(f)?'':posOf(c.pos)||{x:.5,y:.5}}))});
 // the AI writes for a made-up "world" holding the characters you picked, so it knows their looks
 function imgAiCtx(who){
