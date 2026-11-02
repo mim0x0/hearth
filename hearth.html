@@ -387,7 +387,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.31.0',HEARTH_DATE='2026-11-02';
+const HEARTH_VERSION='1.32.0',HEARTH_DATE='2026-11-02';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -460,7 +460,7 @@ const sceneApi=()=>{const a=activeApi();return a&&S.settings.sceneModel?.trim()?
 async function updateScene(chat,char,o={}){
   if(sceneBusy.has(chat.id)){if(o.manual)throw new Error('Already updating, wait a moment');return null}
   const api=sceneApi();if(!api){if(o.manual)throw new Error('Add an API / proxy in Settings first');return null}
-  const un=personaFor(chat)?.name||'You',cast=char.kind==='world'?membersOf(char).map(c=>c.name):[char.name];
+  const un=personaFor(chat)?.name||'You',cast=char.kind==='world'?chatCast(chat,char).map(c=>c.name):[char.name];
   const recent=chat.messages.filter(m=>txt(m).trim()).slice(-(o.rebuild?10:3));if(!recent.length)return null;
   const base=o.rebuild?'':o.redo?chat.scenePrev??chat.scene:chat.scene;
   const tr=recent.map(m=>`${m.role==='user'?un:char.kind==='world'?'Narrator':char.name}: ${macro(stripThink(txt(m)),char.name,un)}`).join('\n\n').slice(-12000);
@@ -532,6 +532,9 @@ function worldLinks(world,scn){
 // A character's own chats can take place in one of the user's worlds: the chat's own choice (chat.worldId, '' = none),
 // otherwise the world the character lives in (char.homeWorld).
 const chatWorld=(chat,char)=>{if(!char||char.kind==='world')return null;const id=chat&&'worldId' in chat?chat.worldId:char.homeWorld,w=id&&getChar(id);return w?.kind==='world'?w:null};
+// Guests visit one world chat (chat.guests): they play along without joining the world, and their own page stays as it is.
+const guestsOf=(chat,char)=>char?.kind==='world'?(chat?.guests||[]).map(getChar).filter(c=>c&&c.kind!=='world'&&!(char.members||[]).includes(c.id)):[];
+const chatCast=(chat,char)=>[...membersOf(char),...guestsOf(chat,char)];
 // that world's relationships that involve this character
 const ownLinks=(w,char)=>(w?.relations||[]).filter(r=>(r.a===char.id||r.b===char.id)&&nameOf(r.a)&&nameOf(r.b)&&r.text?.trim()).map(r=>`- ${nameOf(r.a)} & ${nameOf(r.b)}: ${r.text.trim()}`);
 // the world's other members named in the given texts (any part of their name, as a whole word)
@@ -1163,7 +1166,7 @@ function namesIn(text){
   return out;
 }
 function newNames(chat,char,idx){
-  const parts=new Set([char,...membersOf(char),personaFor(chat)].flatMap(x=>String(x?.name||'').split(/\s+/)));
+  const parts=new Set([char,...chatCast(chat,char),personaFor(chat)].flatMap(x=>String(x?.name||'').split(/\s+/)));
   const known={has:n=>n.split(' ').every(p=>parts.has(p))};
   const msgs=chat.messages.slice(0,idx),recent=msgs.slice(-2);
   if(!chat.seenNames)chat.seenNames=[...new Set(msgs.slice(0,-2).flatMap(m=>[...namesIn(txt(m))]))];
@@ -1217,11 +1220,15 @@ function buildPrompt(chat,char,persona,history){
     const dressed=members.some(m=>m.outfitTags?.trim());
     if(members.length)sys.push(`Main characters (play each one faithfully to their description${noted?'. Where "In this scenario" says something different, it wins for this story: their situation, age, role and history follow it, while their core personality and way of speaking stay the same':''}${dressed?'. "Usual outfit" is right about their clothes when the description says otherwise; the story or a scenario note can still change what they wear':''}):\n\n${members.map(m=>`### ${m.name}\n${macro(m.personality||'',m.name,userName).trim()}${m.reminder?.trim()?`\nKey traits: ${macro(m.reminder,m.name,userName).trim()}`:''}${m.outfitTags?.trim()?`\nUsual outfit: ${m.outfitTags.trim()}`:''}${castNote(scn,m.id)?`\nIn this scenario: ${macro(castNote(scn,m.id),m.name,userName)}`:''}`).join('\n\n')}`);
     const links=worldLinks(char,scn);if(links)sys.push(links);
+    const gs=guestsOf(chat,char);
+    if(gs.length)sys.push(`Guest characters (they come from outside ${cn} and only visit for this story: they are not part of this world's history, lore or relationships, and this world is new to them unless the story says otherwise. Play each one faithfully to their description: personality, way of speaking, looks and abilities stay their own${chat.guestNote?.trim()?`. How they came here: ${macro(chat.guestNote.trim(),cn,userName)}`:". If the story hasn't said how they got here, let it come up naturally"}):\n\n${gs.map(m=>`### ${m.name}\n${macro(m.personality||'',m.name,userName).trim()}${m.reminder?.trim()?`\nKey traits: ${macro(m.reminder,m.name,userName).trim()}`:''}${m.outfitTags?.trim()?`\nUsual outfit: ${m.outfitTags.trim()}`:''}`).join('\n\n')}`);
   }else if(ctx.character.personality.trim())sys.push(`${cn}'s Persona: ${ctx.character.personality.trim()}`);
   // the Usual outfit tags are right about clothes, even when the description says otherwise
   if(char.kind!=='world'&&char.outfitTags?.trim())sys.push(`${cn}'s usual outfit: ${char.outfitTags.trim()}. If the description says something different about ${cn}'s clothes, this outfit is right. The story can still change what ${cn} wears.`);
   if(cw){
-    if(cw.personality?.trim())sys.push(`The world ${cn} lives in (${cw.name}):\n${macro(cw.personality.trim(),cw.name,userName)}`);
+    const visiting=cw.id!==char.homeWorld&&!(cw.members||[]).includes(char.id);
+    if(cw.personality?.trim())sys.push(visiting?`${cn} is a guest in another world for this story (${cw.name}). ${cn} keeps who they are and where they come from; this world is new to them unless the story says otherwise:\n${macro(cw.personality.trim(),cw.name,userName)}`
+      :`The world ${cn} lives in (${cw.name}):\n${macro(cw.personality.trim(),cw.name,userName)}`);
     const links=ownLinks(cw,char);if(links.length)sys.push(`${cn}'s relationships in this world:\n${links.join('\n')}`);
     if(met.length)sys.push(`Other characters from ${cw.name} who came up (play them faithfully if they appear):\n\n${met.map(m=>{const p=macro(m.personality||'',m.name,userName).trim();return `### ${m.name}\n${p.length>900?p.slice(0,900)+'…':p}${m.imageTags?.trim()?`\nLooks: ${m.imageTags.trim()}`:''}`}).join('\n\n')}`);
   }
@@ -2579,6 +2586,7 @@ Return one JSON object only: {"notes":{"Character name":"..."},"relationship_cha
 // Pick a scenario and who to play, then start. Skipped when there's nothing to choose.
 function openStart(c,pre={}){
   const scs=scenariosOf(c),defP=S.settings.activePersona||S.personas[0]?.id;
+  const cands=c.kind==='world'?S.chars.filter(x=>x.kind!=='world'&&!(c.members||[]).includes(x.id)).sort((a,b)=>(b.lastUsed||0)-(a.lastUsed||0)):[],guests=new Set();
   let scId=scs.some(s=>s.id===pre.scenarioId)?pre.scenarioId:scs[0].id;
   const scOf=()=>scs.find(s=>s.id===scId);
   let pId=scOf().personaId||pre.personaId||defP,picked=false;
@@ -2586,11 +2594,15 @@ function openStart(c,pre={}){
   const pn=openSheet(`<h2>New chat with ${esc(c.name)}</h2>
     ${scs.length>1?`<h3 class="small muted" style="margin:12px 0 8px;text-transform:uppercase;letter-spacing:.06em">Scenario</h3><div class="list">${scs.map(s=>`<div class="li sc-pick" data-act="sc" data-id="${s.id}"><div class="lt"><b>${esc(s.name||'Scenario')}</b><span>${esc((s.scenario||s.greetings[0]||'').replace(/\s+/g,' ').slice(0,100))}</span></div></div>`).join('')}</div>`:''}
     ${S.personas.length>1?`<h3 class="small muted" style="margin:16px 0 8px;text-transform:uppercase;letter-spacing:.06em">Play as</h3><div class="chips">${S.personas.map(p=>`<button type="button" class="chip mem p-pick" data-act="p" data-id="${p.id}"><img src="${esc(avatar(p))}" alt="">${esc(p.name)}</button>`).join('')}</div>`:''}
+    ${cands.length?`<details style="margin-top:14px"><summary class="small muted" style="cursor:pointer;text-transform:uppercase;letter-spacing:.06em">Guests (optional)</summary>
+      <p class="hint">Characters from outside ${esc(c.name)} who visit this chat only. They don't join the world, and their own page stays as it is. You can add or remove them later in the chat's ⋮ menu.</p>
+      ${charFilterHTML(cands)}<div class="chips">${cands.map(x=>`<button type="button" class="chip mem g-pick" data-act="g" data-id="${x.id}" ${cfAttr(x)}><img src="${esc(avatar(x))}" alt="">${esc(x.name)}</button>`).join('')}</div></details>`:''}
     <div class="box small pre muted" id="st-prev" style="margin-top:14px;max-height:150px;overflow:auto"></div>
     <div class="sheet-foot"><button class="btn block" data-act="go">${I.chat} Start chat</button></div>`,{
+    g:b=>{const id=b.dataset.id;guests.has(id)?guests.delete(id):guests.add(id);b.classList.toggle('on',guests.has(id))},
     sc:b=>{scId=b.dataset.id;if(!picked)pId=scOf().personaId||pre.personaId||defP;refresh()},
     p:b=>{pId=b.dataset.id;picked=true;refresh()},
-    go:()=>{closeSheet();startChat(c.id,pId,scId)}
+    go:()=>{closeSheet();startChat(c.id,pId,scId,[...guests])}
   });
   const refresh=()=>{
     $$('.sc-pick',pn).forEach(x=>x.classList.toggle('on',x.dataset.id===scId));$$('.p-pick',pn).forEach(x=>x.classList.toggle('on',x.dataset.id===pId));
@@ -2598,11 +2610,11 @@ function openStart(c,pre={}){
   };
   refresh();
 }
-async function startChat(charId,personaId,scenarioId){
+async function startChat(charId,personaId,scenarioId,guests){
   const c=getChar(charId),scs=scenariosOf(c),sc=scs.find(s=>s.id===scenarioId)||scs[0];
   const greets=sc.greetings.filter(t=>t?.trim());
   const chat={id:uid(),charId,scenarioId:sc.id,promptId:sc.promptId||'',personaId:personaId||sc.personaId||S.settings.activePersona||S.personas[0]?.id,
-    title:`${c.name}${scs.length>1?` · ${sc.name}`:''} · ${new Date().toLocaleDateString()}`,created:Date.now(),memory:'',vars:{},
+    title:`${c.name}${scs.length>1?` · ${sc.name}`:''} · ${new Date().toLocaleDateString()}`,created:Date.now(),memory:'',vars:{},...(guests?.length?{guests}:{}),
     messages:greets.length?[{id:uid(),role:'assistant',greeting:true,swipes:greets,sw:0,time:Date.now()}]:[]};
   c.lastUsed=Date.now();await saveChars();await saveChat(chat);go('#/chat/'+chat.id);
 }
@@ -2678,7 +2690,7 @@ async function vChat(id){
     let body=generating&&!txt(m)?`${GEN.status?`<div class="status">${esc(GEN.status)}</div>`:''}<span class="dots"><span></span><span></span><span></span></span>`:fmt(macro(u?txt(m):stripThink(txt(m)),char.name,p?.name||'You'));
     const lk=!generating&&m.lookups?.[m.sw];
     // world chats: put each member's avatar before their bold "Name:" lines
-    if(!u)for(const mb of membersOf(char))body=body.replace(new RegExp(`<strong>(${escRx(esc(mb.name))}):?</strong>:?`,'g'),`<img class="spk" src="${esc(avatar(mb))}" alt=""><strong>$1:</strong>`);
+    if(!u)for(const mb of chatCast(chat,char))body=body.replace(new RegExp(`<strong>(${escRx(esc(mb.name))}):?</strong>:?`,'g'),`<img class="spk" src="${esc(avatar(mb))}" alt=""><strong>$1:</strong>`);
     const canRegen=!u&&isLast&&!m.greeting;
     const sw=!u&&isLast&&(m.swipes.length>1||!m.greeting)?`<div class="swipes"><button data-act="swl" ${m.sw===0||GEN?'disabled':''}>‹</button><span>${m.sw+1}/${m.swipes.length}</span><button data-act="swr" ${GEN||(m.greeting&&m.sw>=m.swipes.length-1)?'disabled':''}>›</button></div>`:'';
     return `<div class="msg ${u?'user':'bot'}${hasScene(chat,m)?' hasscene':''}" data-i="${i}"><img class="av" data-act="zoom" src="${esc(u?avatar(who):chatAvatar(chat,char,m))}" alt=""><div class="mw"><div class="nm">${esc(name)}</div><div class="bubble">${body}</div>${generating||!S.settings.showTokens?'':tokLine(m)}${lk?`<div class="lookups">Looked up: ${lk.map(esc).join(' · ')}</div>`:''}${sceneLinksHTML(chat,m)}
@@ -2939,7 +2951,7 @@ function novelRules(chat,char,o={}){
   const oneBox=(o.fmt||S.settings.imgOutput)==='onebox';
   const st=S.settings,v5=st.imgModel!=='v45',p=personaFor(chat),un=p?.name||'You';
   const look=p?.imageTags?`; their look: ${p.imageTags}`:p?.description?`; about them: ${p.description.slice(0,600)}`:'';
-  const cw=chatWorld(chat,char),cast=char.kind==='world'?membersOf(char):[char,...worldCast(chat,char)],scn=chatScn(chat,char);
+  const cw=chatWorld(chat,char),cast=char.kind==='world'?chatCast(chat,char):[char,...worldCast(chat,char)],scn=chatScn(chat,char);
   const style={tags:'Use only Danbooru-style tags, comma separated.',natural:'Write each prompt as short, concrete English sentences.',mixed:'Use Danbooru-style tags, comma separated, plus at most one short English sentence per prompt for actions and relationships.',
     few:'Use Danbooru-style tags, comma separated, plus 2 or 3 short English sentences per prompt for actions, relationships and positions (who does what to whom, and where). Keep each sentence short and concrete.'}[st.imgFormat]||'';
   const role=o.story&&storyRole(chat);
@@ -3001,7 +3013,7 @@ const LOOK_WORDS=/^(silver|white|black|brown|blonde|blond|red|blue|green|purple|
 const lookWords=c=>new Set(c?.imageTags?tagsOf(c.imageTags).flatMap(wordsOf).map(stemW):wordsOf(c?.personality||'').filter(w=>LOOK_WORDS.test(w)).map(stemW));
 // other members of the character's world who came up in the chat lately (their looks are needed if they're drawn)
 const worldCast=(chat,char)=>{const w=chatWorld(chat,char);return w?mentionedMembers(w,char,(chat?.messages||[]).slice(-6).map(txt)):[]};
-const castOf=(chat,char)=>[...(char.kind==='world'?membersOf(char):[char,...worldCast(chat,char)]),userAway(chat)?null:personaFor(chat)].filter(c=>c&&(c.imageTags||c!==personaFor(chat)));
+const castOf=(chat,char)=>[...(char.kind==='world'?chatCast(chat,char):[char,...worldCast(chat,char)]),userAway(chat)?null:personaFor(chat)].filter(c=>c&&(c.imageTags||c!==personaFor(chat)));
 function fixUndesired(p,cast=[]){
   const first=n=>n.toLowerCase().split(/\s+/)[0];
   const byName=n=>n&&cast.find(c=>c.name.toLowerCase()===n.toLowerCase()||first(c.name)===first(n));
@@ -4118,7 +4130,7 @@ function openFromImage(chat,char,redraw,preFile){
     <div id="fi-guess" hidden>
       <label class="f">Picture type</label><select id="fi-lay"><option value="auto">Find out (spots comic pages)</option><option value="single">One picture</option><option value="page">Comic page → one comic prompt</option><option value="split">Comic page → one prompt per panel</option></select>
       <div class="hint" id="fi-lay-h"></div>
-      <div class="tg"><div>Put my characters in it<div class="hint">Swaps the people in the picture for ${esc((char.kind==='world'?membersOf(char):[char]).map(c=>c.name).join(', ')||char.name)}, keeping the pose, expression and scene.</div></div><label class="sw"><input type="checkbox" id="fi-mine"><span></span></label></div>
+      <div class="tg"><div>Put my characters in it<div class="hint">Swaps the people in the picture for ${esc((char.kind==='world'?chatCast(chat,char):[char]).map(c=>c.name).join(', ')||char.name)}, keeping the pose, expression and scene.</div></div><label class="sw"><input type="checkbox" id="fi-mine"><span></span></label></div>
       <div id="fi-out" hidden><label class="f">Clothes</label><select id="fi-outfit"><option value="picture">From the picture</option><option value="usual">My character's usual outfit</option></select></div>
       <label class="f">Anything to note?<small>optional</small></label><textarea id="fi-note" rows="2" placeholder="e.g. the girl on the left becomes my character; ignore the watermark"></textarea>
       <div class="hint">Vision model: <b>${esc(visionModelName()||'none')}</b> (Settings → Image prompts). It recreates the picture, so the result is close, not the original prompt. Artist tags can't be guessed, so your image preset is added as usual.</div>
@@ -4397,7 +4409,7 @@ Write what the main story should now know from this scene, as short past-tense b
 function chatMenu(chat,char,redraw){
   const spent=chatCost(chat);
   openSheet(`<h2>Chat options</h2>${spent?`<p class="hint" style="margin:-6px 0 10px">This chat so far: <b>${spent.cost!=null?`${spent.est?'≈ ':''}${fmtCost(spent.cost)} · `:''}${spent.tokEst?'≈ ':''}${Math.round(spent.in+spent.out).toLocaleString()} tokens</b> (↑ ${Math.round(spent.in).toLocaleString()} · ↓ ${Math.round(spent.out).toLocaleString()})</p>`:''}<div class="menu">
-    ${chat.origin?`<button data-act="setup">${I.book} Scene setup (from the world chat)</button><button data-act="srolesc">${I.user} You in this scene: ${SCENE_ROLES[sceneRole(chat)][0]}</button><button data-act="sendback">${I.send} Send back to the world chat${chat.origin.sent?' (sent)':''}</button>`:''}${char.kind==='world'&&chat.mode!=='image'?`<button data-act="wscene">${I.chat} Play a scene with one character</button>${liveScenes(chat).length?`<button data-act="scenes">${I.book} Scenes from this chat (${liveScenes(chat).length})</button>`:''}`:''}<button data-act="memory">${I.brain} Chat memory</button>${chat.mode==='image'?'':`<button data-act="scene">${I.user} The scene right now</button>`}${char.kind!=='world'&&S.chars.some(c=>c.kind==='world')?`<button data-act="cworld">${I.book} World for this chat: ${esc(chatWorld(chat,char)?.name||'none')}</button>`:''}<button data-act="persona">${I.user} Persona for this chat</button><button data-act="prompt">${I.edit} Prompt preset</button>
+    ${chat.origin?`<button data-act="setup">${I.book} Scene setup (from the world chat)</button><button data-act="srolesc">${I.user} You in this scene: ${SCENE_ROLES[sceneRole(chat)][0]}</button><button data-act="sendback">${I.send} Send back to the world chat${chat.origin.sent?' (sent)':''}</button>`:''}${char.kind==='world'&&chat.mode!=='image'?`<button data-act="wscene">${I.chat} Play a scene with one character</button>${liveScenes(chat).length?`<button data-act="scenes">${I.book} Scenes from this chat (${liveScenes(chat).length})</button>`:''}`:''}<button data-act="memory">${I.brain} Chat memory</button>${chat.mode==='image'?'':`<button data-act="scene">${I.user} The scene right now</button>`}${char.kind==='world'?`<button data-act="cguests">${I.user} Guests${guestsOf(chat,char).length?`: ${esc(guestsOf(chat,char).map(g=>g.name).join(', '))}`:''}</button>`:''}${char.kind!=='world'&&S.chars.some(c=>c.kind==='world')?`<button data-act="cworld">${I.book} World for this chat: ${esc(chatWorld(chat,char)?.name||'none')}</button>`:''}<button data-act="persona">${I.user} Persona for this chat</button><button data-act="prompt">${I.edit} Prompt preset</button>
     <button data-act="vars">${I.code} Script variables</button><button data-act="lore">${I.tag} Lore used in last reply</button><button data-act="rename">${I.edit} Rename chat</button><button data-act="mvf">${I.folder} Move to folder${folders('chats').find(f=>f.id===chat.folder)?` (now: ${esc(folders('chats').find(f=>f.id===chat.folder).name)})`:''}</button>
     <button data-act="newchat">${I.plus} Start a new chat</button><button data-act="export">${I.exp} Export chat as text</button>
     ${chat.mode==='image'?`<button data-act="srole">${{observer:I.book,pov:I.img}[storyRole(chat)]||I.user} Your role: ${ROLE_LABEL[storyRole(chat)]}</button><button data-act="outline">${I.edit} Story outline</button><button data-act="ihist">${I.copy} All image prompts (${chat.images?.length||0})</button>`
@@ -4435,10 +4447,20 @@ function chatMenu(chat,char,redraw){
         ${S.settings.prompts.map(p=>`<div class="li ${cur===p.id?'on':''}" data-act="pick" data-id="${p.id}"><div class="lt"><b>${esc(p.name)}</b><span>${esc(p.text.slice(0,90))}</span></div></div>`).join('')}</div>
         <p class="hint">Edit or add presets in Settings → Prompt presets.</p>`,{
         pick:async b=>{chat.promptId=b.dataset.id;await saveChat(chat);closeSheet();redraw();toast('Prompt: '+promptFor(chat).name)}})},
+    cguests:()=>{
+      const cands=S.chars.filter(x=>x.kind!=='world'&&!(char.members||[]).includes(x.id)).sort((a,b)=>(b.lastUsed||0)-(a.lastUsed||0)),on=new Set(guestsOf(chat,char).map(g=>g.id));
+      const pn=openSheet(`<h2>Guests in this chat</h2><p class="hint">Characters from outside ${esc(char.name)} who visit this chat only. They keep their own personality, looks and abilities, but not their own world's lore. They don't join ${esc(char.name)}, and their own page stays as it is.</p>
+        ${cands.length?`${charFilterHTML(cands)}<div class="chips">${cands.map(x=>`<button type="button" class="chip mem ${on.has(x.id)?'on':''}" data-act="g" data-id="${x.id}" ${cfAttr(x)}><img src="${esc(avatar(x))}" alt="">${esc(x.name)}</button>`).join('')}</div>`:'<p class="muted">Every character is already in this world.</p>'}
+        <label class="f">How they got here<small>optional</small></label><textarea id="gu-n" rows="3" placeholder="e.g. A summoning circle pulled them in from their own worlds. They want to find a way home.">${esc(chat.guestNote||'')}</textarea>
+        <div class="hint">Empty: the story decides. To bring a guest in, say it in your next message, e.g. “A girl in a mage's robe falls out of the portal.”</div>
+        <div class="sheet-foot row"><button class="btn ghost" data-act="close" style="flex:1">Cancel</button><button class="btn" data-act="ok" style="flex:2">Save</button></div>`,{
+        g:b=>{const id=b.dataset.id;on.has(id)?on.delete(id):on.add(id);b.classList.toggle('on',on.has(id))},
+        ok:async()=>{chat.guests=[...on];chat.guestNote=$('#gu-n',pn).value.trim();await saveChat(chat,true);closeSheet();redraw();toast(on.size?`Guests: ${[...on].map(id=>getChar(id)?.name).join(', ')}`:'No guests')}
+      })},
     cworld:()=>{
       const worlds=S.chars.filter(c=>c.kind==='world'),home=getChar(char.homeWorld),cur='worldId' in chat?chat.worldId:undefined;
       const row=(v,title,sub,on)=>`<div class="li ${on?'on':''}" data-act="pick" data-v="${v}"><div class="lt"><b>${title}</b><span>${sub}</span></div></div>`;
-      openSheet(`<h2>World for this chat</h2><p class="hint">${esc(char.name)} gets that world's description, their relationships there, its lorebook, and notes on its other characters when they come up.</p>${charFilterHTML(worlds)}<div class="list">
+      openSheet(`<h2>World for this chat</h2><p class="hint">${esc(char.name)} gets that world's description, their relationships there, its lorebook, and notes on its other characters when they come up. Only this chat changes: ${esc(char.name)}'s page and the world stay as they are. In a world that isn't theirs, ${esc(char.name)} is played as a visiting guest.</p>${charFilterHTML(worlds)}<div class="list">
         ${row('@home',`Where ${esc(char.name)} lives`,home?.kind==='world'?esc(home.name):'No world set on the character page',cur===undefined)}
         ${worlds.map(w=>row(w.id,esc(w.name),(w.members||[]).includes(char.id)?`${esc(char.name)} is a member`:'',cur===w.id).replace('<div class="li',`<div ${cfAttr(w)} class="li`)).join('')}
         ${row('',`No world`,'Only the character page',cur==='')}</div>`,{
