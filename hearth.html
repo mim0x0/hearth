@@ -401,7 +401,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.40.0',HEARTH_DATE='2026-11-03';
+const HEARTH_VERSION='1.41.0',HEARTH_DATE='2026-11-03';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiNoMark:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -2859,10 +2859,32 @@ async function vChat(id){
     const pn=openSheet(`<h2>Panel ${k+1} of ${pg.panels.length}</h2><p class="small muted" style="margin:-4px 0 8px">${x.size==='big'?'Big panel · ':x.size==='small'?'Small panel · ':''}${COMIC_SHAPES[comicShape(x.shape)][2]} picture, ${w}×${h}${x.p.caption?` · ${esc(x.p.caption)}`:''}${x.inset?` · Inset: ${esc(x.inset)}`:''}</p>
       ${x.pics?.length?`${thumbs(x.pics,'pview').replace(`data-id="${x.pics.at(-1)}"`,`data-id="${x.pics.at(-1)}" class="main"`)}<p class="hint">The page uses the outlined one. Tap a picture to use another one, save it or delete it.</p>`:''}
       <div class="row" style="margin:6px 0 4px;flex-wrap:wrap">${naiOn()?`<button class="btn sm" data-act="gen">${I.img} ${x.pics?.length?'Generate another':'Generate panel'}</button>`:''}<button class="btn ghost sm" data-act="att">${I.img} Attach</button><button class="btn ghost sm" data-act="toimgs">${I.edit} Open on Images page</button></div><div class="small" id="cp-msg" style="margin-bottom:8px"></div>
+      <div class="box" style="margin:4px 0 10px"><b>${I.edit} Change this panel</b>
+        <textarea id="cp-ch" rows="2" style="margin-top:8px" placeholder="e.g. a close-up of her face, she smiles, rain starts"></textarea>
+        <div class="row" style="margin-top:6px;flex-wrap:wrap">${naiOn()?`<button class="btn sm" data-act="chg" data-d="1">${I.wand} Change and draw</button>`:''}<button class="btn ghost sm" data-act="chg">${I.edit} Change the prompt only</button>
+          <select id="cp-sh" style="width:auto;padding:5px 10px" title="Shape of the picture">${Object.entries(COMIC_SHAPES).map(([v,[,,l]])=>`<option value="${v}" ${comicShape(x.shape)===v?'selected':''}>${l}</option>`).join('')}</select></div>
+        <div class="hint">Your AI changes only what you ask in this panel's prompt; the other panels stay as they are. The pictures you have are kept, so you can go back to one.</div>
+        <label class="f">Words of this panel<small>${pg.letters?'lettered in its bubbles':'written under the page'}</small></label><textarea id="cp-w" rows="3" placeholder="Name: &quot;line&quot;&#10;Name (thinks): &quot;line&quot;&#10;narration">${esc(x.words||'')}</textarea>
+        <button class="btn ghost sm" data-act="wsave" style="margin-top:6px">${I.check} Save the words</button></div>
       ${panelsHTML([x.p],T,'cp')}
       <div class="sheet-foot row"><button class="btn ghost" data-act="close" style="flex:1">Close</button>${k>0?`<button class="btn ghost" data-act="prevp" style="flex:1">‹ Panel ${k}</button>`:''}${k<pg.panels.length-1?`<button class="btn ghost" data-act="nextp" style="flex:1">Panel ${k+2} ›</button>`:''}</div>`,{
       cp:b=>copyText(T[+b.dataset.i]),
       prevp:()=>comicPanel(i,k-1),nextp:()=>comicPanel(i,k+1),
+      // a change to this panel only: your AI rewrites its prompt (and the shape can change), then it's drawn if asked
+      chg:async b=>{const msg=$('#cp-msg',pn),change=$('#cp-ch',pn).value.trim(),shape=$('#cp-sh',pn).value,draw=!!b.dataset.d;
+        if(!change&&shape===comicShape(x.shape)){msg.className='small err';msg.textContent='Write what to change first.';return}
+        if(change&&!activeApi()){msg.className='small err';msg.textContent='Add an API / proxy in Settings first.';return}
+        $$('[data-act=chg]',pn).forEach(e=>e.disabled=true);msg.className='small muted';
+        try{
+          if(change){msg.textContent='Changing the prompt…';const r=await changeWithFilter(chat,char,x.p,change,msg),np=r.panels[0];if(!panelOk(np))throw new Error('The AI returned no prompt. Try again.');
+            const p=finishPanel(np,chat,char);if(x.p.comic)p.comic=true;if(!p.caption)p.caption=x.p.caption;x.p=p;
+            if(k===0&&m.imgs?.[m.sw])m.imgs[m.sw]={...clone(p),caption:pg.caption||p.caption};
+            addImage(chat,[p],`Panel ${k+1}: ${change}`,'',r.usage,m.id)}
+          x.shape=shape;await saveChat(chat);updateOne(i);
+          if(draw){const [w2,h2]=COMIC_SHAPES[shape];msg.textContent=`Making panel ${k+1}…`;await add([await naiPicture(x.p,undefined,{w:w2,h:h2})]);toast(`Panel ${k+1} changed`)}
+          else{again();toast(change?'Prompt changed. Tap Generate another to draw it.':'Shape changed')}}
+        catch(e){if(msg.isConnected){msg.className='small err';msg.textContent=e.message}$$('[data-act=chg]',pn).forEach(e=>e.disabled=false)}},
+      wsave:async()=>{x.words=wordsText($('#cp-w',pn).value);(m.story??=[])[m.sw]=comicWords(pg);if(pg.letters)await comicRebuild(m,m.sw);await saveChat(chat);updateOne(i);toast('Words saved');again()},
       gen:async b=>{const msg=$('#cp-msg',pn);b.disabled=true;msg.className='small muted';msg.textContent=`Making panel ${k+1}…`;
         try{await add([await naiPicture(x.p,undefined,{w,h})])}
         catch(e){if(msg.isConnected){msg.className='small err';msg.textContent=e.message}if(b.isConnected)b.disabled=false}},
