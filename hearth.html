@@ -401,7 +401,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.37.0',HEARTH_DATE='2026-11-03';
+const HEARTH_VERSION='1.38.0',HEARTH_DATE='2026-11-03';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -2824,7 +2824,7 @@ async function vChat(id){
     const T=[],[w,h]=COMIC_SHAPES[comicShape(x.shape)],again=()=>comicPanel(i,k);
     const after=async()=>{await comicRebuild(m,m.sw);await saveChat(chat);updateOne(i)};
     const add=async ids=>{if(!ids.length)return;(x.pics??=[]).push(...ids);await after();again()};
-    const pn=openSheet(`<h2>Panel ${k+1} of ${pg.panels.length}</h2><p class="small muted" style="margin:-4px 0 8px">${x.size==='big'?'Big panel · ':x.size==='small'?'Small panel · ':''}${COMIC_SHAPES[comicShape(x.shape)][2]} picture, ${w}×${h}${x.p.caption?` · ${esc(x.p.caption)}`:''}</p>
+    const pn=openSheet(`<h2>Panel ${k+1} of ${pg.panels.length}</h2><p class="small muted" style="margin:-4px 0 8px">${x.size==='big'?'Big panel · ':x.size==='small'?'Small panel · ':''}${COMIC_SHAPES[comicShape(x.shape)][2]} picture, ${w}×${h}${x.p.caption?` · ${esc(x.p.caption)}`:''}${x.inset?` · Inset: ${esc(x.inset)}`:''}</p>
       ${x.pics?.length?`${thumbs(x.pics,'pview').replace(`data-id="${x.pics.at(-1)}"`,`data-id="${x.pics.at(-1)}" class="main"`)}<p class="hint">The page uses the outlined one. Tap a picture to use another one, save it or delete it.</p>`:''}
       <div class="row" style="margin:6px 0 4px;flex-wrap:wrap">${naiOn()?`<button class="btn sm" data-act="gen">${I.img} ${x.pics?.length?'Generate another':'Generate panel'}</button>`:''}<button class="btn ghost sm" data-act="att">${I.img} Attach</button><button class="btn ghost sm" data-act="toimgs">${I.edit} Open on Images page</button></div><div class="small" id="cp-msg" style="margin-bottom:8px"></div>
       ${panelsHTML([x.p],T,'cp')}
@@ -3803,9 +3803,10 @@ function comicRules(chat){
 - Continuity: everyone keeps the same look and outfit in every panel, the place and light stay the same unless the story moves on, and people stay on the same side of the frame while they talk.
 - Reading order: left to right, top to bottom.${page?`
 - The whole page is ONE picture: add comic (and 4koma for a vertical strip of four), then describe the layout and each panel in reading order with short sentences in the base prompt, like "Panel 1, top, wide: ...". Few panels draw much better than many.${comicTextMode(chat)==='sfx'?' Put the sound effects of all panels in "text", one per line in reading order, and say in the base prompt which panel each one is in.':''}`:`
-- Each panel is its own full picture, with its own prompt: no comic, panel, border or multiple views tags.
+- Each panel is its own full picture, with its own prompt: no comic, panel, border or multiple views tags${c.insets?' (except the one inset described below)':''}.
 - Shape of each panel's picture: "wide" (landscape: places, action across the frame, several people), "tall" (portrait: one standing figure, falling, something tall), "square" (a face, a reaction) or "strip" (very wide and short: eyes, a skyline, a quick beat). Mix shapes so the page has rhythm.`}
-${comicWordsRule(chat)}`;
+${!page&&c.insets?`- Insets: a big panel may have one small inset, a small frame in a corner of the same picture that shows a detail of the same moment: a close-up of eyes, a hand on a sword hilt, an object, or a quick reaction face. Use it only when it adds to the moment: most pages have none, and never more than one per page. For that panel, write in "inset" what the inset shows and where (like "top right: close-up of her narrowed eyes"), add the tag inset to its base prompt, and describe the inset there in one short sentence. Every other panel has "inset":"".
+`:''}${comicWordsRule(chat)}`;
 }
 // what goes in "words": the story is told by them, mostly by what the characters say and think
 const comicWordsRule=chat=>`- Words: the "words" of each panel tell the story, because they are written under the page instead of in the picture. Mostly they are what the characters say and think: in almost every panel someone speaks or thinks. Write each line on its own line, speech as Name: "line" and thoughts as Name (thinks): "line"; in a fight, battle cries, taunts, gasps, orders and quick thoughts. Add a short narration line (${storyVoice(chat)}) only now and then: a new place, a time jump, or something nobody says aloud. Narration alone is not enough for a page. Give every panel its words, one to four lines; at most one panel per page may be silent, and only on purpose (a wordless reaction or a big splash).`;
@@ -3813,7 +3814,7 @@ const comicWordsRule=chat=>`- Words: the "words" of each panel tell the story, b
 const COMIC_WORDS_JSON='"words":"Name: \\"line\\"\\nName (thinks): \\"line\\"\\nnarration"';
 const comicPageJson=chat=>(chat.comic.draw==='page'
   ?`{"caption":"one sentence about the page","panels":[{"size":"big, normal or small","shot":"the camera, in a few words",${COMIC_WORDS_JSON}}],"image":${panelJson()}}`
-  :`{"caption":"one sentence about the page","panels":[${panelJson().replace(/^\{/,`{"size":"big, normal or small","shape":"wide, tall, square or strip",${COMIC_WORDS_JSON},`)}]}`)
+  :`{"caption":"one sentence about the page","panels":[${panelJson().replace(/^\{/,`{"size":"big, normal or small","shape":"wide, tall, square or strip",${COMIC_WORDS_JSON},${chat.comic.insets?'"inset":"",':''}`)}]}`)
   // a comic panel's "text" is its sound effect (all of the page's, when the page is one picture)
   .replace('"text":"bubble text or \\"\\""',()=>({sfx:`"text":"${chat.comic.draw==='page'?'the sound effects, one per line':'the sound effect word'}, or \\"\\""`,none:'"text":""'})[chat.comic.words||'sfx']||'"text":"bubble text or \\"\\""');
 // the page the AI planned, cleaned; null when it has nothing to draw
@@ -3821,8 +3822,10 @@ function comicPage(j,chat,char){
   const draw=chat.comic.draw==='page'?'page':'panels';
   const panels=arr(j?.panels).filter(x=>x&&typeof x==='object').slice(0,comicMax(chat.comic)).map(x=>{
     const o={size:['big','small'].includes(x.size)?x.size:'normal',words:wordsText(x.words)};
-    if(draw==='panels'){o.shape=comicShape(x.shape);o.p=finishPanel(cleanPanel(x),chat,char)}else o.shot=str(x.shot).trim();
+    if(draw==='panels'){o.shape=comicShape(x.shape);o.p=finishPanel(cleanPanel(x),chat,char);if(chat.comic.insets&&str(x.inset).trim())o.inset=str(x.inset).trim()}else o.shot=str(x.shot).trim();
     return o}).filter(x=>draw==='page'||panelOk(x.p));
+  panels.filter(x=>x.inset).forEach((x,k)=>{if(k){delete x.inset;const un=t=>t.split(',').filter(y=>y.trim().toLowerCase()!=='inset').join(',');if(x.p.onebox)x.p.onebox=x.p.onebox.split('|').map(un).join('|');else x.p.base=un(x.p.base);return}x.p.comic=true;
+    if(!/\binset\b/i.test(x.p.onebox||x.p.base)){if(x.p.onebox){const [b,...r]=x.p.onebox.split('|');x.p.onebox=[joinTags(b,'inset',x.inset),...r].join(' |')}else x.p.base=joinTags(x.p.base,'inset',x.inset)}});
   if(!panels.length)return null;
   const pg={draw,caption:str(j.caption).trim()||panels[0].p?.caption||'',panels};
   if(draw==='page'){const img=j.image&&typeof j.image==='object'?finishPanel(cleanPanel(j.image),chat,char):null;if(!panelOk(img))return null;img.comic=true;if(!img.caption)img.caption=pg.caption;pg.image=img}
@@ -3879,10 +3882,11 @@ const comicOptsHTML=(c={})=>`<label class="f">How it's drawn</label><div class="
   <div class="hint cm-dh"></div>
   <div class="grid2"><div><label class="f">Panels per page</label><select class="cm-n"><option value="0">AI decides</option>${[1,2,3,4,5,6].map(n=>`<option value="${n}" ${+c.count===n?'selected':''}>${n}</option>`).join('')}</select></div>
     <div><label class="f">Words in the pictures</label><select class="cm-w">${Object.entries(COMIC_WORDS).map(([v,l])=>`<option value="${v}" ${(c.words||'sfx')===v?'selected':''}>${l}</option>`).join('')}</select></div></div>
+  <div class="tg cm-ib"><div>Small insets in big panels<div class="hint">Now and then a big panel gets a small frame in a corner, like a close-up of eyes or a hand. Off: every panel is one clean picture.</div></div><label class="sw"><input type="checkbox" class="cm-i" ${c.insets?'checked':''}><span></span></label></div>
   <div class="hint">What the characters say and the narration are written under each page, so nothing gets cut off. “Sound effects only” still allows manga symbols like !, ?, ♪, hearts and sweat drops. “AI decides” gives big moments bigger panels and fewer of them.</div>`;
-const comicOpts=pn=>{const draw=$('.cm-d.on',pn)?.dataset.v==='page'?'page':'panels';return {draw,count:Math.min(+$('.cm-n',pn).value||0,draw==='page'?4:6),words:$('.cm-w',pn).value}};
+const comicOpts=pn=>{const draw=$('.cm-d.on',pn)?.dataset.v==='page'?'page':'panels';return {draw,count:Math.min(+$('.cm-n',pn).value||0,draw==='page'?4:6),words:$('.cm-w',pn).value,...(draw==='panels'&&$('.cm-i',pn)?.checked?{insets:true}:{})}};
 function comicOptsWire(pn){
-  const upd=()=>{const o=comicOpts(pn);$('.cm-dh',pn).textContent=COMIC_DRAW_HINT[o.draw];$$('.cm-n option',pn).forEach(x=>x.hidden=o.draw==='page'&&+x.value>4);if(o.draw==='page'&&+$('.cm-n',pn).value>4)$('.cm-n',pn).value='4'};
+  const upd=()=>{const o=comicOpts(pn);$('.cm-dh',pn).textContent=COMIC_DRAW_HINT[o.draw];$('.cm-ib',pn).hidden=o.draw==='page';$$('.cm-n option',pn).forEach(x=>x.hidden=o.draw==='page'&&+x.value>4);if(o.draw==='page'&&+$('.cm-n',pn).value>4)$('.cm-n',pn).value='4'};
   $$('.cm-d',pn).forEach(b=>b.onclick=()=>{$$('.cm-d',pn).forEach(x=>x.classList.toggle('on',x===b));upd()});upd();
 }
 // comic chats: each turn plans one page instead of one image
@@ -3891,7 +3895,7 @@ function comicStoryPrompt(chat,char,history,notes){
   const talk=history.slice(-12).map(m=>m.role==='user'?`USER: ${txt(m)}`:`YOU: ${txt(m)}${comicOf(m)?` [made page: ${comicOf(m).caption}]`:m.imgs?.[m.sw]?` [made image: ${m.imgs[m.sw].caption}]`:''}${m.next?.[m.sw]?` [suggested next: ${m.next[m.sw]}]`:''}`).join('\n');
   const last=pages.at(-1),lp=comicOf(last),words=pages.slice(-3).map(m=>m.story?.[m.sw]).filter(Boolean);
   const plan=lp&&JSON.stringify(lp.draw==='page'?{caption:lp.caption,panels:lp.panels.map(({size,shot,words})=>({size,shot,words})),image:last.imgs[last.sw]}
-    :{caption:lp.caption,panels:lp.panels.map(({size,shape,words,p})=>({size,shape,words,...p}))});
+    :{caption:lp.caption,panels:lp.panels.map(({size,shape,words,inset,p})=>({size,shape,words,...(inset?{inset}:{}),...p}))});
   return `We are making a comic, page by page, that tells a story with ${char.kind==='world'?`characters from ${char.name}`:char.name}. ${su.intro}
 
 STORY OUTLINE: ${chat.storyOutline?.trim()||'(not set yet)'}
@@ -4785,7 +4789,7 @@ function chatMenu(chat,char,redraw){
     ${chat.origin?`<button data-act="setup">${I.book} Scene setup (from the world chat)</button><button data-act="srolesc">${I.user} You in this scene: ${SCENE_ROLES[sceneRole(chat)][0]}</button><button data-act="sendback">${I.send} Send back to the world chat${chat.origin.sent?' (sent)':''}</button>`:''}${char.kind==='world'&&chat.mode!=='image'?`<button data-act="wscene">${I.chat} Play a scene with one character</button>${liveScenes(chat).length?`<button data-act="scenes">${I.book} Scenes from this chat (${liveScenes(chat).length})</button>`:''}`:''}<button data-act="memory">${I.brain} Chat memory</button>${chat.mode==='image'?'':`<button data-act="scene">${I.user} The scene right now</button>`}${char.kind==='world'?`<button data-act="cguests">${I.user} Guests${guestsOf(chat,char).length?`: ${esc(guestsOf(chat,char).map(g=>g.name).join(', '))}`:''}</button>`:''}${char.kind!=='world'&&S.chars.some(c=>c.kind==='world')?`<button data-act="cworld">${I.book} World for this chat: ${esc(chatWorld(chat,char)?.name||'none')}</button>`:''}<button data-act="persona">${I.user} Persona for this chat</button><button data-act="prompt">${I.edit} Prompt preset</button>
     <button data-act="vars">${I.code} Script variables</button><button data-act="lore">${I.tag} Lore used in last reply</button><button data-act="rename">${I.edit} Rename chat</button><button data-act="mvf">${I.folder} Move to folder${folders('chats').find(f=>f.id===chat.folder)?` (now: ${esc(folders('chats').find(f=>f.id===chat.folder).name)})`:''}</button>
     <button data-act="newchat">${I.plus} Start a new chat</button><button data-act="export">${I.exp} Export chat as text</button>
-    ${chat.mode==='image'?`<button data-act="srole">${{observer:I.book,pov:I.img}[storyRole(chat)]||I.user} Your role: ${ROLE_LABEL[storyRole(chat)]}</button><button data-act="comic">${I.copy} Comic pages: ${chat.comic?`on · ${chat.comic.draw==='page'?'whole page at once':'panel by panel'}`:'off'}</button><button data-act="outline">${I.edit} Story outline</button><button data-act="ihist">${I.copy} All image prompts (${chat.images?.length||0})</button>`
+    ${chat.mode==='image'?`<button data-act="srole">${{observer:I.book,pov:I.img}[storyRole(chat)]||I.user} Your role: ${ROLE_LABEL[storyRole(chat)]}</button><button data-act="comic">${I.copy} Comic pages: ${chat.comic?`on · ${chat.comic.draw==='page'?'whole page at once':`panel by panel${chat.comic.insets?', insets':''}`}`:'off'}</button><button data-act="outline">${I.edit} Story outline</button><button data-act="ihist">${I.copy} All image prompts (${chat.images?.length||0})</button>`
       :`<button data-act="image">${I.img} Image prompt / storyboard</button><button data-act="board">${I.copy} Storyboard the whole chat${boardBusy.has(chat.id)?' (writing…)':''}</button>`}<button data-act="fromimg">${I.img} Prompt from image</button><button data-act="ipreset">${I.img} Image preset: ${esc(imgPreset().name)}</button><button data-act="gallery">${I.img} Gallery${char.gallery?.length?` (${char.gallery.length})`:''}</button>${researchOn()?`<button data-act="lookup">${I.wand} Look something up</button>`:''}${chat.researchNotes||researchOn()?`<button data-act="facts">${I.brain} Looked-up facts</button>`:''}<button data-act="charpage">${I.user} Character page</button><button data-act="editchar">${I.tag} Edit character</button><button class="danger" data-act="del">${I.trash} Delete chat</button></div>`,{
     charpage:()=>go('#/char/'+char.id),
     image:()=>{if(!chat.messages.length)return toast('Start the story first');openImageSheet(chat,char,chat.messages.length-1)},
