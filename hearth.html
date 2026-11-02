@@ -213,6 +213,8 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .thumbs{display:grid;grid-template-columns:repeat(auto-fill,minmax(76px,1fr));gap:6px}
 .thumbs img{width:100%;aspect-ratio:1;object-fit:cover;object-position:top;border-radius:10px;background:var(--panel2);cursor:pointer;display:block}
 .thumbs img.main{outline:2px solid var(--accent);outline-offset:-2px}
+.thumbs.cpage{grid-template-columns:1fr}
+.thumbs.cpage img{aspect-ratio:auto;max-height:70dvh;object-fit:contain;background:none}
 .thumb-add{aspect-ratio:1;border:1px dashed var(--line);border-radius:10px;background:none;color:var(--muted);font-size:26px;cursor:pointer}
 .mw .thumbs{margin-top:8px;grid-template-columns:repeat(auto-fill,minmax(110px,1fr))}
 .nextsug{display:flex;gap:10px;align-items:center;margin-top:8px;padding:8px 10px;border:1px dashed var(--accent2);border-radius:12px;font-size:13px}
@@ -250,6 +252,14 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .rd-pics{display:flex;flex-direction:column;gap:8px;margin-bottom:12px}
 .rd-pics img{width:100%;border-radius:12px;display:block;background:var(--panel2);cursor:zoom-in}
 .rd-nopic{display:flex;flex-direction:column;align-items:center;gap:8px;padding:22px 14px;margin-bottom:12px;border:1px dashed var(--line);border-radius:12px;color:var(--muted);font-size:13px;text-align:center}
+.cpanels{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:8px}
+.cpan{position:relative;display:flex;align-items:center;justify-content:center;aspect-ratio:1;padding:0;border:1px dashed var(--line);border-radius:10px;background:var(--panel2);color:var(--muted);cursor:pointer;overflow:hidden;font:inherit}
+.cpan.big{grid-column:span 2;aspect-ratio:2}
+.cpan img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:top}
+.cpan>span{font-size:18px;font-weight:700}
+.cpan small{position:absolute;left:0;right:0;bottom:0;background:#000a;color:#fff;font-size:10.5px;padding:2px 4px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cp-next{margin-top:6px;flex-wrap:wrap}
+.rd-comic{margin-bottom:12px}
 .rd-text,.storytxt{font:16.5px/1.75 Georgia,"Noto Serif",serif}
 .rd-text p,.storytxt p{margin:0 0 .8em}
 .rd-text .q,.storytxt .q{color:inherit}
@@ -387,7 +397,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.33.0',HEARTH_DATE='2026-11-02';
+const HEARTH_VERSION='1.34.0',HEARTH_DATE='2026-11-02';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -409,7 +419,7 @@ async function saveChat(chat,keepTime){
 }
 // What the Chats list shows: the kind of chat, what it's about (your title, the story outline, the scenario or the memory) and the latest moment.
 const autoTitle=t=>/\d{1,4}[\/.\-]\d{1,2}[\/.\-]\d{1,4}\s*$/.test(t||''); // made by the app: "Name · … · date"
-const CHAT_META_V=4; // list entries made by an older version get rebuilt from the saved chat (3: the latest attached picture; 4: also from image prompts)
+const CHAT_META_V=5; // list entries made by an older version get rebuilt from the saved chat (3: the latest attached picture; 4: also from image prompts; 5: comics)
 // the picture for the Chats list: the last one of the newest message that has pictures (a story message's own,
 // or ones made from an image prompt, which show under their message)
 function latestPic(chat){
@@ -425,10 +435,10 @@ function chatMeta(chat){
     :image?plain(chat.storyOutline)||plain(firstUser&&txt(firstUser))
     :[scs.length>1?scn?.name:'',plain(((chat.memory||'').split('\n').find(l=>l.replace(/^[\s\-•*]+/,'').trim())||'').replace(/^[\s\-•*]+/,''))].filter(Boolean).join(' · ')||plain(scn?.scenario)||plain(scn?.greetings?.[0]);
   let preview='';
-  if(image){const m=[...chat.messages].reverse().find(m=>m.imgs?.[m.sw]);if(m)preview=`Latest image: ${plain(m.story?.[m.sw]||m.imgs[m.sw].caption)}`}
+  if(image){const m=[...chat.messages].reverse().find(m=>m.imgs?.[m.sw]);if(m)preview=`${m.comic?.[m.sw]?'Latest page':'Latest image'}: ${plain(m.comic?.[m.sw]?.caption||m.story?.[m.sw]||m.imgs[m.sw].caption)}`}
   else{const m=[...chat.messages].reverse().find(m=>txt(m)&&!m.greeting)||[...chat.messages].reverse().find(m=>txt(m));if(m)preview=`${m.role==='user'?un:char?.name||''}: ${plain(txt(m))}`}
   return {id:chat.id,charId:chat.charId,title:chat.title,updated:chat.updated,count:chat.messages.length,folder:chat.folder||'',
-    mode:image?'image':'chat',quick:!!chat.quick,about:String(about||'').slice(0,200),preview:preview.slice(0,220),images:image?chat.messages.filter(m=>m.imgs?.[m.sw]).length:0,
+    mode:image?'image':'chat',quick:!!chat.quick,comic:!!chat.comic,about:String(about||'').slice(0,200),preview:preview.slice(0,220),images:image?chat.messages.filter(m=>m.imgs?.[m.sw]).length:0,
     pic:latestPic(chat),v:CHAT_META_V};
 }
 // Asks the AI to fold the messages since the last update into the chat memory.
@@ -1335,7 +1345,7 @@ function galAlbum(c,g){
   if(!g.chatId)return 'none';
   return S.chatIndex.some(x=>x.id===g.chatId)?'chat:'+g.chatId:'gone';
 }
-const chatKind=x=>x?.mode==='image'?(x.quick?'Quick images':'Image story'):'Chat';
+const chatKind=x=>x?.mode==='image'?(x.quick?(x.comic?'Quick comic':'Quick images'):x.comic?'Comic':'Image story'):'Chat';
 function galAlbums(c){
   const by=new Map();for(const g of c.gallery||[]){const k=galAlbum(c,g);if(!by.has(k))by.set(k,[]);by.get(k).push(g)}
   const last=k=>Math.max(0,...by.get(k).map(g=>g.at||0));
@@ -2634,7 +2644,7 @@ function chatRow(x,withChar){
   const counts=`${x.count||0} msg${x.count===1?'':'s'}${image&&x.images?` · ${x.images} img${x.images===1?'':'s'}`:''}`;
   // the latest picture attached in the chat; the character's picture shows until it loads, and stays if it's gone
   return `<a class="li chatrow" href="#/chat/${x.id}"><div class="cr-av"><img src="${esc(avatar(c))}" ${x.pic?`data-img="${esc(x.pic)}"`:''} alt="">${image?`<span class="cr-badge">${I.img}</span>`:''}</div>
-    <div class="lt"><div class="cr-top"><b>${head}</b>${image?`<i class="tag img">${x.quick?'Quick images':'Image story'}</i>`:`<i class="tag">${world?'World chat':'Chat'}</i>`}</div>
+    <div class="lt"><div class="cr-top"><b>${head}</b>${image?`<i class="tag img">${chatKind(x)}</i>`:`<i class="tag">${world?'World chat':'Chat'}</i>`}</div>
       ${sub?`<span class="cr-about">${esc(sub)}</span>`:''}${x.preview?`<span class="cr-last">${esc(x.preview)}</span>`:''}</div>
     <div class="cr-side"><span>${timeAgo(x.updated)}</span><span>${counts}</span></div></a>`;
 }
@@ -2679,7 +2689,7 @@ async function vChat(id){
     const p=personaFor(chat),api=activeApi();
     view.innerHTML=`<div class="chat" ${char.banner?`style="--chatbg:url('${esc(char.banner)}')"`:''}>
     <header class="top"><button class="ib" data-act="back">${I.back}</button><img data-act="zoom" src="${esc(chatAvatar(chat,char))}" alt="${esc(char.name)}">
-      <div class="ct"><b>${esc(char.name)}</b><small>${story?`Image story · ${{observer:'watching',pov:`POV as ${esc(p?.name||'You')}`}[storyRole(chat)]||`as ${esc(p?.name||'You')}`} · ${esc(imgPreset().name)} preset`:`as ${esc(p?.name||'You')} · ${esc(promptFor(chat).name)}`} · ${esc(api?.model||'no model set')}</small></div><button class="ib" data-act="menu">${I.dots}</button></header>
+      <div class="ct"><b>${esc(char.name)}</b><small>${story?`${chat.comic?'Comic':'Image story'} · ${{observer:'watching',pov:`POV as ${esc(p?.name||'You')}`}[storyRole(chat)]||`as ${esc(p?.name||'You')}`} · ${esc(imgPreset().name)} preset`:`as ${esc(p?.name||'You')} · ${esc(promptFor(chat).name)}`} · ${esc(api?.model||'no model set')}</small></div><button class="ib" data-act="menu">${I.dots}</button></header>
     ${story?`<div class="vtabs"><button data-act="vmode" data-v="" class="${reader()?'':'on'}">${I.code} Prompts</button><button data-act="vmode" data-v="story" class="${reader()?'on':''}">${I.book} Story</button></div>`:''}
     <div class="msgwrap"><div class="msgs" id="msgs"></div><button class="jump" id="jump" data-act="jump" hidden></button></div>
     <div class="composer" ${reader()?'hidden':''}><textarea id="inp" rows="1" placeholder="${story?'Describe a scene, ask for a change, or say next…':`Message ${esc(char.name)}…`}"></textarea><button class="btn" id="sendbtn" data-act="send">${I.send}</button></div></div>`;
@@ -2703,7 +2713,8 @@ async function vChat(id){
     const sw=!u&&isLast&&(m.swipes.length>1||!m.greeting)?`<div class="swipes"><button data-act="swl" ${m.sw===0||GEN?'disabled':''}>‹</button><span>${m.sw+1}/${m.swipes.length}</span><button data-act="swr" ${GEN||(m.greeting&&m.sw>=m.swipes.length-1)?'disabled':''}>›</button></div>`:'';
     return `<div class="msg ${u?'user':'bot'}${hasScene(chat,m)?' hasscene':''}" data-i="${i}"><img class="av" data-act="zoom" src="${esc(u?avatar(who):chatAvatar(chat,char,m))}" alt=""><div class="mw"><div class="nm">${esc(name)}</div><div class="bubble">${body}</div>${generating||!S.settings.showTokens?'':tokLine(m)}${lk?`<div class="lookups">Looked up: ${lk.map(esc).join(' · ')}</div>`:''}${sceneLinksHTML(chat,m)}
       ${promptPics(m).length?thumbs(promptPics(m),'cview'):''}
-      ${story&&!u&&!generating&&m.imgs?.[m.sw]?`${m.pics?.[m.sw]?.length?thumbs(m.pics[m.sw],'sview'):''}<div class="row" style="margin-top:6px;flex-wrap:wrap">${naiOn()?`<button class="btn sm" data-act="ngenm">${I.img} Generate picture</button>`:''}<button class="btn ghost sm" data-act="attach">${I.img} Attach picture</button><button class="btn ghost sm" data-act="toimgs">${I.edit} Open on Images page</button></div>${m.story?.[m.sw]?`<div class="storytxt">${paras(macro(m.story[m.sw],char.name,p?.name||'You'))}</div>`:''}${storyCardsHTML(m.imgs[m.sw],i)}`:''}
+      ${story&&!u&&!generating&&comicOf(m)?.draw==='panels'?`${m.pics?.[m.sw]?.length?thumbs(m.pics[m.sw],'sview').replace('class="thumbs"','class="thumbs cpage"'):''}${comicTilesHTML(m)}${m.pics?.[m.sw]?.length?'':`<div class="row" style="margin-top:6px"><button class="btn ghost sm" data-act="attach">${I.img} Attach a finished page</button></div>`}${m.story?.[m.sw]?`<div class="storytxt">${paras(macro(m.story[m.sw],char.name,p?.name||'You'))}</div>`:''}`
+      :story&&!u&&!generating&&m.imgs?.[m.sw]?`${m.pics?.[m.sw]?.length?thumbs(m.pics[m.sw],'sview').replace('class="thumbs"',comicOf(m)?'class="thumbs cpage"':'class="thumbs"'):''}<div class="row" style="margin-top:6px;flex-wrap:wrap">${naiOn()?`<button class="btn sm" data-act="ngenm">${I.img} Generate picture</button>`:''}<button class="btn ghost sm" data-act="attach">${I.img} Attach picture</button><button class="btn ghost sm" data-act="toimgs">${I.edit} Open on Images page</button></div>${m.story?.[m.sw]?`<div class="storytxt">${paras(macro(m.story[m.sw],char.name,p?.name||'You'))}</div>`:''}${storyCardsHTML(m.imgs[m.sw],i)}`:''}
       ${story&&!u&&isLast&&!generating&&m.next?.[m.sw]?`<div class="nextsug"><div><b>Next:</b> ${esc(m.next[m.sw])}</div><button class="btn sm" data-act="usenext" ${GEN?'disabled':''}>Use this ›</button></div>`:''}
       ${!story&&!u&&isLast&&!generating&&m.cut?.[m.sw]?`<div class="controw"><button class="btn ghost sm" data-act="cont" ${GEN?'disabled':''}>Continue ›</button><span>This reply was cut off.</span></div>`:''}
       <div class="mact"><button data-act="medit">${I.edit}Edit</button><button data-act="mcopy">${I.copy}Copy</button>${story?'':`<button data-act="mimg">${I.img}Image</button>`}${!story&&char.kind==='world'&&txt(m).trim()?`<button data-act="mscene">${I.chat}Scene</button>`:''}${canRegen?`<button data-act="regen">${I.regen}${story?'Try again':'Regenerate'}</button>`:''}${canRegen?`<button data-act="redonotes">${I.wand}Redo with notes</button>`:''}${story&&!u&&m.imgs?.[m.sw]?`<button data-act="rwrite">${I.book}Rewrite story</button>`:''}${!story&&!u&&isLast?`<button data-act="cont">${I.send}Continue</button>`:''}<button data-act="mdel">${I.trash}Delete</button></div>${sw}</div></div>`;
@@ -2734,25 +2745,60 @@ async function vChat(id){
     GEN={chatId:chat.id,idx,ctrl:new AbortController(),status:'Building the prompts…'};renderMsgs(true);updateSend();
     const g=GEN;let failed=null,ok=false;
     try{
-      const history=chat.messages.slice(0,idx),prompt=imageStoryPrompt(chat,char,history,notes&&{...notes,prev:notes.sw!=null?{reply:m.swipes[notes.sw],img:m.imgs?.[notes.sw],story:m.story?.[notes.sw]}:null});
-      const r=await callJson(api,[{role:'system',content:SYS_STORY},{role:'user',content:prompt}],GEN.ctrl.signal,{maxTokens:Math.max(2500,+S.settings.maxTokens||0)});
-      const j=r.j,img=j.image&&typeof j.image==='object'?finishPanel(cleanPanel(j.image),chat,char):null;
+      const comic=!!chat.comic,history=chat.messages.slice(0,idx),prompt=(comic?comicStoryPrompt:imageStoryPrompt)(chat,char,history,notes&&{...notes,prev:notes.sw!=null?{reply:m.swipes[notes.sw],img:m.imgs?.[notes.sw],story:m.story?.[notes.sw]}:null});
+      const r=await callJson(api,[{role:'system',content:SYS_STORY},{role:'user',content:prompt}],GEN.ctrl.signal,{maxTokens:Math.max(comic?comicTokens(chat):2500,+S.settings.maxTokens||0)});
+      const j=r.j;let img,pg=null,storyT;
+      if(comic){const f=j.page&&typeof j.page==='object'&&comicPage(j.page,chat,char);img=f?comicFields(f).img:null;if(f){pg=f;storyT=comicWords(f)}}
+      else{img=j.image&&typeof j.image==='object'?finishPanel(cleanPanel(j.image),chat,char):null;storyT=str(j.story).trim()}
       const reply=str(j.reply).trim();if(!reply&&!panelOk(img))throw new Error('The AI returned an empty answer. Try again.');
       m.swipes[m.sw]=reply||'Here it is.';
       (m.imgs??=[])[m.sw]=panelOk(img)?img:null;(m.next??=[])[m.sw]=str(j.next).trim();
-      (m.story??=[])[m.sw]=panelOk(img)?str(j.story).trim():'';(m.remake??=[])[m.sw]=panelOk(img)&&(j.remake===true||j.remake==='true');
+      (m.story??=[])[m.sw]=panelOk(img)?storyT:'';(m.remake??=[])[m.sw]=panelOk(img)&&(j.remake===true||j.remake==='true');
+      if(comic||m.comic)(m.comic??=[])[m.sw]=panelOk(img)?pg:null;
+      // a remade page keeps a copy of the picture of every panel that didn't change
+      const prev=pg?.draw==='panels'&&m.remake[m.sw]&&[...history].reverse().map(comicOf).find(Boolean);
+      if(prev?.draw==='panels')for(const [k,x] of pg.panels.entries()){const o=prev.panels[k],id=o?.pics?.at(-1);
+        if(id&&o.shape===x.shape&&JSON.stringify(o.p)===JSON.stringify(x.p)){const rec=await store.get('img:'+id);if(rec?.data)x.pics=[await putImg(rec.data,{seed:rec.seed,made:true})]}}
+      if(pg?.draw==='panels'&&pg.panels.every(x=>x.pics?.length))await comicRebuild(m,m.sw);
       (m.usage??=[])[m.sw]=r.usage;
       if(str(j.outline).trim())chat.storyOutline=str(j.outline).trim();
-      if(panelOk(img))addImage(chat,[img],txt([...history].reverse().find(x=>x.role==='user')||{swipes:[''],sw:0}),'story',m.usage[m.sw]);
+      if(panelOk(img))addImage(chat,pg?.draw==='panels'?pg.panels.map(x=>x.p):[img],txt([...history].reverse().find(x=>x.role==='user')||{swipes:[''],sw:0}),'story',m.usage[m.sw]);
       ok=true;
     }catch(e){if(!(e.name==='AbortError'&&g.ctrl.signal.aborted))failed=e}
     // cut off while Hearth was in the background: ask again once it's back on screen
     const broke=!ok&&g.bg&&netBreak(failed)&&tries<BG_TRIES;if(broke)failed=null;
-    if(!ok){if(mode==='swipe'){m.swipes.pop();m.sw=m.swipes.length-1;for(const k of ['imgs','next','usage','story','remake'])m[k]?.splice(m.swipes.length)}else chat.messages.splice(idx,1)}
+    if(!ok){if(mode==='swipe'){m.swipes.pop();m.sw=m.swipes.length-1;for(const k of ['imgs','next','usage','story','remake','comic','pics'])m[k]?.splice(m.swipes.length)}else chat.messages.splice(idx,1)}
     GEN=null;await saveChat(chat);
     if(curChat===chat){renderMsgs(true);updateSend()}
     if(broke)resumeLater(()=>storyGenerate(mode,notes,tries+1),'Asking again: the answer was cut off while Hearth was in the background…');
     if(failed)openSheet(`<h2 class="err">Couldn't build the prompts</h2><div class="box pre small">${esc(failed.message)}</div><br><button class="btn ghost block" data-act="close">Close</button>`);
+  }
+  // one panel of a comic page drawn panel by panel: its pictures, Generate, Attach, the Images page and its prompt
+  function comicPanel(i,k){
+    const m=chat.messages[i],pg=comicOf(m),x=pg?.panels[k];if(!x)return;
+    const T=[],[w,h]=COMIC_SHAPES[comicShape(x.shape)],again=()=>comicPanel(i,k);
+    const after=async()=>{await comicRebuild(m,m.sw);await saveChat(chat);updateOne(i)};
+    const add=async ids=>{if(!ids.length)return;(x.pics??=[]).push(...ids);await after();again()};
+    const pn=openSheet(`<h2>Panel ${k+1} of ${pg.panels.length}</h2><p class="small muted" style="margin:-4px 0 8px">${x.size==='big'?'Big panel · ':x.size==='small'?'Small panel · ':''}${COMIC_SHAPES[comicShape(x.shape)][2]} picture, ${w}×${h}${x.p.caption?` · ${esc(x.p.caption)}`:''}</p>
+      ${x.pics?.length?`${thumbs(x.pics,'pview').replace(`data-id="${x.pics.at(-1)}"`,`data-id="${x.pics.at(-1)}" class="main"`)}<p class="hint">The page uses the outlined one. Tap a picture to use another one, save it or delete it.</p>`:''}
+      <div class="row" style="margin:6px 0 4px;flex-wrap:wrap">${naiOn()?`<button class="btn sm" data-act="gen">${I.img} ${x.pics?.length?'Generate another':'Generate panel'}</button>`:''}<button class="btn ghost sm" data-act="att">${I.img} Attach</button><button class="btn ghost sm" data-act="toimgs">${I.edit} Open on Images page</button></div><div class="small" id="cp-msg" style="margin-bottom:8px"></div>
+      ${panelsHTML([x.p],T,'cp')}
+      <div class="sheet-foot row"><button class="btn ghost" data-act="close" style="flex:1">Close</button>${k>0?`<button class="btn ghost" data-act="prevp" style="flex:1">‹ Panel ${k}</button>`:''}${k<pg.panels.length-1?`<button class="btn ghost" data-act="nextp" style="flex:1">Panel ${k+2} ›</button>`:''}</div>`,{
+      cp:b=>copyText(T[+b.dataset.i]),
+      prevp:()=>comicPanel(i,k-1),nextp:()=>comicPanel(i,k+1),
+      gen:async b=>{const msg=$('#cp-msg',pn);b.disabled=true;msg.className='small muted';msg.textContent=`Making panel ${k+1}…`;
+        try{await add([await naiPicture(x.p,undefined,{w,h})])}
+        catch(e){if(msg.isConnected){msg.className='small err';msg.textContent=e.message}if(b.isConnected)b.disabled=false}},
+      att:()=>openSheet(`<h2>Attach a picture to panel ${k+1}</h2><div class="menu"><button data-act="dev">${I.imp} From this device</button><button data-act="app">${I.img} From Hearth</button></div>
+        <p class="hint">Best in the panel's shape: ${COMIC_SHAPES[comicShape(x.shape)][2].toLowerCase()}, like ${w}×${h}. It's also saved to ${esc(char.name)}'s gallery.</p>
+        <div class="sheet-foot"><button class="btn ghost block" data-act="back">${I.back} Back</button></div>`,{
+        back:again,dev:async()=>add(await addPictures(char,'gallery',chat.id)),
+        app:()=>pickAppPicture(async id=>{try{await add([char.gallery?.some(g=>g.id===id)?id:await saveToGallery(char,id,x.p.caption,chat.id)])}catch(e){toast(e.message)}},again,{first:char.id,hint:''})}),
+      toimgs:async()=>{if(!m.id){m.id=uid();await saveChat(chat)}openOnImages(x.p,{chatId:chat.id,title:chat.title||char.name,caption:`Panel ${k+1}${x.p.caption?`: ${x.p.caption}`:''}`,msgId:m.id,sw:m.sw,panel:k})},
+      pview:b=>{const id=b.dataset.id;viewMade(id,{c:char,chatId:chat.id,note:x.p.caption,backLabel:'Back to the panel',back:again,
+        more:id===x.pics.at(-1)?[]:[{label:`${I.check} Use this one in the page`,fn:async()=>{x.pics=[...x.pics.filter(y=>y!==id),id];await after();again()}}],
+        onDelete:async()=>{x.pics=x.pics.filter(y=>y!==id);await after()}})}
+    });hydrate(pn);
   }
   // left: how many more times a reply cut off by the token limit is continued automatically (Settings → Generation)
   // notes (swipe only): {want, avoid, keep, sw} from "Redo with notes": a new version of reply version sw that follows them
@@ -2903,6 +2949,12 @@ async function vChat(id){
       const m=chat.messages[idxOf(b)];
       if(char.gallery?.some(g=>g.id===id))viewPicture(char,id,'gallery',()=>{if(!char.gallery.some(g=>g.id===id))drop();else renderMsgs()});
       else viewMade(id,{c:char,chatId:chat.id,note:m?.imgs?.[m.sw]?.caption,backLabel:'Back to the story',onDelete:drop})},
+    cpanel:b=>comicPanel(idxOf(b),+b.dataset.k||0),
+    // a comic drawn panel by panel: one tap makes the picture of the next panel that has none
+    cgen:async b=>{const i=idxOf(b),m=chat.messages[i],pg=comicOf(m),k=pg?.panels.findIndex(x=>!x.pics?.length)??-1;if(k<0)return;
+      const x=pg.panels[k],[w,h]=COMIC_SHAPES[comicShape(x.shape)];b.disabled=true;b.textContent=`Making panel ${k+1}…`;
+      try{const id=await naiPicture(x.p,undefined,{w,h});(x.pics??=[]).push(id);const done=await comicRebuild(m,m.sw);await saveChat(chat);updateOne(i);if(done)toast('The page is ready')}
+      catch(e){toast(e.message,5000);if(b.isConnected){b.disabled=false;b.innerHTML=`${I.img} Generate panel ${k+1} of ${pg.panels.length}`}}},
     usenext:()=>{const m=chat.messages.at(-1),inp=$('#inp');inp.value=m.next[m.sw];H.send()},
     mdel:b=>{
       const i=idxOf(b);if(GEN)return toast('Wait for the reply to finish');
@@ -2923,18 +2975,23 @@ async function vChat(id){
     redit:b=>{const sec=b.closest('.rd-sec'),s=storySections(chat).find(x=>x.i===+sec.dataset.i);
       $('.rd-text',sec).innerHTML=`<textarea class="edit-ta">${esc(s?.story||'')}</textarea><div class="row"><button class="btn sm" data-act="rsave">Save</button><button class="btn sm ghost" data-act="ecancel">Cancel</button></div>`;
       b.closest('.rd-act').hidden=true;const t=$('textarea',sec);autosize(t,window.innerHeight*.6);t.oninput=()=>autosize(t,window.innerHeight*.6);t.focus()},
-    rsave:async b=>{const i=idxOf(b),m=chat.messages[i];(m.story??=[])[m.sw]=$('textarea',b.closest('.rd-sec')).value.trim();await saveChat(chat);renderMsgs()},
+    rsave:async b=>{const i=idxOf(b),m=chat.messages[i],t=$('textarea',b.closest('.rd-sec')).value.trim();(m.story??=[])[m.sw]=t;
+      // a comic page: the numbered paragraphs go back to their panels
+      const pg=comicOf(m),by={};if(pg){for(const para of t.split(/\n\s*\n/)){const r=para.match(/^\*\*(\d+)\.\*\*\s*([^]*)$/);if(r)by[+r[1]-1]=r[2].replace(/\*\*([^*\n]+?):\*\*/g,'$1:').trim()}
+        if(Object.keys(by).length)pg.panels.forEach((x,n)=>x.words=by[n]||'')}
+      await saveChat(chat);renderMsgs()},
     fillstory:async b=>{if(!activeApi())return toast('Add an API / proxy in Settings first',4000);b.disabled=true;b.textContent='Writing…';
       try{const r=await fillStory(chat,char);renderMsgs();toast(`Wrote the story for ${r.n} image${r.n===1?'':'s'}${r.usage?` · ${usageText(r.usage)}`:''}`,4500)}
       catch(e){toast(e.message,6000);if(b.isConnected){b.disabled=false;b.innerHTML=`${I.wand} Write it`}}},
     rexport:()=>exportStory(chat,char),
     // story text only: the picture and its prompts stay as they are
     rwrite:b=>{const i=idxOf(b);if(!activeApi())return toast('Add an API / proxy in Settings first',4000);
-      wishSheet('Rewrite the story text','Only the text under this picture changes. The AI keeps it joined to the text before and after.',async(w,pn,msg)=>{
+      const cm=!!comicOf(chat.messages[i]);
+      wishSheet(cm?'Rewrite the words':'Rewrite the story text',cm?'Only the words under this page change, panel by panel. The pictures stay as they are.':'Only the text under this picture changes. The AI keeps it joined to the text before and after.',async(w,pn,msg)=>{
         const r=await rewriteStory(chat,char,i,w.want,w.avoid);
         msg.className='small';msg.innerHTML=`<div class="storytxt" style="margin-top:8px">${paras(macro(r.text,char.name,personaFor(chat)?.name||'You'))}</div><div class="tokl">${usageText(r.usage)}</div>
           <div class="row" style="margin-top:8px"><button class="btn sm" data-act="use">${I.check} Use this</button><span class="small muted">or change the wishes and tap Redo again</span></div>`;
-        SH.use=async()=>{const m=chat.messages[i];(m.story??=[])[m.sw]=r.text;await saveChat(chat);closeSheet();renderMsgs();toast('Story text updated')}})},
+        SH.use=async()=>{const m=chat.messages[i];(m.story??=[])[m.sw]=r.text;if(r.words)comicOf(m)?.panels.forEach((x,n)=>x.words=r.words[n]);await saveChat(chat);closeSheet();renderMsgs();toast('Story text updated')}})},
     // the whole reply again (prompts and story text), steered by the user's wishes
     redonotes:()=>{if(GEN)return toast('Wait for the reply to finish');
       if(!story)return wishSheet('Redo with notes','Makes a new version of this reply that follows your notes. The current one stays: swipe back to compare.',async(w,pn)=>{
@@ -2966,7 +3023,7 @@ function withPreset(p,pr=imgPreset()){
 }
 // The NovelAI rules every image request shares. o.story: image stories, where the user's role decides whether they are drawn.
 function novelRules(chat,char,o={}){
-  const textMode=o.text===true?'auto':o.text===false?'off':o.text==='ask'?'ask':(S.settings.imgText||'ask');
+  const textMode=o.text===true?'auto':o.text===false?'off':o.text==='ask'||o.text==='sfx'?o.text:(S.settings.imgText||'ask');
   const oneBox=(o.fmt||S.settings.imgOutput)==='onebox';
   const st=S.settings,v5=st.imgModel!=='v45',p=personaFor(chat),un=p?.name||'You';
   const look=p?.imageTags?`; their look: ${p.imageTags}`:p?.description?`; about them: ${p.description.slice(0,600)}`:'';
@@ -2992,6 +3049,7 @@ function novelRules(chat,char,o={}){
 - Cartoonish faces (chibi, super deformed, jitome, @_@, x_x, >_<, o_o, solid circle eyes, chibi inset): ${{never:'never use them.',often:'use them freely whenever the mood is light or funny, and for every absurd moment (see below).'}[st.imgComic]||'use them for comedic, exaggerated or absurd moments; keep normal faces for sincerely serious, sad or romantic beats.'}${st.imgComic!=='never'?`
 - Absurd moments get cartoonish faces no matter the mood of the scene: ridiculous situations, over-the-top reactions, deadpan nonsense, slapstick, someone doing something silly or out of character, a joke or misunderstanding in the middle of a serious, sad or romantic scene. Only the characters caught in the absurd beat get them (for example the one who says something ridiculous gets a smug or blank o_o face while the others get jitome or @_@); add chibi or super deformed if the absurdity is strong.`:''}
 ${textMode==='off'?'- Text: never put words, speech bubbles or thought bubbles in the image; leave "text" empty.'
+:textMode==='sfx'?'- Text: no dialogue, narration, speech bubbles or thought bubbles in the image (the words are written outside the picture). Only when a sound matters (a hit, a crash, a door slam, a scream, footsteps) add the tags sound effects and onomatopoeia and put one short sound word in "text", in capitals (like BAM, CRASH, THUD or ZZZ); otherwise leave "text" empty. Manga symbols such as !, ?, hearts, musical notes, sweatdrops and anger veins are tags, not text: use them freely. Add speech bubble to the undesired content.'
 :`- Text: ${textMode==='auto'?'when characters speak or think in this moment, show their words':'only when the user asks for speech bubbles, thought bubbles, signs or other text, show them; otherwise leave "text" empty and add no text tags'}. Add the tags text, ${v5?'english text (or japanese text if the user asks for Japanese)':'english text'}, and speech bubble or thought bubble; say in a short sentence who is speaking or thinking. Put the exact words in "text": one bubble per line in reading order, separated by a blank line, nothing else. Keep each bubble short (about 8 words) and all text under ${v5?360:110} characters.${v5?'':' English only.'}`}
 - Comic pages: when asked for several panels in one image (a comic page, manga page or 4koma), add comic (and 4koma for a vertical four-panel strip), then describe the layout and each panel in reading order with short sentences in the base prompt, like "Panel 1, top left: ...". Keep each character's look and outfit identical in every panel.
 ${oneBox?`- Write everything as ONE prompt: the base prompt first, then each character's prompt, separated by " | " (like: 2girls, park, sunset | girl, red hair, smile | girl, blue hair, waving). No per-character undesired content, names or positions.`
@@ -3069,7 +3127,7 @@ async function makeImagePrompt(chat,char,upto,opts){
   const p=personaFor(chat),un=p?.name||'You',panels=opts.panels||1;
   let scene=(opts.range?chat.messages.slice(opts.range[0],opts.range[1]+1):chat.messages.slice(0,upto+1).slice(-10)).map(m=>`${m.role==='user'?un:char.name}: ${macro(stripThink(txt(m)),char.name,un)}`).join('\n\n');
   if(scene.length>9000)scene='…'+scene.slice(-9000);
-  const what=opts.moment?`one image of this moment from it: ${opts.moment}`:opts.comic?`ONE image that is a comic page with ${opts.comic.n} panels${opts.comic.layout?` (${opts.comic.layout})`:''}, following the story beats of the roleplay in reading order and ending at the last message`
+  const what=opts.moment?`one image of this moment from it: ${opts.moment}`:opts.comic?`ONE image that is a comic page with ${opts.comic.n?`${opts.comic.n} panels`:'as many panels as its moments need (2 to 4)'}${opts.comic.layout?` (${opts.comic.layout})`:''}, following the story beats of the roleplay in reading order and ending at the last message. Give the most important moment the biggest panel. Change the camera from panel to panel to fit each beat (a wide shot to show the place, medium shots for talking, close-ups for feelings, from below or above for drama), never the same framing twice in a row. Each panel shows one clear moment with only the people and props it needs`
     :panels>1?`a storyboard of ${panels} images that follow its story beats in order, ending at the last message`:'one image of the moment in the last message';
   const {j,usage}=await aiJson(SYS_NAI,`Turn the roleplay below into ${what}.
 ${opts.extra?`USER'S WISHES FOR THE IMAGE: ${opts.extra}\n`:''}
@@ -3184,7 +3242,8 @@ function naiRequest(p0,seed,o={}){
   // quality tags go at the end of the prompt but before a "Text:" block; "no text" is left out when the image has words
   const qual=st.naiQuality===false?'':'very aesthetic, masterpiece'+(p.text?.trim()?'':', no text');
   const addQ=s=>{if(!qual)return s;const i=s.search(/\n?Text:/);return i<0?joinTags(s,qual):joinTags(s.slice(0,i),qual)+s.slice(i)};
-  const uc=joinTags(NAI_UC[st.naiUc||'heavy']??'',p.undesired);
+  // a comic page is several views on purpose: NovelAI's undesired preset would fight it
+  const uc=joinTags((NAI_UC[st.naiUc||'heavy']??'').split(', ').filter(t=>!(p.comic&&t==='multiple views')).join(', '),p.undesired);
   let base,chars=[];
   if(p.onebox){const [b,...rest]=p.onebox.split('|');base=[addQ(b.trim()),...rest.map(s=>s.trim())].join(' | ')}
   else{base=addQ(p.base);chars=p.characters.filter(c=>c.prompt?.trim()).map(c=>{const o=c.position&&typeof c.position==='object'?c.position:null;
@@ -3262,7 +3321,8 @@ async function naiTool(kind,src,o={}){
     ...(kind==='colorize'?{prompt:o.prompt||'',defry:o.defry??0}:kind==='emotion'?{prompt:`${o.emotion||'happy'};;${o.extra||''}`,defry:o.defry??0}:{})});
 }
 // makes the picture for a panel and keeps it with what made it (not in a gallery until you save it there); returns its picture id
-async function naiPicture(p,signal){const {data,seed}=await naiGenerate(p,signal);return putImg(data,{seed,made:true})}
+// o.w, o.h: a size of its own (comic panels), instead of the one in Settings
+async function naiPicture(p,signal,o){const {data,seed}=await naiGenerate(p,signal,o);return putImg(data,{seed,made:true})}
 const inGallery=id=>S.chars.some(c=>c.gallery?.some(g=>g.id===id));
 // a copy goes into the gallery, so deleting one never takes the other with it
 async function saveToGallery(c,id,note,chatId){
@@ -3489,9 +3549,9 @@ function showImageHistory(chat,char,upto){
 function openImageSheet(chat,char,upto){
   const pn=openSheet(`<h2>Image prompt (NovelAI)</h2>
     <div class="chips"><button type="button" class="chip on im-k" data-act="imk" data-k="one">${I.img} One image</button><button type="button" class="chip im-k" data-act="imk" data-k="comic">${I.copy} Comic page</button><button type="button" class="chip im-k" data-act="imk" data-k="sb">${I.copy} Storyboard</button></div>
-    <div id="im-cm" hidden><div class="grid2"><div><label class="f">Panels</label><select id="im-cn"><option>2</option><option>3</option><option selected>4</option><option>5</option><option>6</option></select></div>
+    <div id="im-cm" hidden><div class="grid2"><div><label class="f">Panels</label><select id="im-cn"><option value="0" selected>AI decides</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option></select></div>
       <div><label class="f">Layout</label><select id="im-cl"><option value="">AI chooses</option><option value="4koma, a vertical strip of four panels">4koma (vertical)</option><option value="a 2x2 grid">2×2 grid</option><option value="one horizontal row">Horizontal strip</option><option value="a manga page with panels of different sizes">Manga page</option></select></div></div>
-      <div class="hint">Several panels drawn in one image. Works best on V5.</div></div>
+      <div class="hint">Several panels drawn in one image. Works best on V5 with 2 to 4 panels: more panels means smaller, less detailed ones. For a comic with full-size panels, start an image story or Quick images as a comic.</div></div>
     <div class="tg"><div>Speech / thought bubbles<div class="hint">Show what characters say or think as text in the image.</div></div><label class="sw"><input type="checkbox" id="im-t" ${S.settings.imgText==='auto'?'checked':''}><span></span></label></div>
     <div id="im-sb" hidden><label class="f">Panels</label><select id="im-n"><option>2</option><option selected>3</option><option>4</option><option>5</option><option>6</option></select>
       <div class="hint">The panels follow the story beats of the recent messages, ending at this one.</div></div>
@@ -3511,7 +3571,7 @@ function openImageSheet(chat,char,upto){
       const opts={panels:$('#im-sb',pn).hidden?1:+$('#im-n',pn).value,extra:$('#im-x',pn).value.trim(),text:$('#im-t',pn).checked?true:S.settings.imgText==='off'?false:'ask',
         comic:comic?{n:+$('#im-cn',pn).value,layout:$('#im-cl',pn).value}:null};
       b.disabled=true;msg.className='small muted';msg.textContent=opts.panels>1?`Writing ${opts.panels} panels… (this can take a minute)`:'Writing the prompt…';
-      try{const r=await makeImagePrompt(chat,char,upto,opts);showImagePrompts(chat,char,addImage(chat,r.panels,opts.extra||(opts.panels>1?`Storyboard, ${opts.panels} panels`:''),'',r.usage,chat.messages[upto]?.id),upto)}
+      try{const r=await makeImagePrompt(chat,char,upto,opts);if(opts.comic)r.panels.forEach(p=>p.comic=true);showImagePrompts(chat,char,addImage(chat,r.panels,opts.extra||(opts.panels>1?`Storyboard, ${opts.panels} panels`:''),'',r.usage,chat.messages[upto]?.id),upto)}
       catch(e){if(msg.isConnected){msg.className='small err';msg.textContent=e.message}}
       finally{if(b.isConnected)b.disabled=false}
     }
@@ -3661,6 +3721,141 @@ function editImgPreset(p,isNew,after=()=>vSettings()){
     del:async()=>{if(!confirm('Delete this preset?'))return;st.imgPresets=st.imgPresets.filter(x=>x.id!==w.id);if(st.imgPreset===w.id)st.imgPreset=st.imgPresets[0].id;await saveSettings();closeSheet();after()}
   },{modal:true});
 }
+/* ---------- comics: an image story (or Quick images) told as comic pages. Each turn plans one page: its panels, how big
+   each one is (by how much its moment matters), the camera for each, and the words, which are written under the page
+   instead of drawn (NovelAI often cuts words off). chat.comic: {draw, count, words}
+   draw 'panels': every panel is its own full-size picture, made with one tap each, and Hearth puts the page together;
+   'page': NovelAI draws the whole page as one picture. count: panels per page, 0 = the AI decides.
+   words: what may be drawn in the pictures: 'sfx' (sound effects and manga symbols), 'bubbles' or 'none'.
+   A page message: m.comic[sw] = {draw, caption, panels:[{size, words, shape, p, pics} or, drawn as one page, {size, shot, words}], pageId}
+   and m.imgs[sw] the whole page's prompt (or the first panel's, standing for the page). ---------- */
+const COMIC_SHAPES={wide:[1216,832,'Wide'],tall:[832,1216,'Tall'],square:[1024,1024,'Square'],strip:[1536,640,'Wide strip']};
+const comicShape=s=>COMIC_SHAPES[s]?s:'wide';
+const comicMax=c=>c?.draw==='page'?4:6;
+const comicOf=m=>m?.comic?.[m.sw]||null;
+const COMIC_WORDS={sfx:'Sound effects only',bubbles:'Speech bubbles too',none:'No words at all'};
+const comicTextMode=chat=>({bubbles:true,none:false}[chat.comic?.words]??'sfx');
+function comicRules(chat){
+  const c=chat.comic,max=comicMax(c),n=Math.min(+c.count||0,max),page=c.draw==='page';
+  return `HOW TO MAKE A GOOD COMIC PAGE:
+- Panels: ${n?`exactly ${n} panel${n>1?'s':''} on the page`:`choose how many panels the page needs (1 to ${max}) by how much its moments matter. A big moment (a reveal, a first appearance, a climax, a strong feeling) gets a big panel, or the whole page as one splash panel; a quick exchange, a reaction or a small action gets normal or small panels. Most pages have 3 or 4 panels; use 1 or 2 for a dramatic beat`}.
+- Size of each panel: "big" (a whole row), "normal" (two side by side) or "small" (up to three side by side). The most important moment of the page gets the big panel.
+- Camera: pick the shot that fits each beat and change it from panel to panel, never the same framing twice in a row: a wide establishing shot when the place is new; a medium or cowboy shot for talking; a close-up or extreme close-up for feelings and details (eyes, hands, an object); over the shoulder for conversations; from below for power or threat; from above for loneliness or defeat; from behind or a silhouette for mystery; a dutch angle for unease. ${page?'Say the camera of each panel in the page prompt.':'Put the camera tags in the panel\'s base prompt.'}
+- One clear moment per panel, with only the people and props that panel needs: often one or two people; a close-up shows one face. Keep backgrounds simple in close-ups and detailed in wide shots.
+- Continuity: everyone keeps the same look and outfit in every panel, the place and light stay the same unless the story moves on, and people stay on the same side of the frame while they talk.
+- Reading order: left to right, top to bottom.${page?`
+- The whole page is ONE picture: add comic (and 4koma for a vertical strip of four), then describe the layout and each panel in reading order with short sentences in the base prompt, like "Panel 1, top, wide: ...". Few panels draw much better than many.`:`
+- Each panel is its own full picture, with its own prompt: no comic, panel, border or multiple views tags.
+- Shape of each panel's picture: "wide" (landscape: places, action across the frame, several people), "tall" (portrait: one standing figure, falling, something tall), "square" (a face, a reaction) or "strip" (very wide and short: eyes, a skyline, a quick beat). Mix shapes so the page has rhythm.`}
+- Words: what the characters say or think, and the narration, go in "words" for each panel. They are written under the page, not drawn: a short narration line when it helps, and each spoken or thought line as Name: "line". A few lines per panel at most; "" for a silent panel.`;
+}
+// the JSON shape of one planned page
+const comicPageJson=chat=>chat.comic.draw==='page'
+  ?`{"caption":"one sentence about the page","panels":[{"size":"big, normal or small","shot":"the camera, in a few words","words":"..."}],"image":${panelJson()}}`
+  :`{"caption":"one sentence about the page","panels":[${panelJson().replace(/^\{/,'{"size":"big, normal or small","shape":"wide, tall, square or strip","words":"...",')}]}`;
+// the page the AI planned, cleaned; null when it has nothing to draw
+function comicPage(j,chat,char){
+  const draw=chat.comic.draw==='page'?'page':'panels';
+  const panels=arr(j?.panels).filter(x=>x&&typeof x==='object').slice(0,comicMax(chat.comic)).map(x=>{
+    const o={size:['big','small'].includes(x.size)?x.size:'normal',words:str(x.words).trim()};
+    if(draw==='panels'){o.shape=comicShape(x.shape);o.p=finishPanel(cleanPanel(x),chat,char)}else o.shot=str(x.shot).trim();
+    return o}).filter(x=>draw==='page'||panelOk(x.p));
+  if(!panels.length)return null;
+  const pg={draw,caption:str(j.caption).trim()||panels[0].p?.caption||'',panels};
+  if(draw==='page'){const img=j.image&&typeof j.image==='object'?finishPanel(cleanPanel(j.image),chat,char):null;if(!panelOk(img))return null;img.comic=true;if(!img.caption)img.caption=pg.caption;pg.image=img}
+  return pg;
+}
+// the words under the page: one paragraph per panel, the speakers in bold
+const comicWords=pg=>pg.panels.map((x,k)=>x.words?`**${k+1}.** ${x.words.replace(/^([^\n:"“*]{1,40}):\s*/gm,'**$1:** ')}`:'').filter(Boolean).join('\n\n');
+// a planned page as its message's fields: the prompt kept as its image (the whole page, or the first panel standing for it) and the words as its story text
+function comicFields(pg){
+  const img=pg.draw==='page'?pg.image:{...clone(pg.panels[0].p),caption:pg.caption||pg.panels[0].p.caption};delete pg.image;
+  return {img,story:comicWords(pg),pg};
+}
+// rows of a page drawn panel by panel: a big panel on its own row, normal ones two to a row, small ones up to three
+function comicRows(panels){
+  const rows=[];let cur=[];const flush=()=>{if(cur.length)rows.push(cur);cur=[]};
+  panels.forEach((p,k)=>{if(p.size==='big'){flush();rows.push([k]);return}
+    const cap=[...cur,k].every(j=>panels[j].size==='small')?3:2;if(cur.length>=cap)flush();cur.push(k)});
+  flush();return rows;
+}
+// the panels' pictures (the newest of each) as one page: the panels of a row get the same height and fill its width
+async function buildComicPage(pg){
+  const ids=pg.panels.map(x=>x.pics?.at(-1));if(ids.some(x=>!x))return null;
+  const imgs=[];for(const id of ids){const d=await getImgData(id);if(!d)return null;imgs.push(await loadImg(d))}
+  const W=1280,M=28,G=14,B=4,maxH=W*.9;
+  const lay=comicRows(pg.panels).map(r=>{const ar=r.map(k=>imgs[k].naturalWidth/imgs[k].naturalHeight),h=Math.min(maxH,(W-G*(r.length-1))/ar.reduce((a,b)=>a+b,0)),ws=ar.map(a=>a*h);
+    return {r,h,ws,x0:(W-ws.reduce((a,b)=>a+b,0)-G*(r.length-1))/2}});
+  const c=document.createElement('canvas');c.width=W+2*M;c.height=Math.round(lay.reduce((t,l)=>t+l.h,0)+G*(lay.length-1)+2*M);
+  const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);x.lineWidth=B;x.strokeStyle='#111';
+  let y=M;for(const l of lay){let cx=M+l.x0;l.r.forEach((k,j)=>{const w=l.ws[j];x.drawImage(imgs[k],cx,y,w,l.h);x.strokeRect(cx+B/2,y+B/2,w-B,l.h-B);cx+=w+G});y+=l.h+G}
+  return c.toDataURL('image/jpeg',.9);
+}
+// after a panel's picture changes: once every panel has one, the page is put together again, in place of the old page
+async function comicRebuild(m,sw){
+  const pg=m.comic?.[sw];if(pg?.draw!=='panels')return false;
+  const data=await buildComicPage(pg);if(!data)return false;
+  const id=await putImg(data,{made:true,tool:'Comic page'}),list=((m.pics??=[])[sw]??=[]),old=pg.pageId,at=list.indexOf(old);
+  if(at>=0)list[at]=id;else list.push(id);
+  pg.pageId=id;if(old&&!inGallery(old))await delImg(old);
+  return true;
+}
+// the panels of a page as small tiles (tap one for its pictures and prompt), and the button that draws the next one
+function comicTilesHTML(m){
+  const pg=comicOf(m);if(pg?.draw!=='panels')return '';
+  const next=pg.panels.findIndex(x=>!x.pics?.length),left=pg.panels.filter(x=>!x.pics?.length).length;
+  return `<div class="cpanels">${pg.panels.map((x,k)=>`<button type="button" class="cpan ${x.size==='big'?'big':''}" data-act="cpanel" data-k="${k}">${x.pics?.length?`<img data-img="${x.pics.at(-1)}" src="${BLANK}" alt="">`:`<span>${k+1}</span>`}<small>${k+1} · ${COMIC_SHAPES[comicShape(x.shape)][2]}${x.size==='big'?' · big':''}</small></button>`).join('')}</div>
+    ${left?`<div class="row cp-next">${naiOn()?`<button class="btn sm" data-act="cgen">${I.img} Generate panel ${next+1} of ${pg.panels.length}</button>`:''}<span class="small muted">${pg.panels.length-left} of ${pg.panels.length} panels drawn. The page is put together when every panel has a picture${naiOn()?'':'. Tap a panel for its prompt'}.</span></div>`:''}`;
+}
+// the comic choices, for a new image story, Quick images and the chat menu
+const COMIC_DRAW_HINT={panels:'Every panel is its own full-size picture in the shape it needs (one tap each), and Hearth puts the page together. Best detail; each picture costs the same as a normal one.',
+  page:'NovelAI draws the whole page as one picture. Faster, but small panels lose detail: best with 2 to 4 panels.'};
+const comicOptsHTML=(c={})=>`<label class="f">How it's drawn</label><div class="chips"><button type="button" class="chip cm-d ${c.draw!=='page'?'on':''}" data-v="panels">${I.copy} Panel by panel</button><button type="button" class="chip cm-d ${c.draw==='page'?'on':''}" data-v="page">${I.img} Whole page at once</button></div>
+  <div class="hint cm-dh"></div>
+  <div class="grid2"><div><label class="f">Panels per page</label><select class="cm-n"><option value="0">AI decides</option>${[1,2,3,4,5,6].map(n=>`<option value="${n}" ${+c.count===n?'selected':''}>${n}</option>`).join('')}</select></div>
+    <div><label class="f">Words in the pictures</label><select class="cm-w">${Object.entries(COMIC_WORDS).map(([v,l])=>`<option value="${v}" ${(c.words||'sfx')===v?'selected':''}>${l}</option>`).join('')}</select></div></div>
+  <div class="hint">What the characters say and the narration are written under each page, so nothing gets cut off. “Sound effects only” still allows manga symbols like !, ?, ♪, hearts and sweat drops. “AI decides” gives big moments bigger panels and fewer of them.</div>`;
+const comicOpts=pn=>{const draw=$('.cm-d.on',pn)?.dataset.v==='page'?'page':'panels';return {draw,count:Math.min(+$('.cm-n',pn).value||0,draw==='page'?4:6),words:$('.cm-w',pn).value}};
+function comicOptsWire(pn){
+  const upd=()=>{const o=comicOpts(pn);$('.cm-dh',pn).textContent=COMIC_DRAW_HINT[o.draw];$$('.cm-n option',pn).forEach(x=>x.hidden=o.draw==='page'&&+x.value>4);if(o.draw==='page'&&+$('.cm-n',pn).value>4)$('.cm-n',pn).value='4'};
+  $$('.cm-d',pn).forEach(b=>b.onclick=()=>{$$('.cm-d',pn).forEach(x=>x.classList.toggle('on',x===b));upd()});upd();
+}
+// comic chats: each turn plans one page instead of one image
+function comicStoryPrompt(chat,char,history,notes){
+  const su=storyUser(chat),pages=history.filter(m=>m.role==='assistant'&&comicOf(m));
+  const talk=history.slice(-12).map(m=>m.role==='user'?`USER: ${txt(m)}`:`YOU: ${txt(m)}${comicOf(m)?` [made page: ${comicOf(m).caption}]`:m.imgs?.[m.sw]?` [made image: ${m.imgs[m.sw].caption}]`:''}${m.next?.[m.sw]?` [suggested next: ${m.next[m.sw]}]`:''}`).join('\n');
+  const last=pages.at(-1),lp=comicOf(last),words=pages.slice(-3).map(m=>m.story?.[m.sw]).filter(Boolean);
+  const plan=lp&&JSON.stringify(lp.draw==='page'?{caption:lp.caption,panels:lp.panels.map(({size,shot,words})=>({size,shot,words})),image:last.imgs[last.sw]}
+    :{caption:lp.caption,panels:lp.panels.map(({size,shape,words,p})=>({size,shape,words,...p}))});
+  return `We are making a comic, page by page, that tells a story with ${char.kind==='world'?`characters from ${char.name}`:char.name}. ${su.intro}
+
+STORY OUTLINE: ${chat.storyOutline?.trim()||'(not set yet)'}
+
+PAGES SO FAR (${pages.length}):
+${pages.slice(-8).map((m,i)=>`${pages.length-Math.min(8,pages.length)+i+1}. ${comicOf(m).caption}`).join('\n')||'(none yet)'}
+${plan?`\nLAST PAGE IN FULL: ${plan}\n`:''}${words.length?`\nWORDS OF THE LATEST PAGES:\n${words.join('\n\n')}\n`:''}
+CONVERSATION:
+${talk}
+
+WHAT TO DO WITH THE USER'S LAST MESSAGE:
+- If they tell you what the story is about, or nothing has been planned yet: don't make a page. Write a short story outline and suggest the first page.
+- If they describe what happens, or accept your suggestion (like "ok", "yes", "next", "go"): make the next page, continuing the story and keeping everyone's looks and outfits the same as on earlier pages.
+- If they ask to change the last page (like "make panel 2 a close-up" or "she should smile"): remake the last page with that change, and copy every panel the change doesn't touch exactly, word for word.
+- If something is unclear, ask one short question instead of making a page.
+Always suggest what happens on the next page.
+${notes?`
+THE USER IS REDOING YOUR ANSWER TO THEIR LAST MESSAGE.${notes.prev?` Your previous version: ${JSON.stringify({reply:notes.prev.reply,page:notes.prev.img?.caption||null,words:notes.prev.story||''})}`:''}
+${notes.want?`They want: ${notes.want}\n`:''}${notes.avoid?`They don't want: ${notes.avoid}\n`:''}Make a new version that follows these wishes, for both the pictures and the words. Keep everything they didn't mention.
+`:''}
+${comicRules(chat)}
+- Narration is in ${storyVoice(chat)}. ${su.text}
+
+${novelRules(chat,char,{story:true,text:comicTextMode(chat),lore:sceneLore(chat,char,[talk,words.join('\n'),chat.storyOutline,notes?.want])})}
+Return one JSON object only:
+{"reply":"1 or 2 friendly sentences to the user","outline":"the updated story outline in one short paragraph, or \\"\\" if unchanged","page":${comicPageJson(chat)} or null,"remake":true if the page remakes the last page with a change, otherwise false,"next":"what happens on the next page, in one sentence"}`;
+}
+// enough room for every panel's prompt
+const comicTokens=(chat,pages=1)=>Math.min(16000,pages*(chat.comic.draw==='page'?2600:1200+1600*(Math.min(+chat.comic.count||5,6))));
 /* image story chats: the user describes scenes, the AI answers with prompts and suggests the next scene */
 const SYS_STORY='You are a friendly storyboard partner who writes NovelAI Diffusion image prompts. Reply with a single JSON object only.';
 function imageStoryPrompt(chat,char,history,notes){
@@ -3705,30 +3900,32 @@ function storySections(chat){
   chat.messages.forEach((m,i)=>{
     if(m.role!=='assistant'||!m.imgs?.[m.sw])return;
     const s={i,m,img:m.imgs[m.sw],story:m.story?.[m.sw]||'',pics:m.pics?.[m.sw]||[]};
-    if(m.remake?.[m.sw]&&out.length){const prev=out.pop();if(!s.pics.length)s.pics=prev.pics;if(!s.story)s.story=prev.story}
+    // (a remade comic page drawn panel by panel shows its own panels until its page is put together)
+    if(m.remake?.[m.sw]&&out.length){const prev=out.pop();if(!s.pics.length&&comicOf(m)?.draw!=='panels')s.pics=prev.pics;if(!s.story)s.story=prev.story}
     out.push(s);
   });
   return out;
 }
 const paras=t=>String(t).split(/\n\s*\n/).filter(p=>p.trim()).map(p=>`<p>${fmt(p.trim())}</p>`).join('');
 function readerHTML(chat,char){
-  const secs=storySections(chat),un=personaFor(chat)?.name||'You',missing=secs.filter(s=>!s.story).length;
+  const secs=storySections(chat),un=personaFor(chat)?.name||'You',missing=secs.filter(s=>!s.story&&!comicOf(s.m)).length,panels=s=>comicOf(s.m)?.draw==='panels';
   if(!secs.length)return `<div class="empty"><b>No images yet</b>Switch to Prompts and describe the first scene. Each image and its story text will show up here.</div>`;
   return `<article class="reader">
     <h2 class="rd-title">${esc(chat.title)}</h2>
     ${missing?`<div class="box small rd-miss"><span>${missing===1?'1 image has':`${missing} images have`} no story text yet.</span><button class="btn sm" data-act="fillstory">${I.wand} Write it</button></div>`:''}
     ${secs.map((s,k)=>`<section class="rd-sec" data-i="${s.i}">
       ${s.pics.length?`<div class="rd-pics">${s.pics.map(id=>`<img data-img="${id}" src="${BLANK}" data-act="sview" data-id="${id}" alt="">`).join('')}</div>`
+        :panels(s)?`<div class="rd-comic">${comicTilesHTML(s.m)}</div>`
         :`<div class="rd-nopic"><span>${esc(s.img.caption||`Image ${k+1}`)}</span>${naiOn()?`<button class="btn sm" data-act="ngenm">${I.img} Generate</button>`:''}<button class="btn ghost sm" data-act="attach">${I.img} Attach the picture</button><button class="btn ghost sm" data-act="toimgs">${I.edit} Images page</button></div>`}
       <div class="rd-text">${s.story?paras(macro(s.story,char.name,un)):`<p class="muted"><i>${esc(s.img.caption||'')}</i></p>`}</div>
-      <div class="rd-act"><button data-act="redit">${I.edit} Edit text</button><button data-act="rwrite">${I.regen} Rewrite</button>${s.pics.length?`<button data-act="attach">${I.img} Add picture</button><button data-act="toimgs">${I.edit} Images page</button>`:''}</div>
+      <div class="rd-act"><button data-act="redit">${I.edit} Edit text</button><button data-act="rwrite">${I.regen} Rewrite</button>${panels(s)?`<button data-act="cpanel" data-k="0">${I.copy} Panels</button>`:s.pics.length?`<button data-act="attach">${I.img} Add picture</button><button data-act="toimgs">${I.edit} Images page</button>`:''}</div>
     </section>`).join('')}
     <div class="row" style="justify-content:center;margin:18px 0 8px"><button class="btn ghost sm" data-act="rexport">${I.exp} Save as a web page</button></div>
   </article>`;
 }
 // writes the story text for images that don't have any yet (older images, or ones read from a file), in one request
 async function fillStory(chat,char){
-  const secs=storySections(chat),todo=secs.filter(s=>!s.story);if(!todo.length)return {n:0};
+  const secs=storySections(chat),todo=secs.filter(s=>!s.story&&!comicOf(s.m));if(!todo.length)return {n:0};
   const long=S.settings.imgStoryText==='long',un=personaFor(chat)?.name||'You';
   const promptOf=p=>(p.onebox||[p.base,...p.characters.map(c=>c.prompt)].join(' | ')).slice(0,500);
   const {j,usage}=await aiJson('You write the story text of an illustrated novel. Reply with a single JSON object only.',`These images tell a story ${char.kind==='world'?`set in ${char.name}`:`with ${char.name}`}. ${storyUser(chat).intro}
@@ -3748,6 +3945,28 @@ async function rewriteStory(chat,char,i,want,avoid){
   const secs=storySections(chat),k=secs.findIndex(s=>s.i===i),s=secs[k],long=S.settings.imgStoryText==='long',un=personaFor(chat)?.name||'You';
   const promptOf=p=>(p.onebox||[p.base,...p.characters.map(c=>c.prompt)].join(' | ')).slice(0,600);
   const text=list=>list.map(x=>x.story||`(${x.img.caption||'no text'})`).join('\n\n');
+  // a comic page: new words for each panel, kept with the panels too
+  const pg=comicOf(s.m);
+  if(pg){
+    const r=await aiJson('You write the words of a comic. Reply with a single JSON object only.',`Rewrite the words of one comic page ${char.kind==='world'?`set in ${char.name}`:`with ${char.name}`}. ${storyUser(chat).intro}
+STORY OUTLINE: ${chat.storyOutline?.trim()||'(none)'}
+${loreBlock(sceneLore(chat,char,[chat.storyOutline,...secs.map(x=>`${x.story} ${x.img.caption||''}`)]),false)}
+WORDS BEFORE THIS PAGE:
+${text(secs.slice(Math.max(0,k-3),k))||'(this is the first page)'}
+
+THIS PAGE (${pg.panels.length} panels): ${pg.caption}
+${pg.panels.map((x,n)=>`${n+1}. ${x.p?.caption||x.shot||''}${x.p?`\n   prompt: ${promptOf(x.p)}`:''}\n   words now: ${x.words||'(none)'}`).join('\n')}
+
+WORDS AFTER THIS PAGE:
+${text(secs.slice(k+1,k+3))||'(nothing yet)'}
+
+${want?`WHAT THE USER WANTS: ${want}\n`:''}${avoid?`WHAT THE USER DOESN'T WANT: ${avoid}\n`:''}
+Write new words for every panel: a short narration line when it helps (${storyVoice(chat)}), and each spoken or thought line as Name: "line". A few lines per panel at most; "" for a silent panel. Follow the user's wishes; keep what they didn't mention. The words must still match each panel's picture and connect to the pages before and after. ${storyUser(chat).text}
+Return one JSON object only: {"panels":[{"words":"..."}]} with exactly ${pg.panels.length} panels, in order.`,undefined,1500);
+    const ws=arr(r.j.panels).map(x=>str(x?.words).trim());if(!ws.some(Boolean))throw new Error('The AI returned no words. Try again.');
+    const words=pg.panels.map((x,n)=>ws[n]??x.words);
+    return {text:comicWords({panels:pg.panels.map((x,n)=>({...x,words:words[n]}))}),words,usage:r.usage};
+  }
   const {j,usage}=await aiJson('You write the story text of an illustrated novel. Reply with a single JSON object only.',`Rewrite the story text under one image of an illustrated novel ${char.kind==='world'?`set in ${char.name}`:`with ${char.name}`}. ${storyUser(chat).intro}
 STORY OUTLINE: ${chat.storyOutline?.trim()||'(none)'}
 ${loreBlock(sceneLore(chat,char,[chat.storyOutline,...secs.map(x=>`${x.story} ${x.img.caption||''}`)]),false)}${worldLinks(char,null)?worldLinks(char,null)+'\n':''}
@@ -3819,10 +4038,13 @@ function openStoryStart(c){
     <label class="f" style="margin-top:0">You are</label><div class="list" id="ss-p">${S.personas.map(p=>`<div class="li" data-act="pp" data-id="${p.id}"><img src="${esc(avatar(p))}" alt=""><div class="lt"><b>${esc(p.name)}</b><span>${esc(p.description||'')}</span></div></div>`).join('')}</div>
     <label class="f">Your role</label><div class="chips"><button type="button" class="chip" data-act="role" data-r="character">${I.user} In the story</button><button type="button" class="chip" data-act="role" data-r="pov">${I.img} Through my eyes (POV)</button><button type="button" class="chip" data-act="role" data-r="observer">${I.book} Just watching</button></div>
     <div class="hint" id="ss-h"></div>${povTextChips(voice)}
+    <div class="tg"><div>Make it a comic<div class="hint">Each turn makes a comic page with several panels, instead of one picture.</div></div><label class="sw"><input type="checkbox" id="ss-c"><span></span></label></div>
+    <div id="ss-cm" hidden>${comicOptsHTML()}</div>
     <div class="sheet-foot row"><button class="btn ghost" data-act="close" style="flex:1">Cancel</button><button class="btn" data-act="go" style="flex:2">${I.img} Start</button></div>`,{
     pp:b=>{pid=b.dataset.id;draw()},role:b=>{role=b.dataset.r;draw()},voice:b=>{voice=b.dataset.v;draw()},
-    go:()=>{closeSheet();startImageStory(c.id,{personaId:pid,storyRole:roleOf(),povText:voice})}
+    go:()=>{const comic=$('#ss-c',pn).checked?comicOpts(pn):null;closeSheet();startImageStory(c.id,{personaId:pid,storyRole:roleOf(),povText:voice,comic})}
   },{modal:true});
+  $('#ss-c',pn).onchange=e=>$('#ss-cm',pn).hidden=!e.target.checked;comicOptsWire(pn);
   const draw=()=>{
     $$('#ss-p .li',pn).forEach(x=>x.classList.toggle('on',x.dataset.id===pid));
     $$('[data-act=role]',pn).forEach(x=>x.classList.toggle('on',x.dataset.r===roleOf()));
@@ -3833,8 +4055,9 @@ function openStoryStart(c){
 }
 async function startImageStory(charId,o={}){
   const c=getChar(charId),world=c.kind==='world';
-  const chat={id:uid(),charId,mode:'image',personaId:o.personaId||S.settings.activePersona||S.personas[0]?.id,storyRole:o.storyRole,povText:o.povText,title:`${c.name} · Image story · ${new Date().toLocaleDateString()}`,created:Date.now(),memory:'',vars:{},storyOutline:'',images:[],
-    messages:[{id:uid(),role:'assistant',greeting:true,swipes:[`Let's make an image story ${world?`set in ${c.name}`:`with ${c.name}`}! What is it about? Tell me the plot, the mood and roughly how many images you want, and I'll suggest the first scene. Or describe a scene and I'll build it right away.`],sw:0,time:Date.now()}]};
+  const chat={id:uid(),charId,mode:'image',personaId:o.personaId||S.settings.activePersona||S.personas[0]?.id,storyRole:o.storyRole,povText:o.povText,...(o.comic?{comic:o.comic}:{}),title:`${c.name} · ${o.comic?'Comic':'Image story'} · ${new Date().toLocaleDateString()}`,created:Date.now(),memory:'',vars:{},storyOutline:'',images:[],
+    messages:[{id:uid(),role:'assistant',greeting:true,swipes:[o.comic?`Let's make a comic ${world?`set in ${c.name}`:`with ${c.name}`}! What is it about? Tell me the plot, the mood and roughly how many pages you want, and I'll suggest the first page. Or tell me what happens and I'll plan the page right away.`
+      :`Let's make an image story ${world?`set in ${c.name}`:`with ${c.name}`}! What is it about? Tell me the plot, the mood and roughly how many images you want, and I'll suggest the first scene. Or describe a scene and I'll build it right away.`],sw:0,time:Date.now()}]};
   c.lastUsed=Date.now();await saveChars();await saveChat(chat);go('#/chat/'+chat.id);
 }
 /* ---------- quick images: 1 to 4 pictures with a short story, in one request, saved as a small image story ---------- */
@@ -3853,12 +4076,31 @@ Return one JSON object only: {"title":"a short title for this story","panels":[$
   if(!items.length)throw new Error('The AI returned no prompts. Try again.');
   return {title:str(j.title).trim(),items,usage};
 }
+// quick images as a comic: 1 to 3 pages planned in one request
+async function quickComic(chat,char,idea,n){
+  const su=storyUser(chat);
+  const {j,usage}=await aiJson(SYS_NAI,`Make ${n>1?`${n} comic pages`:'one comic page'} that tell a short story ${char.kind==='world'?`set in ${char.name}`:`with ${char.name}`}. ${su.intro}
+
+WHAT HAPPENS: ${idea}
+
+${n>1?`Split it into ${n} pages, in order, so together they tell the whole thing from start to finish.`:'Tell the whole thing on this one page.'}
+${comicRules(chat)}
+- Narration is in ${storyVoice(chat)}. ${su.text}
+
+${novelRules(chat,char,{story:true,text:comicTextMode(chat),lore:sceneLore(chat,char,[idea])})}
+Return one JSON object only: {"title":"a short title for this story","pages":[${comicPageJson(chat)}${n>1?', ...':''}]} with exactly ${n} page${n>1?'s':''}.`,undefined,comicTokens(chat,n));
+  const pages=arr(j.pages).filter(x=>x&&typeof x==='object').map(x=>comicPage(x,chat,char)).filter(Boolean);
+  if(!pages.length)throw new Error('The AI returned no pages. Try again.');
+  return {title:str(j.title).trim(),pages,usage};
+}
 function openQuick(c){
   let pid=S.settings.activePersona||S.personas[0]?.id,role=null,voice='you';
   const roleOf=()=>role||(isObserverPreset(S.personas.find(p=>p.id===pid)?.promptId)?'observer':'character');
   const pn=openSheet(`<h2>Quick images</h2><p class="hint">One or a few pictures of ${esc(c.name)} with a short story, made in one go. The result opens as a small image story you can read, add pictures to and keep going with.</p>
     <label class="f" style="margin-top:0">What happens</label><textarea id="qk-idea" rows="3" placeholder="e.g. ${esc(c.name)} finds a lost kitten in the rain and brings it home"></textarea>
-    <div class="grid2"><div><label class="f">Images</label><select id="qk-n">${[1,2,3,4].map(n=>`<option ${n===2?'selected':''}>${n}</option>`).join('')}</select></div>
+    <div class="tg" style="margin-top:6px"><div>Make it a comic<div class="hint">Comic pages with several panels, instead of single pictures.</div></div><label class="sw"><input type="checkbox" id="qk-c"><span></span></label></div>
+    <div id="qk-cm" hidden>${comicOptsHTML()}</div>
+    <div class="grid2"><div><label class="f" id="qk-nl">Images</label><select id="qk-n">${[1,2,3,4].map(n=>`<option ${n===2?'selected':''}>${n}</option>`).join('')}</select></div>
       <div><label class="f">Story text</label><select id="qk-len">${[['short','Short'],['long','Longer'],['off','None']].map(([v,l])=>`<option value="${v}" ${(S.settings.imgStoryText||'short')===v?'selected':''}>${l}</option>`).join('')}</select></div></div>
     <label class="f">You are</label><select id="qk-p">${S.personas.map(p=>`<option value="${p.id}" ${p.id===pid?'selected':''}>${esc(p.name)}</option>`).join('')}</select>
     <div class="chips" style="margin-top:8px"><button type="button" class="chip" data-act="role" data-r="character">${I.user} In the story</button><button type="button" class="chip" data-act="role" data-r="pov">${I.img} Through my eyes</button><button type="button" class="chip" data-act="role" data-r="observer">${I.book} Just watching</button></div>
@@ -3872,15 +4114,22 @@ function openQuick(c){
       const idea=$('#qk-idea',pn).value.trim(),n=+$('#qk-n',pn).value,len=$('#qk-len',pn).value,msg=$('#qk-msg',pn);
       if(!idea){msg.className='small err';msg.textContent='Write what happens first.';return}
       if(!activeApi()){msg.className='small err';msg.textContent='Add an API / proxy in Settings first.';return}
-      b.disabled=true;msg.className='small muted';msg.textContent=n>1?`Writing ${n} images and their story… (this can take a minute)`:'Writing the image and its story…';
-      const chat={id:uid(),charId:c.id,mode:'image',quick:true,view:'story',personaId:pid,storyRole:roleOf(),povText:voice,created:Date.now(),memory:'',vars:{},storyOutline:idea,images:[],
-        messages:[{id:uid(),role:'assistant',greeting:true,swipes:[`Quick images with ${c.name}. Describe what happens next to keep going, or ask for a change.`],sw:0,time:Date.now()},{id:uid(),role:'user',swipes:[idea],sw:0,time:Date.now()}]};
+      const comic=$('#qk-c',pn).checked?comicOpts(pn):null;
+      b.disabled=true;msg.className='small muted';msg.textContent=comic?`Planning ${n>1?`${n} comic pages`:'the comic page'}… (this can take a minute)`:n>1?`Writing ${n} images and their story… (this can take a minute)`:'Writing the image and its story…';
+      const chat={id:uid(),charId:c.id,mode:'image',quick:true,view:'story',personaId:pid,storyRole:roleOf(),povText:voice,...(comic?{comic}:{}),created:Date.now(),memory:'',vars:{},storyOutline:idea,images:[],
+        messages:[{id:uid(),role:'assistant',greeting:true,swipes:[`${comic?'A quick comic':'Quick images'} with ${c.name}. Describe what happens next to keep going, or ask for a change.`],sw:0,time:Date.now()},{id:uid(),role:'user',swipes:[idea],sw:0,time:Date.now()}]};
       try{
+        if(comic){
+          const r=await quickComic(chat,c,idea,n);chat.title=r.title||idea.slice(0,60);chat.titleSet=true;
+          r.pages.forEach((pg,k)=>{const f=comicFields(pg);chat.messages.push({id:uid(),role:'assistant',sw:0,time:Date.now(),imgs:[f.img],story:[f.story],comic:[pg],next:[''],usage:k===0&&r.usage?[r.usage]:undefined,
+            swipes:[r.pages.length>1?`Page ${k+1} of ${r.pages.length}.`:'Here is your page.']})});
+          addImage(chat,chat.messages.filter(m=>m.comic).flatMap(m=>m.comic[0].draw==='page'?[m.imgs[0]]:m.comic[0].panels.map(x=>x.p)),idea,'quick',r.usage);
+        }else{
         const r=await quickImages(chat,c,idea,n,len);
         chat.title=r.title||idea.slice(0,60);chat.titleSet=true;
         r.items.forEach(({p,story},k)=>chat.messages.push({id:uid(),role:'assistant',sw:0,time:Date.now(),imgs:[p],story:[story],next:[''],usage:k===0&&r.usage?[r.usage]:undefined,
           swipes:[r.items.length>1?`Image ${k+1} of ${r.items.length}.`:'Here it is.']}));
-        addImage(chat,r.items.map(x=>x.p),idea,'quick',r.usage);
+        addImage(chat,r.items.map(x=>x.p),idea,'quick',r.usage);}
         if($('#qk-f',pn)?.checked){let f=folders('chats').find(x=>x.name==='Quick images');if(!f){f={id:uid(),name:'Quick images'};folders('chats').push(f);await saveSettings()}chat.folder=f.id}
         c.lastUsed=Date.now();await saveChars();await saveChat(chat);closeSheet();go('#/chat/'+chat.id);
       }catch(e){if(msg.isConnected){msg.className='small err';msg.textContent=e.message}}
@@ -3889,6 +4138,10 @@ function openQuick(c){
   },{modal:true});
   $('.ip-pr',pn).onchange=e=>{S.settings.imgPreset=e.target.value;saveSettings()};
   $('#qk-p',pn).onchange=e=>{pid=e.target.value;role=null;draw()};
+  // a comic counts pages (1 to 3), and its words are written per panel instead of as story text
+  $('#qk-c',pn).onchange=e=>{const on=e.target.checked,sel=$('#qk-n',pn);$('#qk-cm',pn).hidden=!on;$('#qk-nl',pn).textContent=on?'Pages':'Images';$('#qk-len',pn).parentElement.hidden=on;
+    $$('option',sel).forEach(o=>o.hidden=on&&+o.value>3);sel.value=on?'1':'2'};
+  comicOptsWire(pn);
   const draw=()=>{
     $$('[data-act=role]',pn).forEach(x=>x.classList.toggle('on',x.dataset.r===roleOf()));
     $$('[data-act=voice]',pn).forEach(x=>x.classList.toggle('on',x.dataset.v===voice));
@@ -4005,11 +4258,14 @@ function openOnImages(p,from){imgLoad={p:clone(p),from};closeSheet();if(location
 // a picture made on the Images page goes next to the prompt it came from, like one made there with Generate
 async function sendBack(id,from){
   const chat=await loadChat(from.chatId);if(!chat)throw new Error('That chat was deleted.');
-  let list;
+  let list,m=null;
   if(from.entryId){const e=chat.images?.find(x=>x.id===from.entryId);if(!e?.panels[from.k])throw new Error('That prompt was deleted.');list=((e.pics??=[])[from.k]??=[])}
-  else{const m=chat.messages.find(x=>x.id===from.msgId);if(!m?.imgs?.[from.sw])throw new Error('That part of the story was deleted.');list=((m.pics??=[])[from.sw]??=[])}
+  else{m=chat.messages.find(x=>x.id===from.msgId);if(!m?.imgs?.[from.sw])throw new Error('That part of the story was deleted.');
+    // one panel of a comic page: the page is put together again with it
+    if(from.panel!=null){const x=m.comic?.[from.sw]?.panels?.[from.panel];if(!x)throw new Error('That panel was deleted.');list=(x.pics??=[])}
+    else list=((m.pics??=[])[from.sw]??=[])}
   const rec=await store.get('img:'+id);if(!rec?.data)throw new Error('Picture not found');
-  list.push(await putImg(rec.data,{seed:rec.seed,made:true}));await saveChat(chat);
+  list.push(await putImg(rec.data,{seed:rec.seed,made:true}));if(m&&from.panel!=null)await comicRebuild(m,from.sw);await saveChat(chat);
 }
 // choose a picture already in Hearth: made on the Images page, in My pictures or in a gallery (o.first: that character's gallery first)
 async function pickAppPicture(done,back,o={}){
@@ -4431,7 +4687,7 @@ function chatMenu(chat,char,redraw){
     ${chat.origin?`<button data-act="setup">${I.book} Scene setup (from the world chat)</button><button data-act="srolesc">${I.user} You in this scene: ${SCENE_ROLES[sceneRole(chat)][0]}</button><button data-act="sendback">${I.send} Send back to the world chat${chat.origin.sent?' (sent)':''}</button>`:''}${char.kind==='world'&&chat.mode!=='image'?`<button data-act="wscene">${I.chat} Play a scene with one character</button>${liveScenes(chat).length?`<button data-act="scenes">${I.book} Scenes from this chat (${liveScenes(chat).length})</button>`:''}`:''}<button data-act="memory">${I.brain} Chat memory</button>${chat.mode==='image'?'':`<button data-act="scene">${I.user} The scene right now</button>`}${char.kind==='world'?`<button data-act="cguests">${I.user} Guests${guestsOf(chat,char).length?`: ${esc(guestsOf(chat,char).map(g=>g.name).join(', '))}`:''}</button>`:''}${char.kind!=='world'&&S.chars.some(c=>c.kind==='world')?`<button data-act="cworld">${I.book} World for this chat: ${esc(chatWorld(chat,char)?.name||'none')}</button>`:''}<button data-act="persona">${I.user} Persona for this chat</button><button data-act="prompt">${I.edit} Prompt preset</button>
     <button data-act="vars">${I.code} Script variables</button><button data-act="lore">${I.tag} Lore used in last reply</button><button data-act="rename">${I.edit} Rename chat</button><button data-act="mvf">${I.folder} Move to folder${folders('chats').find(f=>f.id===chat.folder)?` (now: ${esc(folders('chats').find(f=>f.id===chat.folder).name)})`:''}</button>
     <button data-act="newchat">${I.plus} Start a new chat</button><button data-act="export">${I.exp} Export chat as text</button>
-    ${chat.mode==='image'?`<button data-act="srole">${{observer:I.book,pov:I.img}[storyRole(chat)]||I.user} Your role: ${ROLE_LABEL[storyRole(chat)]}</button><button data-act="outline">${I.edit} Story outline</button><button data-act="ihist">${I.copy} All image prompts (${chat.images?.length||0})</button>`
+    ${chat.mode==='image'?`<button data-act="srole">${{observer:I.book,pov:I.img}[storyRole(chat)]||I.user} Your role: ${ROLE_LABEL[storyRole(chat)]}</button><button data-act="comic">${I.copy} Comic pages: ${chat.comic?`on · ${chat.comic.draw==='page'?'whole page at once':'panel by panel'}`:'off'}</button><button data-act="outline">${I.edit} Story outline</button><button data-act="ihist">${I.copy} All image prompts (${chat.images?.length||0})</button>`
       :`<button data-act="image">${I.img} Image prompt / storyboard</button><button data-act="board">${I.copy} Storyboard the whole chat${boardBusy.has(chat.id)?' (writing…)':''}</button>`}<button data-act="fromimg">${I.img} Prompt from image</button><button data-act="ipreset">${I.img} Image preset: ${esc(imgPreset().name)}</button><button data-act="gallery">${I.img} Gallery${char.gallery?.length?` (${char.gallery.length})`:''}</button>${researchOn()?`<button data-act="lookup">${I.wand} Look something up</button>`:''}${chat.researchNotes||researchOn()?`<button data-act="facts">${I.brain} Looked-up facts</button>`:''}<button data-act="charpage">${I.user} Character page</button><button data-act="editchar">${I.tag} Edit character</button><button class="danger" data-act="del">${I.trash} Delete chat</button></div>`,{
     charpage:()=>go('#/char/'+char.id),
     image:()=>{if(!chat.messages.length)return toast('Start the story first');openImageSheet(chat,char,chat.messages.length-1)},
@@ -4457,6 +4713,12 @@ function chatMenu(chat,char,redraw){
         catch(e){msg.className='small err';msg.textContent=e.message}finally{b.disabled=false}}},{modal:true}),
     facts:()=>openSheet(`<h2>Looked-up facts</h2><p class="hint">Canon facts the research model found in this chat. They're sent with every message; fix or remove anything wrong.</p><textarea id="rf" rows="10">${esc(chat.researchNotes||'')}</textarea><br><br><button class="btn block" data-act="ok">Save</button>`,{
       ok:async()=>{chat.researchNotes=$('#rf').value.trim();await saveChat(chat);closeSheet();toast('Saved')}}),
+    comic:()=>{const pn=openSheet(`<h2>Comic pages</h2><p class="hint">From now on each turn makes a comic page with several panels, instead of one picture. Pages and pictures you already have stay as they are.</p>
+      <div class="tg"><div>Make comic pages</div><label class="sw"><input type="checkbox" id="cm-on" ${chat.comic?'checked':''}><span></span></label></div>
+      <div id="cm-box" ${chat.comic?'':'hidden'}>${comicOptsHTML(chat.comic||{})}</div>
+      <div class="sheet-foot row"><button class="btn ghost" data-act="close" style="flex:1">Cancel</button><button class="btn" data-act="ok" style="flex:2">Save</button></div>`,{
+      ok:async()=>{if($('#cm-on',pn).checked)chat.comic=comicOpts(pn);else delete chat.comic;await saveChat(chat,true);closeSheet();redraw();toast(chat.comic?'Comic pages on':'Comic pages off')}});
+      $('#cm-on',pn).onchange=e=>$('#cm-box',pn).hidden=!e.target.checked;comicOptsWire(pn)},
     outline:()=>openSheet(`<h2>Story outline</h2><p class="hint">What the image story is about. The AI uses it to suggest the next scenes, and updates it when you tell it about the story.</p><textarea id="so" rows="8">${esc(chat.storyOutline||'')}</textarea><br><br><button class="btn block" data-act="ok">Save outline</button>`,{
       ok:async()=>{chat.storyOutline=$('#so').value.trim();await saveChat(chat);closeSheet();toast('Outline saved')}}),
     ipreset:()=>openSheet(`<h2>Image preset</h2><div class="list">${S.settings.imgPresets.map(p=>`<div class="li ${p.id===imgPreset().id?'on':''}" data-act="pick" data-id="${p.id}"><div class="lt"><b>${esc(p.name)}</b><span>${esc(joinTags(p.artist,p.footer.replace(/\n/g,' '),p.uc)||'Empty')}</span></div></div>`).join('')}</div><p class="hint">Edit presets in Settings → Image prompts.</p>`,{
