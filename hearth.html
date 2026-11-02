@@ -387,7 +387,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.30.3',HEARTH_DATE='2026-10-31';
+const HEARTH_VERSION='1.31.0',HEARTH_DATE='2026-11-02';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -1936,6 +1936,7 @@ function vWizard(){
   view.innerHTML=`<header class="top"><button class="ib" data-act="back">${I.back}</button><h1>Wizard</h1></header>
   <form class="editor" onsubmit="return false" style="padding-bottom:40px">
     <div class="chips" style="margin-top:8px"><button type="button" class="chip on" data-act="kind" data-k="char">${I.user} Character</button><button type="button" class="chip" data-act="kind" data-k="oc">${I.wand} Original</button><button type="button" class="chip" data-act="kind" data-k="world">${I.chat} World / group</button><button type="button" class="chip" data-act="kind" data-k="ow">${I.book} Original world</button></div>
+    <div class="row" style="margin-top:8px;flex-wrap:wrap"><button type="button" class="btn ghost sm" data-act="dsave">${I.plus} Save draft</button><button type="button" class="btn ghost sm" data-act="dlist" id="wz-dl"></button><span class="small muted" id="wz-dcur"></span></div>
     <p class="hint" id="wz-intro"></p>
     <div id="wz-name-wrap"><label class="f" id="wz-name-l"></label><input id="wz-name" placeholder="e.g. Fern"></div>
     <div id="wz-src-wrap"><label class="f" id="wz-src-l"></label><input id="wz-src"></div>
@@ -1984,11 +1985,19 @@ function vWizard(){
     $('#wz-online-h').textContent=oc?'Only looks up the setting, if it is an existing series.':'Off = the AI only uses what it already knows.';
     $('#wz-run').innerHTML=`${I.wand} Create ${kind==='world'||ow?'world':'character'}`;
   };
+  // put a saved form (the last one typed, or a draft) back in the boxes
+  const apply=v=>{setKind(v?.kind||'char');WZ_F.forEach(f=>{$('#wz-'+f).value=v?.[f]||''});$('#wz-online').checked=v?.online!==false;if(S.personas.some(p=>p.id===v?.personaId))$('#wz-p').value=v.personaId;
+    $$('#wz-mem [data-id]',view).forEach(b=>b.classList.toggle('on',(v?.members||[]).includes(b.dataset.id)))};
   // bring back what the user typed last time
-  const saved=wzLoad();setKind(saved?.kind||'char');
-  if(saved){WZ_F.forEach(f=>{$('#wz-'+f).value=saved[f]||''});$('#wz-online').checked=saved.online!==false;if(S.personas.some(p=>p.id===saved.personaId))$('#wz-p').value=saved.personaId;
-    $$('#wz-mem [data-id]',view).forEach(b=>b.classList.toggle('on',(saved.members||[]).includes(b.dataset.id)))}
-  const keep=()=>wzSave(read());
+  const saved=wzLoad();apply(saved);
+  // drafts you saved by name; draftId: the one loaded now (Save draft can update it)
+  const drafts=()=>S.settings.wizDrafts??=[],kindName={char:'Character',oc:'Original character',world:'World',ow:'Original world'};
+  let draftId=saved?.draftId&&drafts().some(d=>d.id===saved.draftId)?saved.draftId:null;
+  const drawDrafts=()=>{const n=drafts().length,d=drafts().find(x=>x.id===draftId);$('#wz-dl').innerHTML=`${I.folder} Drafts${n?` (${n})`:''}`;$('#wz-dcur').textContent=d?`Loaded: ${d.name}`:''};
+  const autoName=v=>[v.name.trim(),v.src.trim()].filter(Boolean).join(' · ').slice(0,60)||`${kindName[v.kind]} ${new Date().toLocaleDateString()}`;
+  const preview=v=>WZ_F.filter(f=>f!=='name').map(f=>String(v[f]||'').trim()).find(Boolean)?.replace(/\s+/g,' ').slice(0,90)||'';
+  const keep=()=>wzSave({...read(),draftId});
+  drawDrafts();
   view.addEventListener('input',keep);view.addEventListener('change',keep);
   H={
     back:()=>{ctrl?.abort();goBack('#/home')},
@@ -1996,7 +2005,25 @@ function vWizard(){
       // original characters usually need nothing from the web; series characters usually do
       if((was==='oc')!==(kind==='oc'))$('#wz-online').checked=kind!=='oc';keep()},
     wmem:b=>{b.classList.toggle('on');keep()},
-    clear:()=>{if(!confirm('Clear everything you typed in the wizard?'))return;WZ_F.forEach(f=>{$('#wz-'+f).value=''});$$('#wz-mem .on',view).forEach(b=>b.classList.remove('on'));$('#wz-online').checked=kind!=='oc';keep()},
+    dsave:()=>{const v=read(),cur=drafts().find(x=>x.id===draftId);
+      const pn=openSheet(`<h2>Save draft</h2><p class="hint">Keeps everything in the form: the kind, all the boxes, your characters, who you play and Look things up online.</p>
+        <label class="f">Name</label><input id="wd-n" value="${esc(cur?.name||autoName(v))}">
+        <div class="sheet-foot row">${cur?`<button class="btn ghost" data-act="new" style="flex:1">Save as new</button><button class="btn" data-act="upd" style="flex:1">Update “${esc(cur.name)}”</button>`
+          :`<button class="btn ghost" data-act="close" style="flex:1">Cancel</button><button class="btn" data-act="new" style="flex:2">${I.plus} Save</button>`}</div>`,{
+        new:async()=>{const name=$('#wd-n',pn).value.trim()||autoName(v),d={id:uid(),name,at:Date.now(),v};drafts().unshift(d);draftId=d.id;await saveSettings();keep();closeSheet();drawDrafts();toast(`Saved “${name}”`)},
+        upd:async()=>{cur.name=$('#wd-n',pn).value.trim()||cur.name;cur.v=v;cur.at=Date.now();drafts().splice(drafts().indexOf(cur),1);drafts().unshift(cur);await saveSettings();keep();closeSheet();drawDrafts();toast(`Updated “${cur.name}”`)}
+      });$('#wd-n',pn).select()},
+    dlist:()=>{
+      const pn=openSheet(`<h2>Wizard drafts</h2>${drafts().length?`<div class="list">${drafts().map(d=>`<div class="li" data-act="load" data-id="${d.id}"><div class="lt"><b>${esc(d.name)}${d.id===draftId?' · loaded':''}</b><span>${esc(kindName[d.v.kind]||'')}${preview(d.v)?' · '+esc(preview(d.v)):''}</span></div>
+          <span class="muted small">${timeAgo(d.at)}</span><button type="button" class="ib" data-act="ren" data-id="${d.id}" title="Rename">${I.edit}</button><button type="button" class="ib" data-act="del" data-id="${d.id}" title="Delete">${I.trash}</button></div>`).join('')}</div>`
+        :'<p class="muted">No drafts yet. Fill in the form, then tap Save draft.</p>'}
+        <p class="hint">Loading a draft replaces what's in the form now. Save the form as a draft first if you want to keep it.</p>
+        <div class="sheet-foot"><button class="btn ghost block" data-act="close">Close</button></div>`,{
+        load:b=>{const d=drafts().find(x=>x.id===b.dataset.id);if(!d)return;apply(d.v);draftId=d.id;keep();closeSheet();drawDrafts();window.scrollTo(0,0);toast(`Loaded “${d.name}”`)},
+        ren:async b=>{const d=drafts().find(x=>x.id===b.dataset.id),n=prompt('Draft name',d.name)?.trim();if(!n)return;d.name=n;await saveSettings();drawDrafts();H.dlist()},
+        del:async b=>{const d=drafts().find(x=>x.id===b.dataset.id);if(!confirm(`Delete the draft “${d.name}”?`))return;S.settings.wizDrafts=drafts().filter(x=>x!==d);if(draftId===d.id)draftId=null;await saveSettings();keep();drawDrafts();H.dlist()}
+      })},
+    clear:()=>{if(!confirm('Clear everything you typed in the wizard? Your saved drafts stay.'))return;draftId=null;drawDrafts();WZ_F.forEach(f=>{$('#wz-'+f).value=''});$$('#wz-mem .on',view).forEach(b=>b.classList.remove('on'));$('#wz-online').checked=kind!=='oc';keep()},
     run:async b=>{
       const v=read(),ow=kind==='ow';
       const inp={kind,name:v.name.trim(),source:ow?'':v.src.trim(),wiki:kind==='oc'||ow?'':v.wiki.trim(),links:v.links.split(/\s+/).filter(x=>/^https?:\/\//i.test(x)),notes:v.notes.trim(),traits:v.traits.trim(),lore:v.lore.trim(),scns:v.scns.trim(),online:ow?false:v.online,personaId:v.personaId||'',
