@@ -261,6 +261,9 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .cpan small{position:absolute;left:0;right:0;bottom:0;background:#000a;color:#fff;font-size:10.5px;padding:2px 4px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .cp-next{margin-top:6px;flex-wrap:wrap}
 .rd-comic{margin-bottom:12px}
+.ccover{display:block;flex-shrink:0;margin:6px auto 16px;width:min(72%,340px);padding:0;border-radius:10px;overflow:hidden;border:1px solid var(--line);background:var(--panel2);cursor:pointer;box-shadow:0 6px 22px #0007}.reader .ccover{width:min(88%,440px)}
+.ccover img{width:100%;height:auto;display:block}
+.ccover.empty{aspect-ratio:832/1216;width:min(46%,200px);border-style:dashed;box-shadow:none;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:var(--muted);font:inherit;text-align:center;padding:10px}.ccover.empty svg{width:26px;height:26px}.ccover.empty span{font-size:12px}
 .rd-text,.storytxt{font:16.5px/1.75 Georgia,"Noto Serif",serif}
 .rd-text p,.storytxt p{margin:0 0 .8em}
 .rd-text .q,.storytxt .q{color:inherit}
@@ -398,7 +401,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.36.1',HEARTH_DATE='2026-11-02';
+const HEARTH_VERSION='1.37.0',HEARTH_DATE='2026-11-03';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -440,7 +443,7 @@ function chatMeta(chat){
   else{const m=[...chat.messages].reverse().find(m=>txt(m)&&!m.greeting)||[...chat.messages].reverse().find(m=>txt(m));if(m)preview=`${m.role==='user'?un:char?.name||''}: ${plain(txt(m))}`}
   return {id:chat.id,charId:chat.charId,title:chat.title,updated:chat.updated,count:chat.messages.length,folder:chat.folder||'',
     mode:image?'image':'chat',quick:!!chat.quick,comic:!!chat.comic,about:String(about||'').slice(0,200),preview:preview.slice(0,220),images:image?chat.messages.filter(m=>m.imgs?.[m.sw]).length:0,
-    pic:latestPic(chat),v:CHAT_META_V};
+    pic:chat.cover||latestPic(chat),v:CHAT_META_V};
 }
 // Asks the AI to fold the messages since the last update into the chat memory.
 const memBusy=new Set();
@@ -2692,14 +2695,14 @@ async function vChat(id){
   const draw=()=>{
     const p=personaFor(chat),api=activeApi();
     view.innerHTML=`<div class="chat" ${char.banner?`style="--chatbg:url('${esc(char.banner)}')"`:''}>
-    <header class="top"><button class="ib" data-act="back">${I.back}</button><img data-act="zoom" src="${esc(chatAvatar(chat,char))}" alt="${esc(char.name)}">
+    <header class="top"><button class="ib" data-act="back">${I.back}</button><img data-act="zoom" src="${esc(chatAvatar(chat,char))}" ${chat.cover?`data-img="${chat.cover}"`:''} alt="${esc(char.name)}">
       <div class="ct"><b>${esc(char.name)}</b><small>${story?`${chat.comic?'Comic':'Image story'} · ${{observer:'watching',pov:`POV as ${esc(p?.name||'You')}`}[storyRole(chat)]||`as ${esc(p?.name||'You')}`} · <span class="hp-name">${esc(imgPreset().name)}</span> preset${chat.promptId&&promptFor(chat).id===chat.promptId?` · ${esc(promptFor(chat).name)}`:''}`:`as ${esc(p?.name||'You')} · ${esc(promptFor(chat).name)}`} · ${esc(api?.model||'no model set')}</small></div><button class="ib" data-act="menu">${I.dots}</button></header>
     ${story?`<div class="vtabs"><button data-act="vmode" data-v="" class="${reader()?'':'on'}">${I.code} Prompts</button><button data-act="vmode" data-v="story" class="${reader()?'on':''}">${I.book} Story</button></div>`:''}
     <div class="msgwrap"><div class="msgs" id="msgs"></div><button class="jump" id="jump" data-act="jump" hidden></button></div>
     ${story&&!reader()?`<div class="ipbar"><span class="small muted" title="Image preset">${I.img} Preset</span>${presetSelect()}<button class="btn ghost sm" data-act="ipred" title="Edit this preset">${I.edit}</button><button class="btn ghost sm" data-act="ipdup" title="Make a copy to change">${I.copy}</button><button class="btn ghost sm" data-act="ipnew" title="New preset">${I.plus}</button></div>`:''}
     <div class="composer" ${reader()?'hidden':''}><textarea id="inp" rows="1" placeholder="${story?'Describe a scene, ask for a change, or say next…':`Message ${esc(char.name)}…`}"></textarea><button class="btn" id="sendbtn" data-act="send">${I.send}</button></div></div>`;
     const ipr=$('.ipbar .ip-pr',view);if(ipr)ipr.onchange=e=>{S.settings.imgPreset=e.target.value;saveSettings();presetChanged()};
-    renderMsgs(true);jumpToMsg(chat);if(chat.origin&&!chat.origin.msgId)linkScene(chat).then(()=>curChat===chat&&renderMsgs());
+    hydrate($('.top',view));renderMsgs(true);jumpToMsg(chat);if(chat.origin&&!chat.origin.msgId)linkScene(chat).then(()=>curChat===chat&&renderMsgs());
     let jt=0;$('#msgs').addEventListener('scroll',()=>{clearTimeout(jt);jt=setTimeout(updateJump,60)},{passive:true});
     updateJump();
     const inp=$('#inp');inp.oninput=()=>autosize(inp,window.innerHeight*.4);
@@ -2737,7 +2740,7 @@ async function vChat(id){
   }
   function renderMsgs(toBottom){const el=msgsEl();if(!el)return;
     if(reader()){el.innerHTML=readerHTML(chat,char);if(toBottom)el.scrollTop=el.scrollHeight;updateJump();hydrate(el);return}
-    el.innerHTML=fromWorldHTML(chat)+(chat.messages.length?chat.messages.map(msgHTML).join(''):`<div class="empty">Say something to start the story.</div>`);if(toBottom)el.scrollTop=el.scrollHeight;updateJump();hydrate(el)}
+    el.innerHTML=fromWorldHTML(chat)+coverSlotHTML(chat)+(chat.messages.length?chat.messages.map(msgHTML).join(''):`<div class="empty">Say something to start the story.</div>`);if(toBottom)el.scrollTop=el.scrollHeight;updateJump();hydrate(el)}
   function updateOne(i){const el=msgsEl();if(!el||curChat!==chat)return;if(reader())return renderMsgs();const near=el.scrollHeight-el.scrollTop-el.clientHeight<120;const node=$(`.msg[data-i="${i}"]`,el);if(node)node.outerHTML=msgHTML(chat.messages[i],i);else renderMsgs();if(near)el.scrollTop=el.scrollHeight;hydrate(el)}
   function updateSend(){const b=$('#sendbtn');if(!b)return;const g=GEN&&GEN.chatId===chat.id;b.innerHTML=g?I.stop:I.send;b.classList.toggle('stop',!!g)}
   // image story turn: one JSON reply with a message, maybe an image, and a suggested next scene
@@ -2780,6 +2783,42 @@ async function vChat(id){
     if(failed)openSheet(`<h2 class="err">Couldn't build the prompts</h2><div class="box pre small">${esc(failed.message)}</div><br><button class="btn ghost block" data-act="close">Close</button>`);
   }
   // one panel of a comic page drawn panel by panel: its pictures, Generate, Attach, the Images page and its prompt
+  // the cover in the header follows the one chosen
+  const redrawTop=()=>{const hi=$('.top img',view);if(!hi)return;if(chat.cover){hi.dataset.img=chat.cover;delete hi.dataset.loaded;hydrate($('.top',view))}else{delete hi.dataset.img;hi.src=chatAvatar(chat,char)}};
+  // the comic's cover: versions like a panel's, made here, attached, or copied from one of its pages
+  function coverSheet(){
+    const again=()=>coverSheet(),list=(chat.covers??=[]).filter(Boolean);
+    const use=async id=>{chat.cover=id;await saveChat(chat);renderMsgs();redrawTop()};
+    const add=async ids=>{ids=ids.filter(Boolean);if(!ids.length)return;chat.covers.push(...ids);await use(ids.at(-1));again()};
+    const real=autoTitle(chat.title)&&!chat.titleSet?'':chat.title||'';
+    const pics=[...new Set(chat.messages.flatMap(m=>[...(m.pics?.[m.sw]||[]),...(comicOf(m)?.panels||[]).flatMap(x=>x.pics?.length?[x.pics.at(-1)]:[])]))];
+    const pn=openSheet(`<h2>Cover</h2><p class="hint" style="margin-top:-4px">The front of this comic, like a comic book cover. It opens the comic in both views and in the saved web page, and it's this chat's picture.</p>
+      ${list.length?`${thumbs(list,'cvview').replace(`data-id="${chat.cover}"`,`data-id="${chat.cover}" class="main"`)}<p class="hint">The outlined one is the cover. Tap a picture to use another one, save it or delete it.</p>`:''}
+      <div class="row" style="flex-wrap:wrap;margin:6px 0">${naiOn()?`<button class="btn sm" data-act="cvgen">${I.img} ${list.length?'Generate another':'Generate a cover'}</button>`:''}<button class="btn ghost sm" data-act="cvatt">${I.img} Attach</button>${chat.coverP?`<button class="btn ghost sm" data-act="cvimgs">${I.edit} Open on Images page</button>`:''}</div>
+      ${naiOn()?`<label class="f">Title on the cover<small>optional · NovelAI draws it, and letters can come out wrong</small></label><input id="cv-t" value="${esc(chat.coverTitle||'')}" placeholder="${esc(real||'e.g. Blades at Dusk')}">
+      <label class="f">What's on it<small>optional</small></label><input id="cv-x" placeholder="e.g. both of them back to back, the burning city behind them">
+      <div class="hint">${chat.coverP?'Generate another uses the same prompt with a new seed, unless you change the title or write what\'s on it.':`Your AI writes the prompt from the story so far: the main characters, a striking pose and the setting. A tall picture, ${COVER_W}×${COVER_H}.`}</div>`:''}
+      <div class="small" id="cv-msg" style="margin-top:6px"></div>
+      <div class="sheet-foot"><button class="btn ghost block" data-act="close">Close</button></div>`,{
+      cvgen:async b=>{const msg=$('#cv-msg',pn),title=$('#cv-t',pn).value.trim(),extra=$('#cv-x',pn).value.trim(),fresh=!chat.coverP||extra||title!==(chat.coverTitle||'');
+        if(fresh&&!activeApi()){msg.className='small err';msg.textContent='Add an API / proxy in Settings first.';return}
+        b.disabled=true;msg.className='small muted';
+        try{if(fresh){msg.textContent='Writing the cover prompt…';const r=await coverPrompt(chat,char,{title,extra});chat.coverP=r.p;chat.coverTitle=title;addImage(chat,[r.p],'Cover','',r.usage);await saveChat(chat)}
+          msg.textContent='Making the cover…';await add([await naiPicture(chat.coverP,undefined,{w:COVER_W,h:COVER_H})])}
+        catch(e){if(msg.isConnected){msg.className='small err';msg.textContent=e.message}if(b.isConnected)b.disabled=false}},
+      cvatt:()=>openSheet(`<h2>Attach a cover</h2><div class="menu"><button data-act="dev">${I.imp} From this device</button><button data-act="app">${I.img} From Hearth</button>${pics.length?`<button data-act="pg">${I.copy} A page or panel of this comic</button>`:''}</div>
+        <p class="hint">Best as a tall picture, like ${COVER_W}×${COVER_H}. It's also saved to ${esc(char.name)}'s gallery.</p>
+        <div class="sheet-foot"><button class="btn ghost block" data-act="back">${I.back} Back</button></div>`,{
+        back:again,dev:async()=>add(await addPictures(char,'gallery',chat.id)),
+        app:()=>pickAppPicture(async id=>{try{await add([char.gallery?.some(g=>g.id===id)?id:await saveToGallery(char,id,'Cover',chat.id)])}catch(e){toast(e.message)}},again,{first:char.id,hint:''}),
+        pg:()=>hydrate(openSheet(`<h2>Use a page or panel</h2>${thumbs(pics,'pick')}<p class="hint">A copy becomes the cover, so the page keeps its picture.</p><div class="sheet-foot"><button class="btn ghost block" data-act="back">${I.back} Back</button></div>`,{
+          back:again,pick:async b=>{const rec=await store.get('img:'+b.dataset.id);if(!rec?.data)return toast('Picture not found');await add([await putImg(rec.data,{seed:rec.seed,made:true,tool:'Cover'})])}}))}),
+      cvimgs:()=>openOnImages(chat.coverP,{chatId:chat.id,title:chat.title||char.name,caption:'Cover',cover:true}),
+      cvview:b=>{const id=b.dataset.id;viewMade(id,{c:char,chatId:chat.id,note:'Cover',backLabel:'Back to the cover',back:again,
+        more:id===chat.cover?[]:[{label:`${I.check} Use as the cover`,fn:async()=>{await use(id);again()}}],
+        onDelete:async()=>{chat.covers=chat.covers.filter(y=>y!==id);if(chat.cover===id){if(chat.covers.length)chat.cover=chat.covers.at(-1);else delete chat.cover}await saveChat(chat);renderMsgs();redrawTop()}})}
+    });hydrate(pn);
+  }
   function comicPanel(i,k){
     const m=chat.messages[i],pg=comicOf(m),x=pg?.panels[k];if(!x)return;
     const T=[],[w,h]=COMIC_SHAPES[comicShape(x.shape)],again=()=>comicPanel(i,k);
@@ -2955,6 +2994,7 @@ async function vChat(id){
       const m=chat.messages[idxOf(b)];
       if(char.gallery?.some(g=>g.id===id))viewPicture(char,id,'gallery',()=>{if(!char.gallery.some(g=>g.id===id))drop();else renderMsgs()});
       else viewMade(id,{c:char,chatId:chat.id,note:m?.imgs?.[m.sw]?.caption,backLabel:'Back to the story',onDelete:drop})},
+    cover:()=>coverSheet(),
     cpanel:b=>comicPanel(idxOf(b),+b.dataset.k||0),
     // a comic drawn panel by panel: one tap makes the picture of the next panel that has none
     cgen:async b=>{const i=idxOf(b),m=chat.messages[i],pg=comicOf(m),k=pg?.panels.findIndex(x=>!x.pics?.length)??-1;if(k<0)return;
@@ -3880,6 +3920,32 @@ Return one JSON object only:
 {"reply":"1 or 2 friendly sentences to the user","outline":"the updated story outline in one short paragraph, or \\"\\" if unchanged","page":${comicPageJson(chat)} or null,"remake":true if the page remakes the last page with a change, otherwise false,"next":"what happens on the next page, in one sentence"}`;
 }
 // enough room for every panel's prompt
+// A comic's cover, like a comic book's: chat.covers holds its versions, chat.cover the one in use. It opens the comic in
+// both views and in the saved web page, and it's the chat's picture in the header and on the Chats list.
+const COVER_W=832,COVER_H=1216;
+const coverSlotHTML=chat=>chat.cover?`<button type="button" class="ccover" data-act="cover" title="Cover"><img data-img="${chat.cover}" src="${BLANK}" alt="Cover"></button>`
+  :chat.comic?`<button type="button" class="ccover empty" data-act="cover">${I.plus}<b>Add a cover</b><span>Like the front of a comic book</span></button>`:'';
+// the prompt for a cover, written from the story so far. o: title (drawn in the picture when set), extra (what the user wants on it)
+async function coverPrompt(chat,char,o={}){
+  const su=storyUser(chat),pages=chat.messages.filter(m=>m.role==='assistant'&&comicOf(m)).map(m=>comicOf(m).caption).filter(Boolean);
+  const {j,usage}=await aiJson(SYS_NAI,`Write the NovelAI prompt for the cover of a comic ${char.kind==='world'?`set in ${char.name}`:`with ${char.name}`}. ${su.intro}
+
+STORY OUTLINE: ${chat.storyOutline?.trim()||'(not set)'}
+PAGES SO FAR:
+${pages.slice(0,16).map((c,k)=>`${k+1}. ${c}`).join('\n')||'(none yet)'}
+${o.extra?`\nWHAT THE USER WANTS ON THE COVER: ${o.extra}\n`:''}
+HOW TO MAKE A GOOD COVER:
+- One striking picture that sells the story: the main characters big and clear, in a pose that shows who they are and what the story is about, a dramatic camera angle, a background that shows the setting and the mood, and strong lighting.
+- It is a tall picture: add the tag cover, and fit the characters to a portrait frame.${o.title?`
+- The title is drawn on the cover: add the tags cover page, title and english text, and put exactly this in "text", in capitals: ${o.title.toUpperCase()}. No other text, logos or speech bubbles.`:`
+- No text, title, logos or speech bubbles in the picture.`}
+
+${novelRules(chat,char,{story:true,text:o.title?'ask':false,lore:sceneLore(chat,char,[chat.storyOutline,o.extra,...pages])})}
+Return one JSON object only: ${panelJson()}`,undefined,2500);
+  const p=finishPanel(cleanPanel(j),chat,char);if(!panelOk(p))throw new Error('The AI returned no prompt. Try again.');
+  if(o.title)p.text=o.title.toUpperCase();else p.text='';
+  p.caption=p.caption||'Cover';return {p,usage};
+}
 const comicTokens=(chat,pages=1)=>Math.min(16000,pages*(chat.comic.draw==='page'?2600:1200+1600*(Math.min(+chat.comic.count||5,6))));
 /* image story chats: the user describes scenes, the AI answers with prompts and suggests the next scene */
 const SYS_STORY='You are a friendly storyboard partner who writes NovelAI Diffusion image prompts. Reply with a single JSON object only.';
@@ -3934,8 +4000,8 @@ function storySections(chat){
 const paras=t=>String(t).split(/\n\s*\n/).filter(p=>p.trim()).map(p=>`<p>${fmt(p.trim())}</p>`).join('');
 function readerHTML(chat,char){
   const secs=storySections(chat),un=personaFor(chat)?.name||'You',missing=secs.filter(s=>!s.story&&!comicOf(s.m)).length,panels=s=>comicOf(s.m)?.draw==='panels';
-  if(!secs.length)return `<div class="empty"><b>No images yet</b>Switch to Prompts and describe the first scene. Each image and its story text will show up here.</div>`;
-  return `<article class="reader">
+  if(!secs.length)return coverSlotHTML(chat)+`<div class="empty"><b>No images yet</b>Switch to Prompts and describe the first scene. Each image and its story text will show up here.</div>`;
+  return `<article class="reader">${coverSlotHTML(chat)}
     <h2 class="rd-title">${esc(chat.title)}</h2>
     ${missing?`<div class="box small rd-miss"><span>${missing===1?'1 image has':`${missing} images have`} no story text yet.</span><button class="btn sm" data-act="fillstory">${I.wand} Write it</button></div>`:''}
     ${secs.map((s,k)=>`<section class="rd-sec" data-i="${s.i}">
@@ -4031,11 +4097,12 @@ function wishSheet(title,hint,run,extra=''){
 // one standalone web page with the pictures and the text, to read or share anywhere
 async function exportStory(chat,char){
   const un=personaFor(chat)?.name||'You',body=[];
+  const cover=chat.cover&&await getImgData(chat.cover);if(cover)body.push(`<img class="cover" src="${cover}" alt="Cover">`);
   for(const s of storySections(chat)){
     const pics=[];for(const id of s.pics){const d=await getImgData(id);if(d)pics.push(`<img src="${d}" alt="">`)}
     body.push(`<section>${pics.join('')}${s.story?paras(macro(s.story,char.name,un)):`<p><i>${esc(s.img.caption||'')}</i></p>`}</section>`);
   }
-  const css='body{margin:0;background:#faf7f2;color:#2a2530;font:17px/1.75 Georgia,"Noto Serif",serif}main{max-width:720px;margin:0 auto;padding:28px 16px 60px}h1{font-size:26px;line-height:1.3;margin:0 0 28px}section{margin:0 0 44px}img{width:100%;border-radius:10px;display:block;margin:0 0 14px}p{margin:0 0 .8em}@media(prefers-color-scheme:dark){body{background:#16131a;color:#ece7f2}}';
+  const css='body{margin:0;background:#faf7f2;color:#2a2530;font:17px/1.75 Georgia,"Noto Serif",serif}main{max-width:720px;margin:0 auto;padding:28px 16px 60px}h1{font-size:26px;line-height:1.3;margin:0 0 28px}section{margin:0 0 44px}img{width:100%;border-radius:10px;display:block;margin:0 0 14px}img.cover{width:min(100%,460px);margin:0 auto 36px;box-shadow:0 8px 28px #0005}p{margin:0 0 .8em}@media(prefers-color-scheme:dark){body{background:#16131a;color:#ece7f2}}';
   download(safeName(chat.title)+'.html',`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(chat.title)}</title><style>${css}</style></head><body><main><h1>${esc(chat.title)}</h1>${body.join('\n')}</main></body></html>`,'text/html');
 }
 // image stories: the user's persona is a character in the story, the camera itself (POV), or an unseen observer
@@ -4288,6 +4355,8 @@ function openOnImages(p,from){imgLoad={p:clone(p),from};closeSheet();if(location
 async function sendBack(id,from){
   const chat=await loadChat(from.chatId);if(!chat)throw new Error('That chat was deleted.');
   let list,m=null;
+  // a comic's cover: the new picture becomes it
+  if(from.cover){const rec=await store.get('img:'+id);if(!rec?.data)throw new Error('Picture not found');const nid=await putImg(rec.data,{seed:rec.seed,made:true});(chat.covers??=[]).push(nid);chat.cover=nid;await saveChat(chat);return}
   if(from.entryId){const e=chat.images?.find(x=>x.id===from.entryId);if(!e?.panels[from.k])throw new Error('That prompt was deleted.');list=((e.pics??=[])[from.k]??=[])}
   else{m=chat.messages.find(x=>x.id===from.msgId);if(!m?.imgs?.[from.sw])throw new Error('That part of the story was deleted.');
     // one panel of a comic page: the page is put together again with it
@@ -5187,7 +5256,7 @@ Return one JSON object only: ${panelJson('sections')}`,undefined,1500);r={panels
       const startFrom=async(o,ask)=>{if(ask&&!confirm(ask))return;useForm();await setBase(x.id,o);closeSheet();await vImages();$('[data-act=gen]',view)?.click()};
       viewMade(x.id,{images:true,backLabel:'Back to Images',note:x.form?.base?.slice(0,80)||'',noMeta:!!x.form,meta:id=>H.imp(null,null,null,id),
         more:[...(fr?[{label:`${I.back} ${x.sent?`Sent to ${esc(fr.title||'the chat')} ✓ · send again`:`Send to the ${fr.entryId?'chat':'story'}: ${esc(fr.title||'')}`}`,
-            fn:async()=>{try{await sendBack(x.id,fr);x.sent=(x.sent||0)+1;saveImgPage();toast(`Added under its message in ${fr.title||'the chat'}`);again()}catch(e){toast(e.message,5000)}}}]:[]),
+            fn:async()=>{try{await sendBack(x.id,fr);x.sent=(x.sent||0)+1;saveImgPage();toast(fr.cover?`Now the cover of ${fr.title||'the comic'}`:`Added under its message in ${fr.title||'the chat'}`);again()}catch(e){toast(e.message,5000)}}}]:[]),
           {label:`${I.img} Use as base image`,fn:async()=>{await setBase(x.id);closeSheet();$('#ig-base')?.scrollIntoView({block:'center'});toast('Base image set. Change the prompt or paint an area, then tap Generate.')}},
           ...(x.form?[{label:`${I.regen} Variations`,fn:()=>startFrom({strength:.8,noise:.1})},
             {label:`${I.wand} Enhance (1.5× bigger)`,fn:async()=>{const i=await loadImg(await getImgData(x.id)),[w,h]=fitSize(i.naturalWidth,i.naturalHeight,i.naturalWidth*i.naturalHeight*2.25);
