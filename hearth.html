@@ -401,7 +401,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.41.0',HEARTH_DATE='2026-11-03';
+const HEARTH_VERSION='1.42.0',HEARTH_DATE='2026-11-03';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiNoMark:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -2758,14 +2758,14 @@ async function vChat(id){
     const g=GEN;let failed=null,ok=false;
     try{
       const comic=!!chat.comic,history=chat.messages.slice(0,idx),prompt=(comic?comicStoryPrompt:imageStoryPrompt)(chat,char,history,notes&&{...notes,prev:notes.sw!=null?{reply:m.swipes[notes.sw],img:m.imgs?.[notes.sw],story:m.story?.[notes.sw]}:null});
-      const r=await callJson(api,[{role:'system',content:SYS_STORY},{role:'user',content:prompt}],GEN.ctrl.signal,{maxTokens:Math.max(comic?comicTokens(chat):2500,+S.settings.maxTokens||0)});
+      const r=await callJson(api,[{role:'system',content:SYS_STORY},{role:'user',content:prompt}],GEN.ctrl.signal,{maxTokens:Math.max(comic?comicTokens(chat):3000,+S.settings.maxTokens||0)});
       const j=r.j;let img,pg=null,storyT;
       if(comic){const f=j.page&&typeof j.page==='object'&&comicPage(j.page,chat,char);img=f?comicFields(f).img:null;if(f){pg=f;storyT=comicWords(f)}}
       else{img=j.image&&typeof j.image==='object'?finishPanel(cleanPanel(j.image),chat,char):null;storyT=str(j.story).trim()}
       const reply=str(j.reply).trim();if(!reply&&!panelOk(img))throw new Error('The AI returned an empty answer. Try again.');
       m.swipes[m.sw]=reply||'Here it is.';
       (m.imgs??=[])[m.sw]=panelOk(img)?img:null;(m.next??=[])[m.sw]=str(j.next).trim();
-      (m.story??=[])[m.sw]=panelOk(img)?storyT:'';(m.remake??=[])[m.sw]=panelOk(img)&&(j.remake===true||j.remake==='true');
+      (m.story??=[])[m.sw]=panelOk(img)?storyT:'';(m.scene??=[])[m.sw]=panelOk(img)&&str(j.scene).trim()||sceneBefore(chat,history);(m.remake??=[])[m.sw]=panelOk(img)&&(j.remake===true||j.remake==='true');
       if(comic||m.comic)(m.comic??=[])[m.sw]=panelOk(img)?pg:null;
       // a remade page keeps a copy of the picture of every panel that didn't change
       const prev=pg?.draw==='panels'&&m.remake[m.sw]&&[...history].reverse().map(comicOf).find(Boolean);
@@ -2779,7 +2779,7 @@ async function vChat(id){
     }catch(e){if(!(e.name==='AbortError'&&g.ctrl.signal.aborted))failed=e}
     // cut off while Hearth was in the background: ask again once it's back on screen
     const broke=!ok&&g.bg&&netBreak(failed)&&tries<BG_TRIES;if(broke)failed=null;
-    if(!ok){if(mode==='swipe'){m.swipes.pop();m.sw=m.swipes.length-1;for(const k of ['imgs','next','usage','story','remake','comic','pics'])m[k]?.splice(m.swipes.length)}else chat.messages.splice(idx,1)}
+    if(!ok){if(mode==='swipe'){m.swipes.pop();m.sw=m.swipes.length-1;for(const k of ['imgs','next','usage','story','remake','comic','pics','scene'])m[k]?.splice(m.swipes.length)}else chat.messages.splice(idx,1)}
     GEN=null;await saveChat(chat);
     if(curChat===chat){renderMsgs(true);updateSend()}
     if(broke)resumeLater(()=>storyGenerate(mode,notes,tries+1),'Asking again: the answer was cut off while Hearth was in the background…');
@@ -4070,12 +4070,14 @@ ${notes?`
 THE USER IS REDOING YOUR ANSWER TO THEIR LAST MESSAGE.${notes.prev?` Your previous version: ${JSON.stringify({reply:notes.prev.reply,page:notes.prev.img?.caption||null,words:notes.prev.story||''})}`:''}
 ${notes.want?`They want: ${notes.want}\n`:''}${notes.avoid?`They don't want: ${notes.avoid}\n`:''}Make a new version that follows these wishes, for both the pictures and the words. Keep everything they didn't mention.
 `:''}
+${vsceneBlock(chat,history,'page')}
+
 ${comicRules(chat)}
 - Narration is in ${storyVoice(chat)}. ${su.text}
 
 ${novelRules(chat,char,{story:true,text:comicTextMode(chat),lore:sceneLore(chat,char,[talk,words.join('\n'),chat.storyOutline,notes?.want])})}
 Return one JSON object only:
-{"reply":"1 or 2 friendly sentences to the user","outline":"the updated story outline in one short paragraph, or \\"\\" if unchanged","page":${comicPageJson(chat)} or null,"remake":true if the page remakes the last page with a change, otherwise false,"next":"what happens on the next page, in one sentence"}`;
+{"reply":"1 or 2 friendly sentences to the user","outline":"the updated story outline in one short paragraph, or \\"\\" if unchanged",${vsceneKey('page')}"page":${comicPageJson(chat)} or null,"remake":true if the page remakes the last page with a change, otherwise false,"next":"what happens on the next page, in one sentence"}`;
 }
 // enough room for every panel's prompt
 // A comic's cover, like a comic book's: chat.covers holds its versions, chat.cover the one in use. It opens the comic in
@@ -4104,9 +4106,34 @@ Return one JSON object only: ${panelJson()}`,undefined,2500);
   if(o.title)p.text=o.title.toUpperCase();else p.text='';
   p.caption=p.caption||'Cover';return {p,usage};
 }
-const comicTokens=(chat,pages=1)=>Math.min(16000,pages*(chat.comic.draw==='page'?2600:1200+1600*(Math.min(+chat.comic.count||5,6))));
+const comicTokens=(chat,pages=1)=>Math.min(16000,600+pages*(chat.comic.draw==='page'?2600:1200+1600*(Math.min(+chat.comic.count||5,6))));
 /* image story chats: the user describes scenes, the AI answers with prompts and suggests the next scene */
 const SYS_STORY='You are a friendly storyboard partner who writes NovelAI Diffusion image prompts. Reply with a single JSON object only.';
+/* The scene right now, for pictures: the place and its light, and where everyone is, how they stand, what they wear and
+   hold. The AI writes it with each image or page (m.scene, the scene as that picture shows it) before the prompt, and the
+   next one starts from it, so poses, outfits and props carry over. A redone answer starts from the scene before it. */
+const VSCENE_FORMAT='Place: the location and its fixed details (what is where), time of day, weather, light (where it comes from, its color). Then one line per person present: where they are (left, right or center; near or far; next to whom or what), pose and which way they face, expression, what their hands do or hold, exactly what they wear now (any change: taken off, torn, wet, dirty), hair, injuries or marks. Props: important objects and where they are. Short phrases, facts only, at most 150 words.';
+function sceneBefore(chat,history){for(const m of [...history].reverse())if(m.role==='assistant'&&m.scene?.[m.sw])return m.scene[m.sw];return chat.vscene||''}
+const vsceneBlock=(chat,history,what)=>`THE SCENE RIGHT NOW (as the last ${what} shows it):
+${sceneBefore(chat,history)||`(nothing yet: decide it with the first ${what})`}
+Keep the next ${what} consistent with it: the same place and light, the same outfits, hair, marks and props in the same places, unless the story changes them. Poses and positions continue from it: someone sitting stays seated unless they get up, someone on the left stays on the left. Put these details (pose, position, facing, outfit state, props, light) into the prompts, so the pictures match. When remaking the last ${what}, keep its scene and change only what the user asks.`;
+// the JSON key for it, written before the picture so the prompt follows it
+const vsceneKey=what=>`"scene":"the scene right now as this ${what} shows it${what==='page'?' (at its last panel)':''}, written first: ${VSCENE_FORMAT} Change only what this ${what} changes; \\"\\" if you make no ${what}",`;
+const promptLine=p=>(p.onebox||[p.base,...(p.characters||[]).map(c=>`${c.name?c.name+': ':''}${c.prompt}`)].join(' | ')).slice(0,700);
+// the scene read again from the latest pictures (their prompts and story text), when it's missing or wrong
+async function rebuildVScene(chat,char){
+  const ms=chat.messages.filter(m=>m.role==='assistant'&&m.imgs?.[m.sw]).slice(-3);if(!ms.length)throw new Error('No pictures yet');
+  const desc=ms.map((m,k)=>{const pg=comicOf(m),ps=pg?.draw==='panels'?pg.panels.map(x=>x.p):[m.imgs[m.sw]];return `${k+1}. ${ps.map(promptLine).join('\n   then: ')}${m.story?.[m.sw]?`\n   story: ${m.story[m.sw].slice(0,800)}`:''}`}).join('\n');
+  const {j,usage}=await aiJson(SYS_NAI,`These are the latest pictures of an image story ${char.kind==='world'?`set in ${char.name}`:`with ${char.name}`}, oldest first: their NovelAI prompts and story text.
+${desc}
+
+Write the scene right now, as the last picture shows it, in this format: ${VSCENE_FORMAT}
+Return one JSON object only: {"scene":"..."}`,undefined,900);
+  const s=str(j.scene).trim();if(!s)throw new Error('The AI returned an empty scene. Try again.');
+  addExtra(chat,usage);return s;
+}
+// the scene shown or edited in the chat: the latest picture's own (a message keeps it), else the one before any picture
+function setVScene(chat,s){const m=[...chat.messages].reverse().find(m=>m.role==='assistant'&&m.imgs?.[m.sw]);if(m)(m.scene??=[])[m.sw]=s;else chat.vscene=s}
 function imageStoryPrompt(chat,char,history,notes){
   const su=storyUser(chat),imgs=history.filter(m=>m.role==='assistant'&&m.imgs?.[m.sw]).map(m=>m.imgs[m.sw]);
   const talk=history.slice(-12).map(m=>m.role==='user'?`USER: ${txt(m)}`:`YOU: ${txt(m)}${m.imgs?.[m.sw]?` [made image: ${m.imgs[m.sw].caption}]`:''}${m.next?.[m.sw]?` [suggested next: ${m.next[m.sw]}]`:''}`).join('\n');
@@ -4133,9 +4160,11 @@ ${notes?`
 THE USER IS REDOING YOUR ANSWER TO THEIR LAST MESSAGE.${notes.prev?` Your previous version: ${JSON.stringify({reply:notes.prev.reply,image:notes.prev.img?.caption||null,story:notes.prev.story||''})}`:''}
 ${notes.want?`They want: ${notes.want}\n`:''}${notes.avoid?`They don't want: ${notes.avoid}\n`:''}Make a new version that follows these wishes, for both the image and the story text. Keep everything they didn't mention.
 `:''}
+${vsceneBlock(chat,history,'image')}
+
 ${novelRules(chat,char,{story:true,lore:sceneLore(chat,char,[talk,prose.join('\n'),chat.storyOutline,notes?.want])})}
 Return one JSON object only:
-{"reply":"1 or 2 friendly sentences to the user","outline":"the updated story outline in one short paragraph, or \\"\\" if unchanged","image":${panelJson()} or null,"remake":true if the image remakes the last image with a change, otherwise false${storyKey},"next":"the suggested next scene in one sentence"}`;
+{"reply":"1 or 2 friendly sentences to the user","outline":"the updated story outline in one short paragraph, or \\"\\" if unchanged",${vsceneKey('image')}"image":${panelJson()} or null,"remake":true if the image remakes the last image with a change, otherwise false${storyKey},"next":"the suggested next scene in one sentence"}`;
 }
 // copy buttons inside an image-story message; the data attributes point at the message and section
 function storyCardsHTML(img,i){
@@ -4317,6 +4346,9 @@ async function startImageStory(charId,o={}){
       :`Let's make an image story ${world?`set in ${c.name}`:`with ${c.name}`}! What is it about? Tell me the plot, the mood and roughly how many images you want, and I'll suggest the first scene. Or describe a scene and I'll build it right away.`],sw:0,time:Date.now()}]};
   c.lastUsed=Date.now();await saveChars();await saveChat(chat);go('#/chat/'+chat.id);
 }
+// Quick images and comics are written in one go: one scene first, and every picture keeps to it
+const QUICK_SCENE=`SCENE: first write "scene", the scene as the first picture shows it, in this format: ${VSCENE_FORMAT}
+Then keep every picture consistent with it and with each other: the same place and light, the same outfits, hair, marks and props in the same places, and poses and positions that continue from one picture to the next unless the story changes them. Put these details (pose, position, facing, outfit state, props, light) into each prompt.`;
 /* ---------- quick images: 1 to 4 pictures with a short story, in one request, saved as a small image story ---------- */
 async function quickImages(chat,char,idea,n,len){
   const su=storyUser(chat),fmt=S.settings.imgOutput;
@@ -4327,11 +4359,12 @@ async function quickImages(chat,char,idea,n,len){
 WHAT HAPPENS: ${idea}
 
 ${n>1?`Split it into ${n} moments, in order, one picture each, so together they tell the whole thing from start to finish. Keep everyone's look and outfit the same in every picture.`:'Show the one moment that tells it best.'}
+${QUICK_SCENE}
 ${novelRules(chat,char,{story:true,lore:sceneLore(chat,char,[idea])})}
-Return one JSON object only: {"title":"a short title for this story","panels":[${one}${n>1?', ...':''}]} with exactly ${n} panel${n>1?'s':''}.`,undefined,Math.min(9000,(fmt==='onebox'?900:1700)*n+(len==='off'?0:len==='long'?400:150)*n));
+Return one JSON object only: {"title":"a short title for this story","scene":"the scene as the first picture shows it","panels":[${one}${n>1?', ...':''}],"end_scene":"the scene as the last picture shows it, in the same format"} with exactly ${n} panel${n>1?'s':''}.`,undefined,Math.min(9600,(fmt==='onebox'?900:1700)*n+(len==='off'?0:len==='long'?400:150)*n+600));
   const items=(Array.isArray(j.panels)?j.panels:[j]).filter(x=>x&&typeof x==='object').map(x=>({p:finishPanel(cleanPanel(x),chat,char),story:str(x.story).trim()})).filter(x=>panelOk(x.p));
   if(!items.length)throw new Error('The AI returned no prompts. Try again.');
-  return {title:str(j.title).trim(),items,usage};
+  return {title:str(j.title).trim(),items,usage,scene:str(j.end_scene).trim()||str(j.scene).trim()};
 }
 // quick images as a comic: 1 to 3 pages planned in one request
 async function quickComic(chat,char,idea,n){
@@ -4344,11 +4377,12 @@ ${n>1?`Split it into ${n} pages, in order, so together they tell the whole thing
 ${comicRules(chat)}
 - Narration is in ${storyVoice(chat)}. ${su.text}
 
+${QUICK_SCENE}
 ${novelRules(chat,char,{story:true,text:comicTextMode(chat),lore:sceneLore(chat,char,[idea])})}
-Return one JSON object only: {"title":"a short title for this story","pages":[${comicPageJson(chat)}${n>1?', ...':''}]} with exactly ${n} page${n>1?'s':''}.`,undefined,comicTokens(chat,n));
+Return one JSON object only: {"title":"a short title for this story","scene":"the scene as the first panel shows it","pages":[${comicPageJson(chat)}${n>1?', ...':''}],"end_scene":"the scene as the last panel shows it, in the same format"} with exactly ${n} page${n>1?'s':''}.`,undefined,comicTokens(chat,n));
   const pages=arr(j.pages).filter(x=>x&&typeof x==='object').map(x=>comicPage(x,chat,char)).filter(Boolean);
   if(!pages.length)throw new Error('The AI returned no pages. Try again.');
-  return {title:str(j.title).trim(),pages,usage};
+  return {title:str(j.title).trim(),pages,usage,scene:str(j.end_scene).trim()||str(j.scene).trim()};
 }
 function openQuick(c){
   let pid=S.settings.activePersona||S.personas[0]?.id,role=null,voice='you';
@@ -4380,12 +4414,14 @@ function openQuick(c){
           const r=await quickComic(chat,c,idea,n);chat.title=r.title||idea.slice(0,60);chat.titleSet=true;
           r.pages.forEach((pg,k)=>{const f=comicFields(pg);chat.messages.push({id:uid(),role:'assistant',sw:0,time:Date.now(),imgs:[f.img],story:[f.story],comic:[pg],next:[''],usage:k===0&&r.usage?[r.usage]:undefined,
             swipes:[r.pages.length>1?`Page ${k+1} of ${r.pages.length}.`:'Here is your page.']})});
+          if(r.scene)chat.messages.at(-1).scene=[r.scene];
           addImage(chat,chat.messages.filter(m=>m.comic).flatMap(m=>m.comic[0].draw==='page'?[m.imgs[0]]:m.comic[0].panels.map(x=>x.p)),idea,'quick',r.usage);
         }else{
         const r=await quickImages(chat,c,idea,n,len);
         chat.title=r.title||idea.slice(0,60);chat.titleSet=true;
         r.items.forEach(({p,story},k)=>chat.messages.push({id:uid(),role:'assistant',sw:0,time:Date.now(),imgs:[p],story:[story],next:[''],usage:k===0&&r.usage?[r.usage]:undefined,
           swipes:[r.items.length>1?`Image ${k+1} of ${r.items.length}.`:'Here it is.']}));
+        if(r.scene)chat.messages.at(-1).scene=[r.scene];
         addImage(chat,r.items.map(x=>x.p),idea,'quick',r.usage);}
         if($('#qk-f',pn)?.checked){let f=folders('chats').find(x=>x.name==='Quick images');if(!f){f={id:uid(),name:'Quick images'};folders('chats').push(f);await saveSettings()}chat.folder=f.id}
         c.lastUsed=Date.now();await saveChars();await saveChat(chat);closeSheet();go('#/chat/'+chat.id);
@@ -4944,7 +4980,7 @@ Write what the main story should now know from this scene, as short past-tense b
 function chatMenu(chat,char,redraw){
   const spent=chatCost(chat);
   openSheet(`<h2>Chat options</h2>${spent?`<p class="hint" style="margin:-6px 0 10px">This chat so far: <b>${spent.cost!=null?`${spent.est?'≈ ':''}${fmtCost(spent.cost)} · `:''}${spent.tokEst?'≈ ':''}${Math.round(spent.in+spent.out).toLocaleString()} tokens</b> (↑ ${Math.round(spent.in).toLocaleString()} · ↓ ${Math.round(spent.out).toLocaleString()})</p>`:''}<div class="menu">
-    ${chat.origin?`<button data-act="setup">${I.book} Scene setup (from the world chat)</button><button data-act="srolesc">${I.user} You in this scene: ${SCENE_ROLES[sceneRole(chat)][0]}</button><button data-act="sendback">${I.send} Send back to the world chat${chat.origin.sent?' (sent)':''}</button>`:''}${char.kind==='world'&&chat.mode!=='image'?`<button data-act="wscene">${I.chat} Play a scene with one character</button>${liveScenes(chat).length?`<button data-act="scenes">${I.book} Scenes from this chat (${liveScenes(chat).length})</button>`:''}`:''}<button data-act="memory">${I.brain} Chat memory</button>${chat.mode==='image'?'':`<button data-act="scene">${I.user} The scene right now</button>`}${char.kind==='world'?`<button data-act="cguests">${I.user} Guests${guestsOf(chat,char).length?`: ${esc(guestsOf(chat,char).map(g=>g.name).join(', '))}`:''}</button>`:''}${char.kind!=='world'&&S.chars.some(c=>c.kind==='world')?`<button data-act="cworld">${I.book} World for this chat: ${esc(chatWorld(chat,char)?.name||'none')}</button>`:''}<button data-act="persona">${I.user} Persona for this chat</button><button data-act="prompt">${I.edit} Prompt preset</button>
+    ${chat.origin?`<button data-act="setup">${I.book} Scene setup (from the world chat)</button><button data-act="srolesc">${I.user} You in this scene: ${SCENE_ROLES[sceneRole(chat)][0]}</button><button data-act="sendback">${I.send} Send back to the world chat${chat.origin.sent?' (sent)':''}</button>`:''}${char.kind==='world'&&chat.mode!=='image'?`<button data-act="wscene">${I.chat} Play a scene with one character</button>${liveScenes(chat).length?`<button data-act="scenes">${I.book} Scenes from this chat (${liveScenes(chat).length})</button>`:''}`:''}<button data-act="memory">${I.brain} Chat memory</button><button data-act="${chat.mode==='image'?'vscene':'scene'}">${I.user} The scene right now</button>${char.kind==='world'?`<button data-act="cguests">${I.user} Guests${guestsOf(chat,char).length?`: ${esc(guestsOf(chat,char).map(g=>g.name).join(', '))}`:''}</button>`:''}${char.kind!=='world'&&S.chars.some(c=>c.kind==='world')?`<button data-act="cworld">${I.book} World for this chat: ${esc(chatWorld(chat,char)?.name||'none')}</button>`:''}<button data-act="persona">${I.user} Persona for this chat</button><button data-act="prompt">${I.edit} Prompt preset</button>
     <button data-act="vars">${I.code} Script variables</button><button data-act="lore">${I.tag} Lore used in last reply</button><button data-act="rename">${I.edit} Rename chat</button><button data-act="mvf">${I.folder} Move to folder${folders('chats').find(f=>f.id===chat.folder)?` (now: ${esc(folders('chats').find(f=>f.id===chat.folder).name)})`:''}</button>
     <button data-act="newchat">${I.plus} Start a new chat</button><button data-act="export">${I.exp} Export chat as text</button>
     ${chat.mode==='image'?`<button data-act="srole">${{observer:I.book,pov:I.img}[storyRole(chat)]||I.user} Your role: ${ROLE_LABEL[storyRole(chat)]}</button><button data-act="comic">${I.copy} Comic pages: ${chat.comic?`on · ${chat.comic.draw==='page'?'whole page at once':`panel by panel${chat.comic.insets?', insets':''}`}`:'off'}</button><button data-act="outline">${I.edit} Story outline</button><button data-act="ihist">${I.copy} All image prompts (${chat.images?.length||0})</button>`
@@ -5006,6 +5042,16 @@ function chatMenu(chat,char,redraw){
         ${worlds.map(w=>row(w.id,esc(w.name),(w.members||[]).includes(char.id)?`${esc(char.name)} is a member`:'',cur===w.id).replace('<div class="li',`<div ${cfAttr(w)} class="li`)).join('')}
         ${row('',`No world`,'Only the character page',cur==='')}</div>`,{
         pick:async b=>{const v=b.dataset.v;if(v==='@home')delete chat.worldId;else chat.worldId=v;await saveChat(chat,true);closeSheet();redraw();toast(`World: ${chatWorld(chat,char)?.name||'none'}`)}})},
+    // an image story's scene: what the latest picture shows, which the next picture continues from
+    vscene:()=>openSheet(`<h2>The scene right now</h2><p class="hint">The place and its light, and where everyone is, how they stand and face, what they wear and hold, as the latest picture shows it. The next ${chat.comic?'page':'picture'} continues from it, so poses, outfits and props match. Your AI updates it with every ${chat.comic?'page':'picture'}; fix anything wrong here.</p>
+      <textarea id="vs-t" rows="12" placeholder="Nothing yet. It's written with the next picture, or tap “Read it from the pictures”.">${esc(sceneBefore(chat,chat.messages))}</textarea><div id="vs-msg" class="small" style="margin-top:6px"></div>
+      <button class="btn ghost block" data-act="now" style="margin-top:8px">${I.regen} Read it from the pictures</button>
+      <div class="sheet-foot row"><button class="btn ghost" data-act="close" style="flex:1">Cancel</button><button class="btn" data-act="ok" style="flex:2">Save</button></div>`,{
+      ok:async()=>{setVScene(chat,$('#vs-t').value.trim());await saveChat(chat,true);closeSheet();toast('Scene saved')},
+      now:async b=>{const msg=$('#vs-msg');if(!activeApi()){msg.className='small err';msg.textContent='Add an API / proxy in Settings first.';return}b.disabled=true;msg.className='small muted';msg.textContent='Reading the latest pictures…';
+        try{$('#vs-t').value=await rebuildVScene(chat,char);msg.className='small okc';msg.textContent='Read from the latest pictures. Edit it if anything is wrong, then tap Save.'}
+        catch(e){msg.className='small err';msg.textContent=e.message}finally{b.disabled=false}}
+    },{modal:true}),
     scene:()=>{
       const on=S.settings.trackScene!==false;
       openSheet(`<h2>The scene right now</h2><p class="hint">Who is where, what they hold and wear, and anything that limits them (tied up, injured, asleep…). Sent with every message so characters only do what the scene allows. ${on?'Updated after each reply.':'Automatic updates are off (Settings → Chat memory).'} Fix anything wrong here.</p>
