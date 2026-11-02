@@ -387,7 +387,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.32.0',HEARTH_DATE='2026-11-02';
+const HEARTH_VERSION='1.33.0',HEARTH_DATE='2026-11-02';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -985,12 +985,12 @@ async function callApiRaw(api,messages,signal,onText,o={}){
   // streamed tool calls arrive in pieces; join them by index
   const calls=[],addCalls=tcs=>{for(const tc of tcs||[]){const i=tc.index??calls.length;const c=calls[i]||(calls[i]={id:'',type:'function',function:{name:'',arguments:''}});
     if(tc.id)c.id=tc.id;if(tc.function?.name&&!c.function.name)c.function.name=tc.function.name;if(tc.function?.arguments)c.function.arguments+=tc.function.arguments}};
-  const reader=res.body.getReader(),dec=new TextDecoder();let buf='',out='',thought=0;
+  const reader=res.body.getReader(),dec=new TextDecoder();let buf='',out='',thought=0,sawDone=false;
   for(;;){
     const {done,value}=await reader.read();if(done)break;
     buf+=dec.decode(value,{stream:true});const lines=buf.split('\n');buf=lines.pop();
     for(let line of lines){
-      line=line.trim();if(!line.startsWith('data:'))continue;const d=line.slice(5).trim();if(!d||d==='[DONE]')continue;
+      line=line.trim();if(!line.startsWith('data:'))continue;const d=line.slice(5).trim();if(d==='[DONE]')sawDone=true;if(!d||d==='[DONE]')continue;
       let j;try{j=JSON.parse(d)}catch{continue}
       if(j.error)throw new Error(j.error.message||JSON.stringify(j.error));
       const dl=j.choices?.[0]?.delta||{},t=dl.content??j.choices?.[0]?.text??'',th=dl.reasoning||dl.reasoning_content||'';
@@ -1000,7 +1000,8 @@ async function callApiRaw(api,messages,signal,onText,o={}){
       usage=usageOf(j.usage)||usage;finish=j.choices?.[0]?.finish_reason||finish;
     }
   }
-  return {text:out,toolCalls:calls.filter(Boolean).map((c,i)=>({...c,id:c.id||`call_${i}_${uid()}`})),usage,finish,thought};
+  // ended: false when the connection just stopped (e.g. the phone cut it while Hearth was in the background)
+  return {text:out,toolCalls:calls.filter(Boolean).map((c,i)=>({...c,id:c.id||`call_${i}_${uid()}`})),usage,finish,thought,ended:sawDone||!!finish};
 }
 
 /* ---------- web lookups: the AI can search Wikipedia / Fandom wikis through tools ---------- */
@@ -1407,6 +1408,13 @@ function openGallery(c,chatId){
 
 /* ---------- router ---------- */
 let H={},SH={},dirty=false,prevHash='',skipRoute=false,GEN=null,curChat=null,chatMsgRedraw=null;
+// Phones pause a page in the background and often cut its connections, which breaks a reply being written.
+// GEN.bg: Hearth went to the background during this reply; whenBack: what to do once it's on screen again.
+let whenBack=null;
+document.addEventListener('visibilitychange',()=>{if(document.hidden){if(GEN)GEN.bg=true}else if(whenBack){const f=whenBack;whenBack=null;setTimeout(f,500)}});
+// a broken connection, not an answer from the proxy (those have a status)
+const netBreak=e=>!!e&&!e.status&&(e.name==='TypeError'||e.name==='AbortError'||/network|fetch|load failed|connection|stream|aborted|terminated/i.test(e.message||''));
+const BG_TRIES=2; // times in a row Hearth picks a reply up again by itself
 let view=$('#view');const navStack=[];
 function markDirty(){if(location.hash.startsWith('#/edit/'))dirty=true}
 function route(){
@@ -2717,14 +2725,14 @@ async function vChat(id){
   function updateSend(){const b=$('#sendbtn');if(!b)return;const g=GEN&&GEN.chatId===chat.id;b.innerHTML=g?I.stop:I.send;b.classList.toggle('stop',!!g)}
   // image story turn: one JSON reply with a message, maybe an image, and a suggested next scene
   // notes: {want, avoid} from "Redo with notes"
-  async function storyGenerate(mode,notes){
+  async function storyGenerate(mode,notes,tries=0){
     const api=activeApi();if(!api){toast('Add an API / proxy in Settings first',4000);return}
     if(GEN){toast('Already working on it');return}
     let idx,m;
     if(mode==='swipe'){idx=chat.messages.length-1;m=chat.messages[idx];m.swipes.push('');m.sw=m.swipes.length-1}
     else{m={id:uid(),role:'assistant',swipes:[''],sw:0,time:Date.now(),av:char.avatarMode==='reply'?pickAv(char):undefined};chat.messages.push(m);idx=chat.messages.length-1}
     GEN={chatId:chat.id,idx,ctrl:new AbortController(),status:'Building the prompts…'};renderMsgs(true);updateSend();
-    let failed=null,ok=false;
+    const g=GEN;let failed=null,ok=false;
     try{
       const history=chat.messages.slice(0,idx),prompt=imageStoryPrompt(chat,char,history,notes&&{...notes,prev:notes.sw!=null?{reply:m.swipes[notes.sw],img:m.imgs?.[notes.sw],story:m.story?.[notes.sw]}:null});
       const r=await callJson(api,[{role:'system',content:SYS_STORY},{role:'user',content:prompt}],GEN.ctrl.signal,{maxTokens:Math.max(2500,+S.settings.maxTokens||0)});
@@ -2737,15 +2745,21 @@ async function vChat(id){
       if(str(j.outline).trim())chat.storyOutline=str(j.outline).trim();
       if(panelOk(img))addImage(chat,[img],txt([...history].reverse().find(x=>x.role==='user')||{swipes:[''],sw:0}),'story',m.usage[m.sw]);
       ok=true;
-    }catch(e){if(e.name!=='AbortError')failed=e}
+    }catch(e){if(!(e.name==='AbortError'&&g.ctrl.signal.aborted))failed=e}
+    // cut off while Hearth was in the background: ask again once it's back on screen
+    const broke=!ok&&g.bg&&netBreak(failed)&&tries<BG_TRIES;if(broke)failed=null;
     if(!ok){if(mode==='swipe'){m.swipes.pop();m.sw=m.swipes.length-1;for(const k of ['imgs','next','usage','story','remake'])m[k]?.splice(m.swipes.length)}else chat.messages.splice(idx,1)}
     GEN=null;await saveChat(chat);
     if(curChat===chat){renderMsgs(true);updateSend()}
+    if(broke)resumeLater(()=>storyGenerate(mode,notes,tries+1),'Asking again: the answer was cut off while Hearth was in the background…');
     if(failed)openSheet(`<h2 class="err">Couldn't build the prompts</h2><div class="box pre small">${esc(failed.message)}</div><br><button class="btn ghost block" data-act="close">Close</button>`);
   }
   // left: how many more times a reply cut off by the token limit is continued automatically (Settings → Generation)
   // notes (swipe only): {want, avoid, keep, sw} from "Redo with notes": a new version of reply version sw that follows them
-  async function generate(mode,left=+(S.settings.autoContinue??2)||0,notes=null){
+  // when Hearth is on screen again (now, if it already is), if this chat is still open and nothing else is being written
+  const resumeLater=(fn,note)=>{const go=()=>{if(curChat!==chat||GEN)return;toast(note,4000);fn()};if(document.hidden)whenBack=go;else setTimeout(go,600)};
+  // tries: replies picked up again by themselves after the phone cut them off in the background
+  async function generate(mode,left=+(S.settings.autoContinue??2)||0,notes=null,tries=0){
     if(story)return storyGenerate(mode==='continue'?'new':mode);
     const api=activeApi();if(!api){toast('Add an API / proxy in Settings first',4000);return}
     if(GEN){toast('Already generating a reply');return}
@@ -2763,7 +2777,7 @@ async function vChat(id){
     lastLore.set(chat.id,lore);
     if(errs.length)toast('Script error — '+errs[0],5000);
     GEN={chatId:chat.id,idx,ctrl:new AbortController(),status:''};renderMsgs(true);updateSend();
-    let failed=null;const lookups=[];
+    const g=GEN;let failed=null,ended=true;const lookups=[];
     // the continuation picks up mid-sentence (no gap), after a word (a space) or after a finished sentence (a new paragraph)
     const join=t=>{if(base==null)return t;const b=base.trimEnd();
       return b+(!t||/^[\s.,!?;:…'"’”)\]—-]/.test(t)||/[\s(\[“—-]$/.test(base)?'':/[.!?…"”*)]$/.test(b)?'\n\n':' ')+t};
@@ -2789,7 +2803,7 @@ async function vChat(id){
       const onThink=()=>{if(!/^Thinking/.test(GEN.status)){GEN.status='Thinking…';updateOne(idx)}};
       for(let round=0;;round++){
         const useTools=!!tools&&round<(+S.settings.webRounds||3);let r;sent=msgs;
-        try{r=await callApi(api,msgs,GEN.ctrl.signal,onText,{...(useTools?{tools}:{}),onThink,moreRoom});count(r);finish=r.finish||'';thought=r.thought||0}
+        try{r=await callApi(api,msgs,GEN.ctrl.signal,onText,{...(useTools?{tools}:{}),onThink,moreRoom});count(r);finish=r.finish||'';thought=r.thought||0;ended=r.ended!==false}
         catch(e){
           // proxies or models without tool support: answer without web lookups
           if(useTools&&round===0&&(e.status===400||e.status===422||/tool|function/i.test(e.message))){tools=null;toast("This model or proxy can't do web lookups. Replying without them.",4500);continue}
@@ -2809,26 +2823,31 @@ async function vChat(id){
         GEN.status='Writing reply…';updateOne(idx);
       }
     }
-    catch(e){if(e.name!=='AbortError')failed=e;else{count(null);aborted=true}}
+    catch(e){if(e.name==='AbortError'&&g.ctrl.signal.aborted){count(null);aborted=true}else failed=e}
+    // cut off while Hearth was in the background (an error, or a stream that just stopped): no error, it goes on when Hearth is back
+    const broke=g.bg&&!aborted&&(failed?netBreak(failed):!ended)&&tries<BG_TRIES;if(broke){if(failed)count(null);failed=null}
     let out=m.swipes[m.sw]||'';
     if(base!=null){out=out.slice(base.trimEnd().length);if(!stripThink(out).trim())out=''} // only the new part
     out=out.replace(new RegExp('^\\s*'+char.name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+':\\s*'),'').trimEnd();
     m.swipes[m.sw]=base!=null?(out?join(out.trimStart()):base):out;
-    if(base!=null&&!out){if(!failed&&GEN&&!GEN.ctrl.signal.aborted)failed=new Error('The model wrote nothing more. Try again, or regenerate the reply.')}
+    if(base!=null&&!out){if(!failed&&!broke&&GEN&&!GEN.ctrl.signal.aborted)failed=new Error('The model wrote nothing more. Try again, or regenerate the reply.')}
     else if(!stripThink(out).trim()){
       if(mode==='swipe'){m.swipes.pop();m.sw=m.swipes.length-1;m.lookups?.splice(m.swipes.length);m.usage?.splice(m.swipes.length);m.cut?.splice(m.swipes.length)}else chat.messages.splice(idx,1);
-      if(!failed&&GEN&&!GEN.ctrl.signal.aborted)failed=new Error(thought
+      if(!failed&&!broke&&GEN&&!GEN.ctrl.signal.aborted)failed=new Error(thought
         ?'The model spent all its room thinking and wrote no reply. In Settings → Generation, set Thinking effort to Low or raise Room for thinking.'
         :'The proxy returned an empty reply. Try again, raise max tokens, or check the model name.');
     }else{chat.vars=ctx.vars;if(lookups.length){(m.lookups??=[])[m.sw]=[...(base!=null&&m.lookups?.[m.sw]||[]),...lookups]}else if(base==null&&m.lookups)m.lookups[m.sw]=null;
       // a continued reply adds its tokens and cost to the reply's own
       const pu=base!=null&&m.usage?.[m.sw];(m.usage??=[])[m.sw]=pu?addCost({in:pu.in+tok.in,out:pu.out+tok.out,est:pu.est||tok.est,cost:pu.cost,costEst:pu.costEst},tok):tok;
       // stopped by the user or by the max-tokens limit: offer Continue
-      const cut=aborted||/length|max_tokens/i.test(finish);if(cut||m.cut)(m.cut??=[])[m.sw]=cut}
+      const cut=aborted||broke||/length|max_tokens/i.test(finish);if(cut||m.cut)(m.cut??=[])[m.sw]=cut}
     const more=!failed&&!aborted&&left>0&&/length|max_tokens/i.test(finish)&&m.cut?.[m.sw];
     GEN=null;await saveChat(chat);
     if(curChat===chat){renderMsgs();const el=msgsEl();if(el)el.scrollTop=el.scrollHeight;updateSend()}
     if(more)return generate('continue',left-1); // scene and memory update after the last part
+    // what arrived stays: continue it; nothing arrived: ask again the same way
+    if(broke){const next=chat.messages.at(-1)===m&&stripThink(txt(m)).trim()?'continue':mode;
+      return resumeLater(()=>generate(next,left,next==='swipe'?notes:null,tries+1),next==='continue'?'Continuing the reply that was cut off while Hearth was in the background…':'Asking again: the reply was cut off while Hearth was in the background…')}
     if(!failed&&S.settings.trackScene!==false)updateScene(chat,char,{redo:mode==='swipe'}).then(s=>{if(s&&curChat===chat&&chat.messages[idx]===m)updateOne(idx)}).catch(e=>console.warn('Scene update failed:',e));
     if(!failed&&S.settings.autoMemory&&chat.messages.length-Math.min(chat.memoryAt||0,chat.messages.length)>=(+S.settings.memoryEvery||20))
       updateMemory(chat,char).then(m=>{if(m)toast('Chat memory updated')}).catch(e=>console.warn('Memory update failed:',e));
