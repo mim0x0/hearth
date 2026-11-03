@@ -401,7 +401,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.42.2',HEARTH_DATE='2026-11-03';
+const HEARTH_VERSION='1.42.3',HEARTH_DATE='2026-11-03';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiNoMark:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -3313,8 +3313,8 @@ Return one JSON object only: {"panels":[${panelJson('sections')}]}`,undefined,20
   }else p=clone(panel);
   // their Looks word for word, whatever the AI wrote
   // (a person you kept stays exactly as they were, whatever the AI did)
-  if(boxes)p.characters=p.characters.map((c,i)=>{const w=who[i];if(!w)return {...panel.characters[i]};c.name=w.name;c.prompt=asCharacter(c.prompt,w);return c});
-  else if(who[0])p.base=asCharacter(p.base,{...who[0],imageTags:String(who[0].imageTags||'').split(',').filter(t=>!/^s*(girl|boy|other)s*$/i.test(t)).join(',')},COUNT_RX); // the base already says 1girl
+  if(boxes)p.characters=p.characters.map((c,i)=>{const w=who[i];if(!w)return {...panel.characters[i]};c.name=w.name;c.prompt=asCharacter(c.prompt,w,undefined,p.base);return c});
+  else if(who[0])p.base=asCharacter(p.base,{...who[0],imageTags:String(who[0].imageTags||'').split(',').filter(t=>!/^\s*(girl|boy|other)\s*$/i.test(t)).join(',')},COUNT_RX); // the base already says 1girl
   return {panel:fixUndesired(p,who.filter(Boolean)),usage};
 }
 // One sections block per panel, each with its own Copy button; T collects the texts the buttons copy.
@@ -4612,13 +4612,26 @@ const idKind=t=>{const n=normTag(t);
 };
 // Makes a person's prompt use the character's Looks word for word: their Looks go right after girl / boy / other, in their own order;
 // the AI's versions of those tags, and hair, eye or skin tags that contradict them, are dropped. Clothes, pose and expression stay.
-function asCharacter(prompt,c,lead0=/^(girl|boy|other)$/i){
-  const looks=String(c?.imageTags||'').split(',').map(t=>t.trim()).filter(t=>t&&!/^\d+(girl|boy)s?$/i.test(t));if(!looks.length)return prompt;
+// frame: the rest of the picture's prompt (the base), which says how much of the body the shot shows.
+function asCharacter(prompt,c,lead0=/^(girl|boy|other)$/i,frame=''){
+  const looks=inFrame(String(c?.imageTags||'').split(',').map(t=>t.trim()).filter(t=>t&&!/^\d+(girl|boy)s?$/i.test(t)),frame+','+prompt);if(!looks.length)return prompt;
   const mine=new Set(looks.map(normTag)),kinds=new Set(looks.map(idKind).filter(Boolean));
   const seen=new Set(),parts=String(prompt).split(',').map(t=>t.trim()).filter(t=>t&&!seen.has(normTag(t))&&seen.add(normTag(t)));
   const kept=parts.filter(t=>{const n=normTag(t),k=idKind(t);return !mine.has(n)&&!(k&&(kinds.has(k)||k==='who'))});
   const lead=[];while(kept.length&&lead0.test(kept[0]))lead.push(kept.shift());
   return [...lead,...looks,...kept].join(', ');
+}
+// Looks tags for parts of the body the shot leaves out: a close-up gets no shoes, socks, legwear or skirt, an upper body shot
+// no shoes or legwear, a cowboy shot no shoes. They would pull the camera back to fit them in. A full body or wide shot keeps all.
+const LOOK_FEET=/\b(shoes|boots|footwear|sneakers|heels|sandals|loafers|slippers|mary janes|geta|socks|barefoot|anklets?|toenails?|toes)\b/,
+  LOOK_LEGS=/\b(thighhighs|kneehighs|pantyhose|legwear|stockings|leggings|garters?|garter belt|thigh strap|knee pads|legs|thighs)\b/,
+  LOOK_HIPS=/\b(skirt|miniskirt|pants|shorts|jeans|trousers|hakama|belt|hips)\b/;
+function inFrame(looks,frame){
+  const f=String(frame).toLowerCase().replace(/-?\d*\.?\d+::|::/g,'');
+  if(/\b(full body|wide shot|very wide shot|feet|foot focus|legs focus)\b/.test(f))return looks;
+  const out=/\b(close-up|portrait|face focus|eye focus|eyes focus|headshot)\b/.test(f)?[LOOK_FEET,LOOK_LEGS,LOOK_HIPS]
+    :/\bupper body\b/.test(f)?[LOOK_FEET,LOOK_LEGS]:/\bcowboy shot\b/.test(f)?[LOOK_FEET]:[];
+  return out.length?looks.filter(t=>{const b=t.replace(/-?\d*\.?\d+::|::/g,'').toLowerCase();return !out.some(re=>re.test(b))}):looks;
 }
 // Every image prompt: the user's characters named in it get their Looks locked in. single: in a one-character chat,
 // the only person in the picture is that character even when the AI left the name out (also for all-in-one-box prompts).
@@ -4626,9 +4639,9 @@ function lockLooks(p,cast,single){
   const withLooks=cast.filter(c=>c.imageTags?.trim());if(!withLooks.length)return p;
   const first=n=>String(n).toLowerCase().split(/\s+/)[0],byName=n=>n&&withLooks.find(c=>c.name.toLowerCase()===String(n).toLowerCase()||first(c.name)===first(n));
   const solo=single?.imageTags?.trim()?single:null;
-  if(p.onebox){const seg=p.onebox.split('|');if(seg.length===2&&solo){seg[1]=' '+asCharacter(seg[1].trim(),solo);p.onebox=seg.join('|')}return p}
+  if(p.onebox){const seg=p.onebox.split('|');if(seg.length===2&&solo){seg[1]=' '+asCharacter(seg[1].trim(),solo,undefined,seg[0]);p.onebox=seg.join('|')}return p}
   const alone=p.characters.length===1&&!byName(p.characters[0].name)?solo:null;
-  for(const c of p.characters){const who=byName(c.name)||alone;if(who){c.name=who.name;c.prompt=asCharacter(c.prompt,who)}}
+  for(const c of p.characters){const who=byName(c.name)||alone;if(who){c.name=who.name;c.prompt=asCharacter(c.prompt,who,undefined,p.base)}}
   return p;
 }
 // the image prompt steps every new prompt goes through
@@ -4697,8 +4710,8 @@ Return one JSON object only: ${split?`{"panels":[${one}, ...]} with one entry pe
     if(o.mine){
       // models often keep the original person's look anyway, so the character's identity tags are put in by hand.
       // An unnamed person only counts as the main character in a single picture, never across separate panels.
-      if(p.onebox){const seg=p.onebox.split('|');if(seg.length===2&&cast[0]?.imageTags&&!split){seg[1]=' '+asCharacter(seg[1].trim(),cast[0]);p.onebox=seg.join('|')}}
-      else p.characters.forEach((c,i)=>{const who=byName(c.name)||(!split&&i===0&&!p.characters.some(x=>byName(x.name))?cast[0]:null);if(who){c.name=who.name;c.prompt=asCharacter(c.prompt,who)}});
+      if(p.onebox){const seg=p.onebox.split('|');if(seg.length===2&&cast[0]?.imageTags&&!split){seg[1]=' '+asCharacter(seg[1].trim(),cast[0],undefined,seg[0]);p.onebox=seg.join('|')}}
+      else p.characters.forEach((c,i)=>{const who=byName(c.name)||(!split&&i===0&&!p.characters.some(x=>byName(x.name))?cast[0]:null);if(who){c.name=who.name;c.prompt=asCharacter(c.prompt,who,undefined,p.base)}});
     }
     // the character's looks never belong in undesired, whether or not the people are the user's characters
     fixUndesired(p,cast);
