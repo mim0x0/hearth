@@ -401,7 +401,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.46.1',HEARTH_DATE='2026-11-03';
+const HEARTH_VERSION='1.46.2',HEARTH_DATE='2026-11-03';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiNoMark:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -3218,7 +3218,7 @@ ${oneBox?`- Write everything as ONE prompt: the base prompt first, then each cha
 - Undesired content: a short list of things to avoid in this image; the user adds their standard undesired tags themselves. Never put anything there that a character in the image has or does (their hair, eyes, clothes or other features), and nothing that appears in the prompts.
 ${oneBox?'':`- Position: a short hint for NovelAI's Character Positions canvas, like "left, foreground".\n`}${user}
 ${o.noCast?'':`
-CHARACTERS (keep their look the same in every image. Looks and Usual outfit win over descriptions: when a description mentions other clothes, use the Usual outfit. Only the scene itself, or an "In this scenario" note, can change what they wear):
+CHARACTERS (keep their look the same in every image. Each Looks belongs to that character only: never give it to anyone else in the picture. Looks and Usual outfit win over descriptions: when a description mentions other clothes, use the Usual outfit. Only the scene itself, or an "In this scenario" note, can change what they wear):
 ${cast.map(c=>`### ${c.name}\n${c.imageTags?`Looks (copy exactly, in this order, right after girl / boy / other): ${c.imageTags}`:`Description: ${(c.personality||'').slice(0,1500)}`}${c.outfitTags?`\nUsual outfit (use exactly, unless the scene calls for other clothes): ${c.outfitTags}`:''}${castNote(scn,c.id)?`\nIn this scenario (can change their age, clothes or look): ${castNote(scn,c.id)}`:''}`).join('\n\n')}
 ${char.kind==='world'?`\nWORLD (other characters may appear too): ${(char.personality||'').slice(0,2500)}\n${worldLinks(char,scn)?worldLinks(char,scn)+'\n':''}`
   :cw?`\nWORLD ${char.name} LIVES IN (${cw.name}): ${(cw.personality||'').slice(0,1500)}\n${ownLinks(cw,char).length?`${char.name}'s relationships:\n${ownLinks(cw,char).join('\n')}\n`:''}`:''}`}${loreBlock(o.lore,true)}${o.story?storyPreset(chat,char):''}`;
@@ -3270,7 +3270,8 @@ function fixUndesired(p,cast=[]){
   p.undesired=keep(p.undesired,new Set([...tagsOf(p.base),...tagsOf(p.onebox),...p.characters.flatMap(c=>tagsOf(c.prompt))]),cast);
   // a character's own undesired may hold the looks of the OTHER characters drawn with them (that stops traits leaking), nothing else of the cast
   const named=p.characters.map(c=>byName(c.name));
-  p.characters.forEach((c,i)=>{const others=named.filter((x,k)=>x&&k!==i&&x!==named[i]);c.undesired=keep(c.undesired,new Set(tagsOf(c.prompt)),cast.filter(x=>!others.includes(x)))});
+  // (a side character, named but not one of the cast, may hold any of the cast's looks)
+  p.characters.forEach((c,i)=>{const others=!named[i]&&!NO_NAME.test(c.name.trim())?cast:named.filter((x,k)=>x&&k!==i&&x!==named[i]);c.undesired=keep(c.undesired,new Set(tagsOf(c.prompt)),cast.filter(x=>!others.includes(x)))});
   return p;
 }
 function cleanPanels(j){
@@ -4774,8 +4775,22 @@ function headOut(p){
 const NO_NAME=/^(girl|boy|other|woman|man|person|someone|character|main character|protagonist|she|he|her|him|they|unknown|none|n\/a|char|\{\{char\}\}|1girl|1boy)?$/i;
 function otherLook(prompt,c){
   const looks=tagsOf(c.imageTags),mine=new Set(looks),kinds=new Set(looks.map(idKind).filter(k=>k&&k!=='length'));
-  const by={};for(const t of tagsOf(prompt)){const k=idKind(t);if(kinds.has(k))(by[k]??=[]).push(t)}
+  const tags=tagsOf(prompt),sex=ts=>ts.find(t=>/^(girl|boy)$/.test(t));
+  if(sex(tags)&&sex(looks)&&sex(tags)!==sex(looks))return true;
+  const by={};for(const t of tags){const k=idKind(t);if(kinds.has(k))(by[k]??=[]).push(t)}
   return Object.values(by).some(ts=>!ts.some(t=>mine.has(t)));
+}
+// the AI sometimes gives a side character the Looks of one of the user's characters: they're taken out, and that
+// character's hair, eyes and character tag go in the side character's undesired so NovelAI doesn't draw them anyway
+function unborrow(c,withLooks){
+  const have=new Set(tagsOf(c.prompt));
+  for(const m of withLooks){
+    const lt=tagsOf(m.imageTags).filter(t=>!/^\d*(girl|boy|other)s?$/.test(t)),hits=lt.filter(t=>have.has(t));
+    if(hits.length<3||hits.length<lt.length/2)continue;
+    const drop=new Set(hits);
+    c.prompt=c.prompt.split(',').filter(t=>!drop.has(normTag(t))).map(t=>t.trim()).filter(Boolean).join(', ');
+    c.undesired=joinTags(c.undesired,...hits.filter(t=>idKind(t)&&idKind(t)!=='length'&&!tagsOf(c.undesired).includes(t)));
+  }
 }
 function lockLooks(p,cast,single){
   const withLooks=cast.filter(c=>c.imageTags?.trim());if(!withLooks.length)return p;
@@ -4784,7 +4799,8 @@ function lockLooks(p,cast,single){
   if(p.onebox){const seg=p.onebox.split('|');if(seg.length===2&&solo&&!otherLook(seg[1],solo)){seg[1]=' '+asCharacter(seg[1].trim(),solo,undefined,seg[0]);p.onebox=seg.join('|')}return p}
   const one=p.characters.length===1&&p.characters[0];
   const alone=one&&!byName(one.name)&&NO_NAME.test(String(one.name||'').trim())&&!otherLook(one.prompt,solo||{})?solo:null;
-  for(const c of p.characters){const who=byName(c.name)||alone;if(who){c.name=who.name;c.prompt=asCharacter(c.prompt,who,undefined,p.base)}}
+  for(const c of p.characters){const who=byName(c.name)||alone;if(who){c.name=who.name;c.prompt=asCharacter(c.prompt,who,undefined,p.base)}
+    else if(!NO_NAME.test(c.name.trim()))unborrow(c,withLooks)}
   return p;
 }
 // the image prompt steps every new prompt goes through
