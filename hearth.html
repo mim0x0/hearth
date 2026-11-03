@@ -401,7 +401,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.45.3',HEARTH_DATE='2026-11-03';
+const HEARTH_VERSION='1.45.4',HEARTH_DATE='2026-11-03';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiNoMark:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -3923,7 +3923,7 @@ ${!page&&c.insets?`- Insets: a big panel may have one small inset, a small frame
 // a character reaching out of their frame, for pictures where NovelAI draws the frames itself (whole pages, insets)
 const OUTSIDE_BORDER='Breaking the frame: on the strongest beat (a punch, a leap, a shout, a big reveal), now and then let one character, or their fist, weapon or hair, reach out of their panel over the border into the gutter or the next panel. Then add outside border to the base prompt and say it in the sentence for that panel (like "Panel 3, big: she leaps out of the frame toward the reader"). At most once per page and not on every page; calm pages keep everyone inside their frames.';
 // what goes in "words": the story is told by them, mostly by what the characters say and think
-const comicWordsRule=chat=>`- Words: the "words" of each panel tell the story, because they are written under the page instead of in the picture. Mostly they are what the characters say and think: in almost every panel someone speaks or thinks. Write each line on its own line, speech as Name: "line" and thoughts as Name (thinks): "line"; in a fight, battle cries, taunts, gasps, orders and quick thoughts. Add a short narration line (${storyVoice(chat)}) only now and then: a new place, a time jump, or something nobody says aloud. Narration alone is not enough for a page. Give every panel its words, one to four lines; at most one panel per page may be silent, and only on purpose (a wordless reaction or a big splash).`;
+const comicWordsRule=chat=>`- Words: the "words" of each panel tell the story, because they are written under the page instead of in the picture. Mostly they are what the characters say and think: in almost every panel someone speaks or thinks. Write each line on its own line, speech as Name: "line" and thoughts as Name (thinks): "line"; in a fight, battle cries, taunts, gasps, orders and quick thoughts. Add a short narration line (${storyVoice(chat)}), as plain text with no label like Narration:, only now and then: a new place, a time jump, or something nobody says aloud. Narration alone is not enough for a page. Give every panel its words, one to four lines; at most one panel per page may be silent, and only on purpose (a wordless reaction or a big splash).`;
 // the JSON shape of one planned page
 const COMIC_WORDS_JSON='"words":"Name: \\"line\\"\\nName (thinks): \\"line\\"\\nnarration"';
 const comicPageJson=chat=>(chat.comic.draw==='page'
@@ -3946,7 +3946,8 @@ function comicPage(j,chat,char){
   return pg;
 }
 // a panel's words as lines; the AI sometimes sends a list of lines, or of {name, line} objects
-const wordsText=v=>(Array.isArray(v)?v:[v]).map(l=>l&&typeof l==='object'?((n,t)=>n?`${n}${l.thinks||/thought|think/i.test(str(l.type))?' (thinks)':''}: "${t.replace(/^"|"$/g,'')}"`:t)(str(l.name||l.speaker||l.character).trim(),str(l.line||l.text||l.words||l.say).trim()):str(l).trim()).filter(Boolean).join('\n');
+const wordsText=v=>(Array.isArray(v)?v:[v]).map(l=>l&&typeof l==='object'?((n,t)=>n?`${n}${l.thinks||/thought|think/i.test(str(l.type))?' (thinks)':''}: "${t.replace(/^"|"$/g,'')}"`:t)(str(l.name||l.speaker||l.character).trim(),str(l.line||l.text||l.words||l.say).trim()):str(l).trim()).filter(Boolean).join('\n')
+  .split('\n').map(l=>unlabel(l.trim())).filter(l=>l&&!/^(narration|narrator)$/i.test(l)).join('\n'); // narration without its label
 // the words under the page: one paragraph per panel, the speakers in bold
 const comicWords=pg=>pg.panels.map((x,k)=>x.words?`**${k+1}.** ${x.words.replace(/^([^\n:"“*]{1,40}):\s*/gm,'**$1:** ')}`:'').filter(Boolean).join('\n\n');
 // a planned page as its message's fields: the prompt kept as its image (the whole page, or the first panel standing for it) and the words as its story text
@@ -3979,9 +3980,13 @@ const letterFont=()=>letterFontP??=(async()=>{try{
     await new Promise(ok=>{l.onload=l.onerror=ok;setTimeout(ok,4000)})}
   await Promise.race([document.fonts.load('700 20px "Comic Neue"','AB'),new Promise(ok=>setTimeout(ok,4000))]);
 }catch{}})();
-// a panel's words as bubbles: say (Name: "line"), think (Name (thinks): "line") or cap (narration)
+// a narration line's label (Narration:, Narrator:, [Caption]: …) is not part of what it says
+const NARR_RX=/^[\[(]?(narration|narrator|narrative|caption)[\])]?\s*:\s*/i;
+const unlabel=l=>{const t=l.replace(NARR_RX,'');return t===l?l:t.replace(/^["“]|["”]$/g,'').trim()};
+// a panel's words as bubbles: say (Name: "line"), think (Name (thinks): "line") or cap (narration).
+// A line that is only "narration" is the example in the instructions, copied by mistake.
 function letterLines(words){
-  return String(words||'').split('\n').map(l=>l.replace(/\*+/g,'').trim()).filter(Boolean).map(l=>{
+  return String(words||'').split('\n').map(l=>unlabel(l.replace(/\*+/g,'').trim())).filter(l=>l&&!/^(narration|narrator)$/i.test(l)).map(l=>{
     const r=l.match(/^([^:"“]{1,40}?)\s*(\((?:thinks?|thinking|thoughts?)\))?\s*:\s*["“](.+?)["”]?\s*$/i);
     return r?{kind:r[2]?'think':'say',who:r[1].trim(),text:r[3].trim()}:{kind:'cap',text:l.replace(/^["“]|["”]$/g,'')}});
 }
