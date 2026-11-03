@@ -401,7 +401,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.45.1',HEARTH_DATE='2026-11-03';
+const HEARTH_VERSION='1.45.2',HEARTH_DATE='2026-11-03';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiNoMark:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -2826,18 +2826,28 @@ async function vChat(id){
       breset:async()=>{w.panels.forEach(x=>delete x.bub);await redraw()},
       bdone:async b=>{b.disabled=true;for(const k of ['letters','lsize'])if(w[k])pg[k]=w[k];else delete pg[k];pg.panels.forEach((x,n)=>{if(w.panels[n]?.bub)x.bub=w.panels[n].bub;else delete x.bub});await comicRebuild(m,m.sw);await saveChat(chat);closeSheet();renderMsgs();toast('Page updated')}
     },{modal:true});
-    cv.style.cssText='width:100%;display:block;border-radius:8px;touch-action:none;background:#fff';$('.bb-wrap',pn).append(cv);
+    cv.style.cssText='width:100%;display:block;border-radius:8px;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;background:#fff';$('.bb-wrap',pn).append(cv);
     $('#bb-on',pn).onchange=async e=>{if(e.target.checked)w.letters=true;else delete w.letters;$('#bb-box',pn).hidden=!w.letters;await redraw()};
     const at=e=>{const b=cv.getBoundingClientRect();return [(e.clientX-b.left)/b.width*cv.width,(e.clientY-b.top)/b.height*cv.height]};
-    cv.onpointerdown=e=>{if(!r)return;const [px,py]=at(e),hit=[...r.boxes].reverse().find(b=>px>=b.x-30&&px<=b.x+b.w+30&&py>=b.y-30&&py<=b.y+b.h+30);if(!hit)return;
-      e.preventDefault();cv.setPointerCapture?.(e.pointerId);drag={hit,dx:px-hit.cx,dy:py-hit.cy}};
-    cv.onpointermove=async e=>{if(!drag||busy)return;const [px,py]=at(e),{hit}=drag,rc=hit.rect,b=(w.panels[hit.panel].bub??=[]);
+    // a finger needs room: a bubble can be grabbed up to about 22 screen pixels around it, the nearest one first
+    const reach=()=>Math.max(30,22*cv.width/(cv.getBoundingClientRect().width||cv.width));
+    const near=(px,py)=>{const t=reach(),gap=b=>Math.hypot(Math.max(b.x-px,0,px-b.x-b.w),Math.max(b.y-py,0,py-b.y-b.h));
+      return [...r.boxes].reverse().filter(b=>gap(b)<=t).sort((a,b)=>gap(a)-gap(b))[0]};
+    // some phone browsers still scroll the sheet under touch-action:none, so the touch is held while a bubble moves
+    cv.addEventListener('touchstart',e=>{if(drag)e.preventDefault()},{passive:false});
+    cv.addEventListener('touchmove',e=>{if(drag)e.preventDefault()},{passive:false});
+    cv.onpointerdown=e=>{if(!r)return;const [px,py]=at(e),hit=near(px,py);if(!hit)return;
+      e.preventDefault();try{cv.setPointerCapture?.(e.pointerId)}catch{}drag={hit,dx:px-hit.cx,dy:py-hit.cy}};
+    cv.onpointermove=async e=>{if(!drag)return;e.preventDefault();const [px,py]=at(e),d=drag,{hit}=d,rc=hit.rect,b=(w.panels[hit.panel].bub??=[]);
       // the other bubbles of the panel stay where they are now, so nothing jumps when one is moved
       r.boxes.filter(o=>o.panel===hit.panel).forEach(o=>{b[o.k]??={x:(o.cx-rc.x)/rc.w,y:(o.cy-rc.y)/rc.h}});
       // a bubble may go over the panel's border and the gutter, as long as it stays on the page
       const lim=(v,half,max)=>Math.min(max-half-4,Math.max(half+4,v));
-      b[hit.k]={x:(lim(px-drag.dx,hit.w/2,cv.width)-rc.x)/rc.w,y:(lim(py-drag.dy,hit.h/2,cv.height)-rc.y)/rc.h};
-      busy=true;await redraw();busy=false;drag.hit=r.boxes.find(o=>o.panel===hit.panel&&o.k===hit.k)||hit};
+      b[hit.k]={x:(lim(px-d.dx,hit.w/2,cv.width)-rc.x)/rc.w,y:(lim(py-d.dy,hit.h/2,cv.height)-rc.y)/rc.h};
+      // a slow phone draws the newest place once the drawing before is done, so the bubble ends where the finger did
+      if(busy){d.more=true;return}
+      busy=true;try{do{d.more=false;await redraw()}while(d.more)}finally{busy=false}
+      d.hit=r.boxes.find(o=>o.panel===hit.panel&&o.k===hit.k)||hit};
     cv.onpointerup=cv.onpointercancel=()=>{drag=null};
     await redraw();
   }
