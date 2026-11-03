@@ -401,7 +401,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.45.0',HEARTH_DATE='2026-11-03';
+const HEARTH_VERSION='1.45.1',HEARTH_DATE='2026-11-03';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiNoMark:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -2834,7 +2834,9 @@ async function vChat(id){
     cv.onpointermove=async e=>{if(!drag||busy)return;const [px,py]=at(e),{hit}=drag,rc=hit.rect,b=(w.panels[hit.panel].bub??=[]);
       // the other bubbles of the panel stay where they are now, so nothing jumps when one is moved
       r.boxes.filter(o=>o.panel===hit.panel).forEach(o=>{b[o.k]??={x:(o.cx-rc.x)/rc.w,y:(o.cy-rc.y)/rc.h}});
-      b[hit.k]={x:Math.min(1,Math.max(0,(px-drag.dx-rc.x)/rc.w)),y:Math.min(1,Math.max(0,(py-drag.dy-rc.y)/rc.h))};
+      // a bubble may go over the panel's border and the gutter, as long as it stays on the page
+      const lim=(v,half,max)=>Math.min(max-half-4,Math.max(half+4,v));
+      b[hit.k]={x:(lim(px-drag.dx,hit.w/2,cv.width)-rc.x)/rc.w,y:(lim(py-drag.dy,hit.h/2,cv.height)-rc.y)/rc.h};
       busy=true;await redraw();busy=false;drag.hit=r.boxes.find(o=>o.panel===hit.panel&&o.k===hit.k)||hit};
     cv.onpointerup=cv.onpointercancel=()=>{drag=null};
     await redraw();
@@ -4071,10 +4073,9 @@ async function comicCanvas(pg,o={}){
   // a picture fills its shape (cropped a little at the sides, kept near the top where faces are)
   const fill=(img,r)=>{const s=Math.max(r.w/img.naturalWidth,r.h/img.naturalHeight),iw=img.naturalWidth*s,ih=img.naturalHeight*s;x.drawImage(img,r.x+(r.w-iw)/2,r.y+(r.h-ih)*.3,iw,ih)};
   const outline=(s,r)=>{x.beginPath();if(s.round)x.ellipse(r.x+r.w/2,r.y+r.h/2,r.w/2,r.h/2,0,0,Math.PI*2);else{x.moveTo(...s.pts[0]);s.pts.slice(1).forEach(p=>x.lineTo(...p));x.closePath()}};
-  const draw=s=>{const k=s.k,r=box(s.pts),sc={small:.85,big:1.2}[pg.lsize]||1;
-    x.save();outline(s,r);x.clip();fill(imgs[k],r);
-    if(pg.letters){const t=s.round?{x:r.x+r.w*.15,y:r.y+r.h*.12,w:r.w*.7,h:r.h*.76}:r;for(const b of letterPanel(x,P[k],t.x,t.y,t.w,t.h,sc))boxes.push({...b,panel:k,rect:t})}
-    x.restore();if(s.bleed)return;
+  const letters=[],draw=s=>{const k=s.k,r=box(s.pts),sc={small:.85,big:1.2}[pg.lsize]||1;
+    x.save();outline(s,r);x.clip();fill(imgs[k],r);x.restore();
+    if(pg.letters)letters.push({k,sc,t:s.round?{x:r.x+r.w*.15,y:r.y+r.h*.12,w:r.w*.7,h:r.h*.76}:r});if(s.bleed)return;
     if(s.over){outline(s,r);x.lineWidth=B+10;x.strokeStyle='#fff';x.stroke()}
     outline(s,r);x.lineWidth=B;x.strokeStyle='#111';x.stroke()};
   // a round panel is the largest oval in its own cell, whatever the gutters around it do
@@ -4084,6 +4085,8 @@ async function comicCanvas(pg,o={}){
     let w=hr.w*(hr.w>W*.6?.34:.46),h=w/ar;if(h>hr.h*.55){h=hr.h*.55;w=h*ar}
     const m=Math.max(22,B*5),x1=Math.min(hr.x+hr.w,CW-M)-m,y1=Math.min(hr.y+hr.h,c.height-M)-m;
     draw({k,over:true,pts:[[x1-w,y1-h],[x1,y1-h],[x1,y1],[x1-w,y1]]})}
+  // the bubbles last, over every panel and frame, so one can cross a border; in reading order, later ones on top
+  for(const l of letters.sort((a,b)=>a.k-b.k))for(const b of letterPanel(x,P[l.k],l.t.x,l.t.y,l.t.w,l.t.h,l.sc))boxes.push({...b,panel:l.k,rect:l.t});
   return {c,imgs,boxes};
 }
 async function buildComicPage(pg){const r=await comicCanvas(pg);return r?r.c.toDataURL('image/jpeg',.9):null}
