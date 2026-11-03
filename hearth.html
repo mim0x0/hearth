@@ -142,6 +142,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .composer textarea{min-height:44px;max-height:40vh;resize:none;border-radius:22px;padding:11px 16px;background:var(--bg)}
 .composer .btn{width:44px;height:44px;border-radius:50%;padding:0;flex:none}
 .composer .btn.stop{background:var(--danger)}
+.composer .pgbtn{width:auto;min-width:44px;border-radius:22px;padding:0 10px;font-size:12px;line-height:1.1;background:var(--bg);color:var(--muted);border:1px solid var(--line)}.composer .pgbtn.on{background:var(--accent);color:#fff;border-color:transparent}
 
 .entry{margin-bottom:8px;padding:10px 12px}
 .entry>summary{display:flex;gap:6px;align-items:center;font-weight:600;cursor:pointer;list-style:none}
@@ -401,7 +402,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.47.0',HEARTH_DATE='2026-11-04';
+const HEARTH_VERSION='1.48.0',HEARTH_DATE='2026-11-04';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiNoMark:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -2727,7 +2728,7 @@ async function vChat(id){
     ${story?`<div class="vtabs"><button data-act="vmode" data-v="" class="${reader()?'':'on'}">${I.code} Prompts</button><button data-act="vmode" data-v="story" class="${reader()?'on':''}">${I.book} Story</button></div>`:''}
     <div class="msgwrap"><div class="msgs" id="msgs"></div><button class="jump" id="jump" data-act="jump" hidden></button></div>
     ${story&&!reader()?`<div class="ipbar"><span class="small muted" title="Image preset">${I.img} Preset</span>${presetSelect()}<button class="btn ghost sm" data-act="ipred" title="Edit this preset">${I.edit}</button><button class="btn ghost sm" data-act="ipdup" title="Make a copy to change">${I.copy}</button><button class="btn ghost sm" data-act="ipnew" title="New preset">${I.plus}</button></div>`:''}
-    <div class="composer" ${reader()?'hidden':''}><textarea id="inp" rows="1" placeholder="${story?'Describe a scene, ask for a change, or say next…':`Message ${esc(char.name)}…`}"></textarea><button class="btn" id="sendbtn" data-act="send">${I.send}</button></div></div>`;
+    <div class="composer" ${reader()?'hidden':''}>${story&&chat.comic?`<button type="button" class="btn pgbtn" id="cpages" data-act="pgs" data-n="1" title="How many pages your next message becomes. Tap to change.">1<br>page</button>`:''}<textarea id="inp" rows="1" placeholder="${story?'Describe a scene, ask for a change, or say next…':`Message ${esc(char.name)}…`}"></textarea><button class="btn" id="sendbtn" data-act="send">${I.send}</button></div></div>`;
     const ipr=$('.ipbar .ip-pr',view);if(ipr)ipr.onchange=e=>{S.settings.imgPreset=e.target.value;saveSettings();presetChanged()};
     hydrate($('.top',view));renderMsgs(true);jumpToMsg(chat);if(chat.origin&&!chat.origin.msgId)linkScene(chat).then(()=>curChat===chat&&renderMsgs());
     let jt=0;$('#msgs').addEventListener('scroll',()=>{clearTimeout(jt);jt=setTimeout(updateJump,60)},{passive:true});
@@ -2772,18 +2773,35 @@ async function vChat(id){
   function updateSend(){const b=$('#sendbtn');if(!b)return;const g=GEN&&GEN.chatId===chat.id;b.innerHTML=g?I.stop:I.send;b.classList.toggle('stop',!!g)}
   // image story turn: one JSON reply with a message, maybe an image, and a suggested next scene
   // notes: {want, avoid} from "Redo with notes"
-  async function storyGenerate(mode,notes,tries=0){
+  // pages: a comic turn spread over that many pages, each in its own message (m.part = [page, of pages])
+  async function storyGenerate(mode,notes,tries=0,pages=1){
     const api=activeApi();if(!api){toast('Add an API / proxy in Settings first',4000);return}
     if(GEN){toast('Already working on it');return}
-    let idx,m;
+    let idx,m;const added=[];
     if(mode==='swipe'){idx=chat.messages.length-1;m=chat.messages[idx];m.swipes.push('');m.sw=m.swipes.length-1}
     else{m={id:uid(),role:'assistant',swipes:[''],sw:0,time:Date.now(),av:char.avatarMode==='reply'?pickAv(char):undefined};chat.messages.push(m);idx=chat.messages.length-1}
-    GEN={chatId:chat.id,idx,ctrl:new AbortController(),status:'Building the prompts…'};renderMsgs(true);updateSend();
+    const many=!!chat.comic&&mode!=='swipe'&&pages>1;
+    GEN={chatId:chat.id,idx,ctrl:new AbortController(),status:many?`Planning ${pages} pages…`:'Building the prompts…'};renderMsgs(true);updateSend();
     const g=GEN;let failed=null,ok=false;
     try{
-      const comic=!!chat.comic,history=chat.messages.slice(0,idx),prompt=(comic?comicStoryPrompt:imageStoryPrompt)(chat,char,history,notes&&{...notes,prev:notes.sw!=null?{reply:m.swipes[notes.sw],img:m.imgs?.[notes.sw],story:m.story?.[notes.sw]}:null});
-      const r=await callJson(api,[{role:'system',content:SYS_STORY},{role:'user',content:prompt}],GEN.ctrl.signal,{maxTokens:Math.max(comic?comicTokens(chat):3000,+S.settings.maxTokens||0)});
+      const comic=!!chat.comic,history=chat.messages.slice(0,idx),prompt=comic?comicStoryPrompt(chat,char,history,notes&&{...notes,prev:notes.sw!=null?{reply:m.swipes[notes.sw],img:m.imgs?.[notes.sw],story:m.story?.[notes.sw]}:null},{pages:many?pages:1,part:mode==='swipe'?m.part:null})
+        :imageStoryPrompt(chat,char,history,notes&&{...notes,prev:notes.sw!=null?{reply:m.swipes[notes.sw],img:m.imgs?.[notes.sw],story:m.story?.[notes.sw]}:null});
+      const r=await callJson(api,[{role:'system',content:SYS_STORY},{role:'user',content:prompt}],GEN.ctrl.signal,{maxTokens:Math.max(comic?comicTokens(chat,many?pages:1):3000,+S.settings.maxTokens||0)});
       const j=r.j;let img,pg=null,storyT;
+      if(many){
+        const list=arr(j.pages).filter(x=>x&&typeof x==='object').slice(0,pages).map(x=>({pg:comicPage(x,chat,char),scene:str(x.scene).trim()})).filter(x=>x.pg);
+        if(!list.length)throw new Error('The AI returned no pages. Try again.');
+        const ask=txt([...history].reverse().find(x=>x.role==='user')||{swipes:[''],sw:0});let scene=sceneBefore(chat,history);
+        for(const [k,x] of list.entries()){
+          const mm=k?{id:uid(),role:'assistant',swipes:[''],sw:0,time:Date.now(),av:m.av}:m;if(k){chat.messages.push(mm);added.push(mm)}
+          const {img:pi,story:st}=comicFields(x.pg);scene=x.scene||scene;
+          mm.swipes[0]=k?`Page ${k+1} of ${list.length}.`:str(j.reply).trim()||`Here are ${list.length} pages.`;
+          mm.imgs=[pi];mm.next=[k===list.length-1?str(j.next).trim():''];mm.story=[st];mm.scene=[scene];mm.remake=[false];mm.comic=[x.pg];mm.usage=[k?null:r.usage];mm.part=[k+1,list.length];
+          addImage(chat,x.pg.draw==='panels'?x.pg.panels.map(y=>y.p):[pi],ask,'story',k?null:r.usage);
+        }
+        if(str(j.outline).trim())chat.storyOutline=str(j.outline).trim();
+        ok=true;
+      }else{
       if(comic){const f=j.page&&typeof j.page==='object'&&comicPage(j.page,chat,char);img=f?comicFields(f).img:null;if(f){pg=f;storyT=comicWords(f)}}
       else{img=j.image&&typeof j.image==='object'?finishPanel(cleanPanel(j.image),chat,char):null;storyT=str(j.story).trim()}
       const reply=str(j.reply).trim();if(!reply&&!panelOk(img))throw new Error('The AI returned an empty answer. Try again.');
@@ -2800,13 +2818,15 @@ async function vChat(id){
       if(str(j.outline).trim())chat.storyOutline=str(j.outline).trim();
       if(panelOk(img))addImage(chat,pg?.draw==='panels'?pg.panels.map(x=>x.p):[img],txt([...history].reverse().find(x=>x.role==='user')||{swipes:[''],sw:0}),'story',m.usage[m.sw]);
       ok=true;
+      }
     }catch(e){if(!(e.name==='AbortError'&&g.ctrl.signal.aborted))failed=e}
     // cut off while Hearth was in the background: ask again once it's back on screen
     const broke=!ok&&g.bg&&netBreak(failed)&&tries<BG_TRIES;if(broke)failed=null;
-    if(!ok){if(mode==='swipe'){m.swipes.pop();m.sw=m.swipes.length-1;for(const k of ['imgs','next','usage','story','remake','comic','pics','scene'])m[k]?.splice(m.swipes.length)}else chat.messages.splice(idx,1)}
+    if(!ok){if(mode==='swipe'){m.swipes.pop();m.sw=m.swipes.length-1;for(const k of ['imgs','next','usage','story','remake','comic','pics','scene'])m[k]?.splice(m.swipes.length)}
+      else for(const x of [m,...added]){const k=chat.messages.indexOf(x);if(k>=0)chat.messages.splice(k,1)}}
     GEN=null;await saveChat(chat);
     if(curChat===chat){renderMsgs(true);updateSend()}
-    if(broke)resumeLater(()=>storyGenerate(mode,notes,tries+1),'Asking again: the answer was cut off while Hearth was in the background…');
+    if(broke)resumeLater(()=>storyGenerate(mode,notes,tries+1,pages),'Asking again: the answer was cut off while Hearth was in the background…');
     if(failed)openSheet(`<h2 class="err">Couldn't build the prompts</h2><div class="box pre small">${esc(failed.message)}</div><br><button class="btn ghost block" data-act="close">Close</button>`);
   }
   // one panel of a comic page drawn panel by panel: its pictures, Generate, Attach, the Images page and its prompt
@@ -2946,6 +2966,8 @@ async function vChat(id){
     $('#cp-fr',pn).onchange=async e=>{const f=comicFrame(e.target.value);if(f)x.frame=f;else delete x.frame;if(f==='bleed')x.size='big';
       await after();toast(k===0&&f==='over'?'The first panel has nothing before it, so it keeps its own place':'Frame changed')};
   }
+  // the comic page count by the message box: 1 to 4 pages for the next message
+  const setPages=(b,n)=>{b.dataset.n=n;b.innerHTML=`${n}<br>page${n>1?'s':''}`;b.classList.toggle('on',n>1)};
   // left: how many more times a reply cut off by the token limit is continued automatically (Settings → Generation)
   // notes (swipe only): {want, avoid, keep, sw} from "Redo with notes": a new version of reply version sw that follows them
   // when Hearth is on screen again (now, if it already is), if this chat is still open and nothing else is being written
@@ -3052,10 +3074,12 @@ async function vChat(id){
     srolex:()=>openSceneRole(chat,char,draw),
     send:async()=>{
       if(GEN&&GEN.chatId===chat.id){GEN.ctrl.abort();return}
-      const inp=$('#inp'),t=inp.value.trim();
+      const inp=$('#inp'),t=inp.value.trim(),pc=$('#cpages'),pages=story&&chat.comic&&+pc?.dataset.n||1;
       if(t){chat.messages.push({id:uid(),role:'user',swipes:[t],sw:0,time:Date.now()});inp.value='';autosize(inp);await saveChat(chat);renderMsgs(true)}
-      generate('new');
+      if(pc)setPages(pc,1);
+      if(pages>1)storyGenerate('new',null,0,pages);else generate('new');
     },
+    pgs:b=>{const n=+b.dataset.n%4+1;setPages(b,n);if(n>1)toast(`Your next message becomes ${n} pages`)},
     regen:()=>generate('swipe'),
     cont:()=>generate('continue'),
     jump:b=>{const el=msgsEl(),m=$(`.msg[data-i="${b.dataset.i}"]`,el);if(!m)return;
@@ -4170,8 +4194,9 @@ function comicOptsWire(pn){
   $$('.cm-d',pn).forEach(b=>b.onclick=()=>{$$('.cm-d',pn).forEach(x=>x.classList.toggle('on',x===b));upd()});$('.cm-w',pn).onchange=upd;upd();
 }
 // comic chats: each turn plans one page instead of one image
-function comicStoryPrompt(chat,char,history,notes){
-  const su=storyUser(chat),pages=history.filter(m=>m.role==='assistant'&&comicOf(m));
+// o.pages: the user's last message spread over that many pages, made in one go; o.part: [k, n] when redoing page k of such a set
+function comicStoryPrompt(chat,char,history,notes,o={}){
+  const su=storyUser(chat),pages=history.filter(m=>m.role==='assistant'&&comicOf(m)),n=Math.max(1,o.pages|0),[pk,pn]=o.part||[];
   const talk=history.slice(-12).map(m=>m.role==='user'?`USER: ${txt(m)}`:`YOU: ${txt(m)}${comicOf(m)?` [made page: ${comicOf(m).caption}]`:m.imgs?.[m.sw]?` [made image: ${m.imgs[m.sw].caption}]`:''}${m.next?.[m.sw]?` [suggested next: ${m.next[m.sw]}]`:''}`).join('\n');
   const last=pages.at(-1),lp=comicOf(last),words=pages.slice(-3).map(m=>m.story?.[m.sw]).filter(Boolean);
   const plan=lp&&JSON.stringify(lp.draw==='page'?{caption:lp.caption,panels:lp.panels.map(({size,shot,words})=>({size,shot,words})),image:last.imgs[last.sw]}
@@ -4192,7 +4217,11 @@ WHAT TO DO WITH THE USER'S LAST MESSAGE:
 - If they ask to change the last page (like "make panel 2 a close-up" or "she should smile"): remake the last page with that change, and copy every panel the change doesn't touch exactly, word for word.
 - If something is unclear, ask one short question instead of making a page.
 Always suggest what happens on the next page.
-${notes?`
+${n>1?`
+THE USER WANTS THEIR LAST MESSAGE SPREAD OVER ${n} PAGES: make ${n} pages in a row that together show what they describe, slowly and in detail, like a manga that takes its time. Split it into its small moments (a look, a breath, a hand reaching out, a foot touching the floor, a pause) and give each its own panel; use close-ups for the small details and wider shots to show where everyone is. Page 1 starts where the story is now, each page goes on straight from the one before, and the last page ends where their message ends: don't rush ahead past what they describe, and don't repeat a moment. Each page has its own caption and words. This is never a remake of the last page.
+`:pn>1?`
+THIS ANSWER IS PAGE ${pk} OF ${pn}: the user's last message was spread over ${pn} pages${pk>1?`, and pages 1 to ${pk-1} are already made (the last page above is page ${pk-1})`:''}. Make only page ${pk}, slowly and in detail: go on straight from the page before it${pk<pn?` and stop where page ${pk+1} can go on`:' and end where their message ends'}. It is not a remake of the last page ("remake": false).
+`:''}${notes?`
 THE USER IS REDOING YOUR ANSWER TO THEIR LAST MESSAGE.${notes.prev?` Your previous version: ${JSON.stringify({reply:notes.prev.reply,page:notes.prev.img?.caption||null,words:notes.prev.story||''})}`:''}
 ${notes.want?`They want: ${notes.want}\n`:''}${notes.avoid?`They don't want: ${notes.avoid}\n`:''}Make a new version that follows these wishes, for both the pictures and the words. Keep everything they didn't mention.
 `:''}
@@ -4203,7 +4232,8 @@ ${comicRules(chat)}
 
 ${novelRules(chat,char,{story:true,text:comicTextMode(chat),lore:sceneLore(chat,char,[talk,words.join('\n'),chat.storyOutline,notes?.want])})}
 Return one JSON object only:
-{"reply":"1 or 2 friendly sentences to the user","outline":"the updated story outline in one short paragraph, or \\"\\" if unchanged",${vsceneKey('page')}"page":${comicPageJson(chat)} or null,"remake":true if the page remakes the last page with a change, otherwise false,"next":"what happens on the next page, in one sentence"}`;
+${n>1?`{"reply":"1 or 2 friendly sentences to the user","outline":"the updated story outline in one short paragraph, or \\"\\" if unchanged","pages":[${comicPageJson(chat).replace(/^\{/,()=>`{"scene":"the scene right now at this page's last panel, written first: ${VSCENE_FORMAT} Change only what this page changes",`)}, ...] with exactly ${n} pages in order,"next":"what happens on the page after them, in one sentence"}`
+:`{"reply":"1 or 2 friendly sentences to the user","outline":"the updated story outline in one short paragraph, or \\"\\" if unchanged",${vsceneKey('page')}"page":${comicPageJson(chat)} or null,"remake":true if the page remakes the last page with a change, otherwise false,"next":"what happens on the next page, in one sentence"}`}`;
 }
 // enough room for every panel's prompt
 // A comic's cover, like a comic book's: chat.covers holds its versions, chat.cover the one in use. It opens the comic in
