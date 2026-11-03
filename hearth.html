@@ -401,7 +401,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.42.3',HEARTH_DATE='2026-11-03';
+const HEARTH_VERSION='1.42.4',HEARTH_DATE='2026-11-03';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiNoMark:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -3148,7 +3148,7 @@ function novelRules(chat,char,o={}){
 - Base prompt: subject count tags (like 2girls, 1boy, or no humans), setting and background, time of day, lighting, camera framing and angle, mood and composition${v5?'. Add "high complexity" unless the image should be simple or stylized':''}. Never put one character's traits in the base prompt. Do not add artist tags or quality tags: the user adds their own.
 - One character prompt per visible person (${v5?'up to 22':'at most 6'}). Start it with girl, boy or other (no numbers). Then their Danbooru character tag if they are a known canon character (like fern (sousou no frieren)), appearance (hair, eyes, body, clothing), expression, pose and action. For interactions put source#action on the one acting and target#action on the one receiving, or mutual#action on both (like source#hug and target#hug).
 - Pose: whenever the body is in view, every character prompt states one clear pose with a Danbooru pose tag (standing, sitting, kneeling, on one knee, lying, squatting, crouching, walking, running, …) plus what the arms and hands do. Never mix poses (no standing with kneeling). Kneeling, sitting, lying or squatting need full body, a wide shot or a cowboy shot to show them.${o.story?' Take each pose from THE SCENE RIGHT NOW unless this picture changes it.':''} Hearth keeps the other poses out of the picture by itself.
-- Only what the camera sees: tag only what is inside this framing. In a close-up or portrait (face only) leave out the pose, the legs, the hands and anything held; in an upper body shot leave out the legs. Something a character holds (a spoon, a cup, a sword) goes in their prompt with the hand that holds it (holding spoon) only when that hand is in view, and then always, even if the moment is about something else. A held thing is never drawn floating or in another hand.
+- Only what the camera sees: tag only what is inside this framing. In a close-up or portrait (face only) leave out the pose, the legs, the hands and anything held; in an upper body shot leave out the legs. A detail shot of a hand, a foot or a thing (a clenched fist, fingers on a sword hilt) uses close-up with hand focus, foot focus or object focus, and leaves out the face, hair, eyes and expression; Hearth adds head out of frame. Something a character holds (a spoon, a cup, a sword) goes in their prompt with the hand that holds it (holding spoon) only when that hand is in view, and then always, even if the moment is about something else. A held thing is never drawn floating or in another hand.
 - ${style} English only, no emoji or non-Latin text.
 - Emphasis: 1.3::tag:: only for what must stand out, always closed with ::.${st.imgMotion!==false?`
 - Movement: whenever someone or something moves (running, jumping, swinging, falling, turning, waving, hair or clothes blowing), add matching motion tags such as motion lines, speed lines, motion blur, afterimage, dynamic pose, wind. For sudden reactions (startled, shocked, flinching) add ^^^ or emphasis lines. Put them in the prompt of the character who moves, or in the base prompt for the whole scene.`:''}${st.imgFx!==false?`
@@ -4623,15 +4623,29 @@ function asCharacter(prompt,c,lead0=/^(girl|boy|other)$/i,frame=''){
 }
 // Looks tags for parts of the body the shot leaves out: a close-up gets no shoes, socks, legwear or skirt, an upper body shot
 // no shoes or legwear, a cowboy shot no shoes. They would pull the camera back to fit them in. A full body or wide shot keeps all.
+// A detail shot of a hand, a foot or a thing (a clenched fist) gets no hair, eyes or face either, or NovelAI draws the face.
+const LOOK_HEAD=/\b(hair|eyes|eyebrows|eyelashes|bangs|sidelocks|ponytail|twintails|braids?|ahoge|freckles|mole under eye|glasses|eyewear|earrings|animal ears|cat ears|fox ears|pointy ears|horns|halo|hat|headwear|headband|hairband|hairclip|makeup|lipstick|fang|face|eyepatch)\b/,
+  SHOT_DETAIL=/\b(hands? focus|fist focus|object focus|foot focus|feet focus|head out of frame|lower body)\b/,SHOT_HAND=/\b(hands? focus|fist focus|object focus)\b/,
+  FACE_ASKED=/\b(face|face focus|portrait|looking at viewer)\b/;
 const LOOK_FEET=/\b(shoes|boots|footwear|sneakers|heels|sandals|loafers|slippers|mary janes|geta|socks|barefoot|anklets?|toenails?|toes)\b/,
   LOOK_LEGS=/\b(thighhighs|kneehighs|pantyhose|legwear|stockings|leggings|garters?|garter belt|thigh strap|knee pads|legs|thighs)\b/,
   LOOK_HIPS=/\b(skirt|miniskirt|pants|shorts|jeans|trousers|hakama|belt|hips)\b/;
 function inFrame(looks,frame){
   const f=String(frame).toLowerCase().replace(/-?\d*\.?\d+::|::/g,'');
-  if(/\b(full body|wide shot|very wide shot|feet|foot focus|legs focus)\b/.test(f))return looks;
-  const out=/\b(close-up|portrait|face focus|eye focus|eyes focus|headshot)\b/.test(f)?[LOOK_FEET,LOOK_LEGS,LOOK_HIPS]
+  const out=SHOT_DETAIL.test(f)&&!FACE_ASKED.test(f)?[LOOK_HEAD,...SHOT_HAND.test(f)?[LOOK_FEET,LOOK_LEGS]:[]]
+    :/\b(full body|wide shot|very wide shot|feet|legs focus)\b/.test(f)?[]
+    :/\b(close-up|portrait|face focus|eye focus|eyes focus|headshot)\b/.test(f)?[LOOK_FEET,LOOK_LEGS,LOOK_HIPS]
     :/\bupper body\b/.test(f)?[LOOK_FEET,LOOK_LEGS]:/\bcowboy shot\b/.test(f)?[LOOK_FEET]:[];
-  return out.length?looks.filter(t=>{const b=t.replace(/-?\d*\.?\d+::|::/g,'').toLowerCase();return !out.some(re=>re.test(b))}):looks;
+  const head=out.includes(LOOK_HEAD);
+  return out.length?looks.filter(t=>{const b=t.replace(/-?\d*\.?\d+::|::/g,'').toLowerCase();return !out.some(re=>re.test(b))&&!(head&&idKind(b)==='who')}):looks;
+}
+// a detail shot of a hand, foot or thing keeps the head out of it, unless the prompt asks for the face
+function headOut(p){
+  const all=String(p.onebox||[p.base,...(p.characters||[]).map(c=>c.prompt)].join(',')).toLowerCase();
+  if(!SHOT_DETAIL.test(all)||FACE_ASKED.test(all)||/\bhead out of frame\b/.test(all))return p;
+  if(p.onebox){const seg=p.onebox.split('|');seg[0]=joinTags(seg[0].trim(),'head out of frame')+(seg.length>1?' ':'');p.onebox=seg.join('|')}
+  else p.base=joinTags(p.base,'head out of frame');
+  return p;
 }
 // Every image prompt: the user's characters named in it get their Looks locked in. single: in a one-character chat,
 // the only person in the picture is that character even when the AI left the name out (also for all-in-one-box prompts).
@@ -4645,7 +4659,7 @@ function lockLooks(p,cast,single){
   return p;
 }
 // the image prompt steps every new prompt goes through
-const finishPanel=(p,chat,char)=>{const cast=castOf(chat,char);return lockPose(fixUndesired(lockLooks(p,cast,char.kind==='world'?null:char),cast))};
+const finishPanel=(p,chat,char)=>{const cast=castOf(chat,char);return lockPose(fixUndesired(lockLooks(headOut(p),cast,char.kind==='world'?null:char),cast))};
 // The pose a prompt states holds from one picture to the next (Generate another, the next image): its pose tag gets a
 // little more weight, and the poses it rules out go in that character's undesired content. Runs again before every
 // request (it changes nothing the second time), so older prompts get it too. Prompts read from a picture file stay as they are.
