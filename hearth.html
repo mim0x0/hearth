@@ -401,7 +401,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.43.0',HEARTH_DATE='2026-11-03';
+const HEARTH_VERSION='1.44.0',HEARTH_DATE='2026-11-03';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiNoMark:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -507,6 +507,30 @@ Keep what is still true, change what the messages changed, and drop what is no l
   }finally{sceneBusy.delete(chat.id)}
 }
 async function deleteChat(id){chatCache.delete(id);await store.del('chat:'+id);S.chatIndex=S.chatIndex.filter(c=>c.id!==id);await saveIndex()}
+// A copy of a chat, whole or up to message upto, to take the story another way. Its pictures are copies too, so changing,
+// cleaning or deleting one in either chat never touches the other (pictures from a character's gallery stay shared).
+async function copyChat(chat,upto){
+  const d=clone(chat),cut=upto!=null&&upto<chat.messages.length-1;
+  Object.assign(d,{id:uid(),created:Date.now(),title:`${chat.title||'Chat'} (copy)`,titleSet:true});
+  if(cut){
+    d.messages=d.messages.slice(0,upto+1);
+    const ids=new Set(d.messages.map(m=>m.id).filter(Boolean));d.images=(d.images||[]).filter(e=>!e.msgId||ids.has(e.msgId));
+    // the memory and the scene were written after later messages: made again from what the copy keeps
+    if((d.memoryAt||0)>d.messages.length){d.memory='';d.memoryAt=0}
+    delete d.scene;delete d.scenePrev;
+  }
+  const done=new Map();
+  const fix=async v=>{
+    if(Array.isArray(v)){for(let i=0;i<v.length;i++)v[i]=await fix(v[i]);return v}
+    if(v&&typeof v==='object'){for(const k of Object.keys(v))v[k]=await fix(v[k]);return v}
+    if(typeof v!=='string'||!/^[0-9a-z]{9,16}$/.test(v)||inGallery(v))return v;
+    if(!done.has(v)){const rec=await store.get('img:'+v);let n=v;if(rec?.data){n=uid();const {saved,...r}=rec;await store.set('img:'+n,{...r,id:n,at:Date.now()})}done.set(v,n)}
+    return done.get(v);
+  };
+  await fix(d);await saveChat(d);
+  if(cut&&S.settings.trackScene!==false&&d.mode!=='image'){const char=getChar(d.charId);if(char)updateScene(d,char,{rebuild:true}).catch(e=>console.warn('Scene rebuild failed',e))}
+  return d;
+}
 // Settings from before presets existed had one customPrompt: keep it as its own preset if it was changed.
 function ensurePrompts(){
   const st=S.settings;
@@ -2729,7 +2753,7 @@ async function vChat(id){
       :story&&!u&&!generating&&m.imgs?.[m.sw]?`${m.pics?.[m.sw]?.length?thumbs(m.pics[m.sw],'sview').replace('class="thumbs"',comicOf(m)?'class="thumbs cpage"':'class="thumbs"'):''}<div class="row" style="margin-top:6px;flex-wrap:wrap">${naiOn()?`<button class="btn sm" data-act="ngenm">${I.img} Generate picture</button>`:''}<button class="btn ghost sm" data-act="attach">${I.img} Attach picture</button><button class="btn ghost sm" data-act="toimgs">${I.edit} Open on Images page</button></div>${m.story?.[m.sw]?`<div class="storytxt">${paras(macro(m.story[m.sw],char.name,p?.name||'You'))}</div>`:''}${storyCardsHTML(m.imgs[m.sw],i)}`:''}
       ${story&&!u&&isLast&&!generating&&m.next?.[m.sw]?`<div class="nextsug"><div><b>Next:</b> ${esc(m.next[m.sw])}</div><button class="btn sm" data-act="usenext" ${GEN?'disabled':''}>Use this ›</button></div>`:''}
       ${!story&&!u&&isLast&&!generating&&m.cut?.[m.sw]?`<div class="controw"><button class="btn ghost sm" data-act="cont" ${GEN?'disabled':''}>Continue ›</button><span>This reply was cut off.</span></div>`:''}
-      <div class="mact"><button data-act="medit">${I.edit}Edit</button><button data-act="mcopy">${I.copy}Copy</button>${story?'':`<button data-act="mimg">${I.img}Image</button>`}${!story&&char.kind==='world'&&txt(m).trim()?`<button data-act="mscene">${I.chat}Scene</button>`:''}${canRegen?`<button data-act="regen">${I.regen}${story?'Try again':'Regenerate'}</button>`:''}${canRegen?`<button data-act="redonotes">${I.wand}Redo with notes</button>`:''}${story&&!u&&m.imgs?.[m.sw]?`<button data-act="rwrite">${I.book}Rewrite story</button>`:''}${!story&&!u&&isLast?`<button data-act="cont">${I.send}Continue</button>`:''}<button data-act="mdel">${I.trash}Delete</button></div>${sw}</div></div>`;
+      <div class="mact"><button data-act="medit">${I.edit}Edit</button><button data-act="mcopy">${I.copy}Copy</button>${story?'':`<button data-act="mimg">${I.img}Image</button>`}${!story&&char.kind==='world'&&txt(m).trim()?`<button data-act="mscene">${I.chat}Scene</button>`:''}${canRegen?`<button data-act="regen">${I.regen}${story?'Try again':'Regenerate'}</button>`:''}${canRegen?`<button data-act="redonotes">${I.wand}Redo with notes</button>`:''}${story&&!u&&m.imgs?.[m.sw]?`<button data-act="rwrite">${I.book}Rewrite story</button>`:''}${!story&&!u&&isLast?`<button data-act="cont">${I.send}Continue</button>`:''}${i<chat.messages.length-1?`<button data-act="mbranch">${I.copy}${story?'Copy up to here':'Copy chat to here'}</button>`:''}<button data-act="mdel">${I.trash}Delete</button></div>${sw}</div></div>`;
   }
   // Show "↑ Start of …" while the message filling the top of the screen began above it.
   function updateJump(){
@@ -3018,6 +3042,10 @@ async function vChat(id){
     swl:()=>{const m=chat.messages.at(-1);if(m.sw>0){m.sw--;saveChat(chat);renderMsgs()}},
     swr:()=>{const m=chat.messages.at(-1);if(m.sw<m.swipes.length-1){m.sw++;saveChat(chat);renderMsgs()}else if(!m.greeting)generate('swipe')},
     mcopy:b=>copyText(txt(chat.messages[idxOf(b)])),
+    // a new chat that ends here, to take the story another way from this point; this chat stays as it is
+    mbranch:async b=>{if(GEN)return toast('Wait for the reply to finish');const i=idxOf(b),later=chat.messages.length-1-i;
+      if(!confirm(`Make a copy of this chat that ends here? The copy leaves out the ${later===1?'message':`${later} messages`} after this one. This chat stays as it is.`))return;
+      toast('Copying the chat…');try{const d=await copyChat(chat,i);toast('This is the copy. The original is unchanged.',4000);go('#/chat/'+d.id)}catch(e){toast(e.message,5000)}},
     mimg:b=>{b.closest('.msg').classList.remove('open');openImageSheet(chat,char,idxOf(b))},
     mscene:b=>{b.closest('.msg').classList.remove('open');openWorldScene(chat,char,idxOf(b))},
     icp:b=>copyText(JSON.parse(b.closest('.storycards').dataset.texts)[+b.dataset.i]),
@@ -5038,7 +5066,7 @@ function chatMenu(chat,char,redraw){
   const spent=chatCost(chat);
   openSheet(`<h2>Chat options</h2>${spent?`<p class="hint" style="margin:-6px 0 10px">This chat so far: <b>${spent.cost!=null?`${spent.est?'≈ ':''}${fmtCost(spent.cost)} · `:''}${spent.tokEst?'≈ ':''}${Math.round(spent.in+spent.out).toLocaleString()} tokens</b> (↑ ${Math.round(spent.in).toLocaleString()} · ↓ ${Math.round(spent.out).toLocaleString()})</p>`:''}<div class="menu">
     ${chat.origin?`<button data-act="setup">${I.book} Scene setup (from the world chat)</button><button data-act="srolesc">${I.user} You in this scene: ${SCENE_ROLES[sceneRole(chat)][0]}</button><button data-act="sendback">${I.send} Send back to the world chat${chat.origin.sent?' (sent)':''}</button>`:''}${char.kind==='world'&&chat.mode!=='image'?`<button data-act="wscene">${I.chat} Play a scene with one character</button>${liveScenes(chat).length?`<button data-act="scenes">${I.book} Scenes from this chat (${liveScenes(chat).length})</button>`:''}`:''}<button data-act="memory">${I.brain} Chat memory</button><button data-act="${chat.mode==='image'?'vscene':'scene'}">${I.user} The scene right now</button>${char.kind==='world'?`<button data-act="cguests">${I.user} Guests${guestsOf(chat,char).length?`: ${esc(guestsOf(chat,char).map(g=>g.name).join(', '))}`:''}</button>`:''}${char.kind!=='world'&&S.chars.some(c=>c.kind==='world')?`<button data-act="cworld">${I.book} World for this chat: ${esc(chatWorld(chat,char)?.name||'none')}</button>`:''}<button data-act="persona">${I.user} Persona for this chat</button><button data-act="prompt">${I.edit} Prompt preset</button>
-    <button data-act="vars">${I.code} Script variables</button><button data-act="lore">${I.tag} Lore used in last reply</button><button data-act="rename">${I.edit} Rename chat</button><button data-act="mvf">${I.folder} Move to folder${folders('chats').find(f=>f.id===chat.folder)?` (now: ${esc(folders('chats').find(f=>f.id===chat.folder).name)})`:''}</button>
+    <button data-act="vars">${I.code} Script variables</button><button data-act="lore">${I.tag} Lore used in last reply</button><button data-act="rename">${I.edit} Rename chat</button><button data-act="dupchat">${I.copy} Duplicate chat</button><button data-act="mvf">${I.folder} Move to folder${folders('chats').find(f=>f.id===chat.folder)?` (now: ${esc(folders('chats').find(f=>f.id===chat.folder).name)})`:''}</button>
     <button data-act="newchat">${I.plus} Start a new chat</button><button data-act="export">${I.exp} Export chat as text</button>
     ${chat.mode==='image'?`<button data-act="srole">${{observer:I.book,pov:I.img}[storyRole(chat)]||I.user} Your role: ${ROLE_LABEL[storyRole(chat)]}</button><button data-act="comic">${I.copy} Comic pages: ${chat.comic?`on · ${chat.comic.draw==='page'?'whole page at once':`panel by panel${chat.comic.insets?', insets':''}`}`:'off'}</button><button data-act="outline">${I.edit} Story outline</button><button data-act="ihist">${I.copy} All image prompts (${chat.images?.length||0})</button>`
       :`<button data-act="image">${I.img} Image prompt / storyboard</button><button data-act="board">${I.copy} Storyboard the whole chat${boardBusy.has(chat.id)?' (writing…)':''}</button>`}<button data-act="fromimg">${I.img} Prompt from image</button><button data-act="ipreset">${I.img} Image preset: ${esc(imgPreset().name)}</button><button data-act="gallery">${I.img} Gallery${char.gallery?.length?` (${char.gallery.length})`:''}</button>${researchOn()?`<button data-act="lookup">${I.wand} Look something up</button>`:''}${chat.researchNotes||researchOn()?`<button data-act="facts">${I.brain} Looked-up facts</button>`:''}<button data-act="charpage">${I.user} Character page</button><button data-act="editchar">${I.tag} Edit character</button><button class="danger" data-act="del">${I.trash} Delete chat</button></div>`,{
@@ -5136,6 +5164,7 @@ function chatMenu(chat,char,redraw){
       ok:async()=>{try{chat.vars=JSON.parse($('#vj').value||'{}');await saveChat(chat);closeSheet();toast('Saved')}catch(e){toast('Invalid JSON: '+e.message)}},
       reset:async()=>{if(!confirm('Reset all variables?'))return;chat.vars={};await saveChat(chat);closeSheet()}})},
     lore:()=>{const l=lastLore.get(chat.id);openSheet(`<h2>Lore used in last reply</h2>${!l?'<p class="muted">Send or regenerate a message first.</p>':l.length?`<div class="list">${l.map(n=>`<div class="box small">${esc(n)}</div>`).join('')}</div>`:'<p class="muted">No lorebook entries were triggered.</p>'}<br><button class="btn ghost block" data-act="close">Close</button>`)},
+    dupchat:async()=>{if(GEN)return toast('Wait for the reply to finish');closeSheet();toast('Copying the chat…');try{const d=await copyChat(chat);toast('This is the copy. The original is unchanged.',4000);go('#/chat/'+d.id)}catch(e){toast(e.message,5000)}},
     rename:async()=>{const t=prompt('Chat name',chat.title);if(t?.trim()){chat.title=t.trim();chat.titleSet=true;await saveChat(chat);closeSheet()}},
     wscene:()=>openWorldScene(chat,char,chat.messages.length-1),
     scenes:()=>openScenesList(chat),
