@@ -401,7 +401,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.46.0',HEARTH_DATE='2026-11-03';
+const HEARTH_VERSION='1.46.1',HEARTH_DATE='2026-11-03';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiNoMark:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -3198,6 +3198,7 @@ function novelRules(chat,char,o={}){
   return `HOW TO WRITE NOVELAI DIFFUSION ${v5?'V5':'V4.5'} PROMPTS:
 - Base prompt: subject count tags (like 2girls, 1boy, or no humans), setting and background, time of day, lighting, camera framing and angle, mood and composition${v5?'. Add "high complexity" unless the image should be simple or stylized':''}. Never put one character's traits in the base prompt. Do not add artist tags or quality tags: the user adds their own.
 - One character prompt per visible person (${v5?'up to 22':'at most 6'}). Start it with girl, boy or other (no numbers). Then their Danbooru character tag if they are a known canon character (like fern (sousou no frieren)), appearance (hair, eyes, body, clothing), expression, pose and action. For interactions put source#action on the one acting and target#action on the one receiving, or mutual#action on both (like source#hug and target#hug).
+- Side characters: a person who is not under CHARACTERS below (a waiter, a passer-by, someone only in this story) gets their own look: hair, eyes and clothes of their own, never the Looks of anyone under CHARACTERS${oneBox?'':'. In "name" put their own name or role (like Waiter), never a name from CHARACTERS'}.
 - Pose: whenever the body is in view, every character prompt states one clear pose with a Danbooru pose tag (standing, sitting, kneeling, on one knee, lying, squatting, crouching, walking, running, …) plus what the arms and hands do. Never mix poses (no standing with kneeling). Kneeling, sitting, lying or squatting need full body, a wide shot or a cowboy shot to show them.${o.story?' Take each pose from THE SCENE RIGHT NOW unless this picture changes it.':''} Hearth keeps the other poses out of the picture by itself.
 - Only what the camera sees: tag only what is inside this framing. In a close-up or portrait (face only) leave out the pose, the legs, the hands and anything held; in an upper body shot leave out the legs. A detail shot of a hand, a foot or a thing (a clenched fist, fingers on a sword hilt) uses close-up with hand focus, foot focus or object focus, and leaves out the face, hair, eyes and expression; Hearth adds head out of frame. Something a character holds (a spoon, a cup, a sword) goes in their prompt with the hand that holds it (holding spoon) only when that hand is in view, and then always, even if the moment is about something else. A held thing is never drawn floating or in another hand.
 - ${style} English only, no emoji or non-Latin text.
@@ -4768,12 +4769,21 @@ function headOut(p){
 }
 // Every image prompt: the user's characters named in it get their Looks locked in. single: in a one-character chat,
 // the only person in the picture is that character even when the AI left the name out (also for all-in-one-box prompts).
+// A side character is not: someone named something else (the shopkeeper, Mira), or with other hair, eyes, skin or another
+// character tag, keeps their own look.
+const NO_NAME=/^(girl|boy|other|woman|man|person|someone|character|main character|protagonist|she|he|her|him|they|unknown|none|n\/a|char|\{\{char\}\}|1girl|1boy)?$/i;
+function otherLook(prompt,c){
+  const looks=tagsOf(c.imageTags),mine=new Set(looks),kinds=new Set(looks.map(idKind).filter(k=>k&&k!=='length'));
+  const by={};for(const t of tagsOf(prompt)){const k=idKind(t);if(kinds.has(k))(by[k]??=[]).push(t)}
+  return Object.values(by).some(ts=>!ts.some(t=>mine.has(t)));
+}
 function lockLooks(p,cast,single){
   const withLooks=cast.filter(c=>c.imageTags?.trim());if(!withLooks.length)return p;
   const first=n=>String(n).toLowerCase().split(/\s+/)[0],byName=n=>n&&withLooks.find(c=>c.name.toLowerCase()===String(n).toLowerCase()||first(c.name)===first(n));
   const solo=single?.imageTags?.trim()?single:null;
-  if(p.onebox){const seg=p.onebox.split('|');if(seg.length===2&&solo){seg[1]=' '+asCharacter(seg[1].trim(),solo,undefined,seg[0]);p.onebox=seg.join('|')}return p}
-  const alone=p.characters.length===1&&!byName(p.characters[0].name)?solo:null;
+  if(p.onebox){const seg=p.onebox.split('|');if(seg.length===2&&solo&&!otherLook(seg[1],solo)){seg[1]=' '+asCharacter(seg[1].trim(),solo,undefined,seg[0]);p.onebox=seg.join('|')}return p}
+  const one=p.characters.length===1&&p.characters[0];
+  const alone=one&&!byName(one.name)&&NO_NAME.test(String(one.name||'').trim())&&!otherLook(one.prompt,solo||{})?solo:null;
   for(const c of p.characters){const who=byName(c.name)||alone;if(who){c.name=who.name;c.prompt=asCharacter(c.prompt,who,undefined,p.base)}}
   return p;
 }
