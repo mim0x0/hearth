@@ -401,7 +401,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.44.0',HEARTH_DATE='2026-11-03';
+const HEARTH_VERSION='1.45.0',HEARTH_DATE='2026-11-03';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiNoMark:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -2883,6 +2883,7 @@ async function vChat(id){
     const pn=openSheet(`<h2>Panel ${k+1} of ${pg.panels.length}</h2><p class="small muted" style="margin:-4px 0 8px">${x.size==='big'?'Big panel · ':x.size==='small'?'Small panel · ':''}${COMIC_SHAPES[comicShape(x.shape)][2]} picture, ${w}×${h}${x.p.caption?` · ${esc(x.p.caption)}`:''}${x.inset?` · Inset: ${esc(x.inset)}`:''}</p>
       ${x.pics?.length?`${thumbs(x.pics,'pview').replace(`data-id="${x.pics.at(-1)}"`,`data-id="${x.pics.at(-1)}" class="main"`)}<p class="hint">The page uses the outlined one. Tap a picture to use another one, save it or delete it.</p>`:''}
       <div class="row" style="margin:6px 0 4px;flex-wrap:wrap">${naiOn()?`<button class="btn sm" data-act="gen">${I.img} ${x.pics?.length?'Generate another':'Generate panel'}</button>`:''}<button class="btn ghost sm" data-act="att">${I.img} Attach</button><button class="btn ghost sm" data-act="toimgs">${I.edit} Open on Images page</button></div><div class="small" id="cp-msg" style="margin-bottom:8px"></div>
+      <div class="row" style="margin:0 0 8px;gap:8px;align-items:center"><span class="small muted">Frame on the page</span><select id="cp-fr" style="width:auto;padding:5px 10px">${Object.entries(COMIC_FRAMES).map(([v,l])=>`<option value="${v}" ${comicFrame(x.frame)===v?'selected':''}>${l}</option>`).join('')}</select></div>
       <div class="box" style="margin:4px 0 10px"><b>${I.edit} Change this panel</b>
         <textarea id="cp-ch" rows="2" style="margin-top:8px" placeholder="e.g. a close-up of her face, she smiles, rain starts"></textarea>
         <div class="row" style="margin-top:6px;flex-wrap:wrap">${naiOn()?`<button class="btn sm" data-act="chg" data-d="1">${I.wand} Change and draw</button>`:''}<button class="btn ghost sm" data-act="chg">${I.edit} Change the prompt only</button>
@@ -2922,6 +2923,9 @@ async function vChat(id){
         more:id===x.pics.at(-1)?[]:[{label:`${I.check} Use this one in the page`,fn:async()=>{x.pics=[...x.pics.filter(y=>y!==id),id];await after();again()}}],
         onDelete:async()=>{x.pics=x.pics.filter(y=>y!==id);await after()}})}
     });hydrate(pn);
+    // the frame only changes how the page is put together: no new picture needed
+    $('#cp-fr',pn).onchange=async e=>{const f=comicFrame(e.target.value);if(f)x.frame=f;else delete x.frame;if(f==='bleed')x.size='big';
+      await after();toast(k===0&&f==='over'?'The first panel has nothing before it, so it keeps its own place':'Frame changed')};
   }
   // left: how many more times a reply cut off by the token limit is continued automatically (Settings → Generation)
   // notes (swipe only): {want, avoid, keep, sw} from "Redo with notes": a new version of reply version sw that follows them
@@ -3898,7 +3902,8 @@ function comicRules(chat){
 - The whole page is ONE picture: add comic (and 4koma for a vertical strip of four), then describe the layout and each panel in reading order with short sentences in the base prompt, like "Panel 1, top, wide: ...". Few panels draw much better than many.
 - ${OUTSIDE_BORDER}${comicTextMode(chat)==='sfx'?' Put the sound effects of all panels in "text", one per line in reading order, and say in the base prompt which panel each one is in.':''}`:`
 - Each panel is its own full picture, with its own prompt: no comic, panel, border or multiple views tags${c.insets?' (except the one inset described below)':''}.
-- Shape of each panel's picture: "wide" (landscape: places, action across the frame, several people), "tall" (portrait: one standing figure, falling, something tall), "square" (a face, a reaction) or "strip" (very wide and short: eyes, a skyline, a quick beat). Mix shapes so the page has rhythm.${comicLetters(c)?`
+- Shape of each panel's picture: "wide" (landscape: places, action across the frame, several people), "tall" (portrait: one standing figure, falling, something tall), "square" (a face, a reaction) or "strip" (very wide and short: eyes, a skyline, a quick beat). Mix shapes so the page has rhythm.
+- Frame of each panel ("frame"): usually "", a straight frame. Use the others only where they add something, one or two per page at most, and not on every page: "slant" gives slanted borders, for fights, chases and sudden action (give it to the action panels side by side or one above the other); "borderless" has no frame and reaches the page edges, only for a big panel: a splash, a big reveal or a quiet wide view; "round" is a round panel for a memory, a flashback, a thought or one detail up close, best with the square shape; "over" is a small panel laid over the bottom right corner of the panel before it, for a quick reaction or a detail in that same moment (square or tall shape; keep the bottom right of the panel before it free of faces and important things).${comicLetters(c)?`
 - Speech bubbles: Hearth letters each panel's words in bubbles on its picture, mostly in the upper part. Where someone speaks, leave some calm space there (sky, a wall, background), keep faces away from the very top edge, and keep each spoken line short (about 15 words at most).`:''}`}
 ${!page&&c.insets?`- Insets: a big panel may have one small inset, a small frame in a corner of the same picture that shows a detail of the same moment: a close-up of eyes, a hand on a sword hilt, an object, or a quick reaction face. Use it only when it adds to the moment: most pages have none, and never more than one per page. For that panel, write in "inset" what the inset shows and where (like "top right: close-up of her narrowed eyes"), add the tag inset to its base prompt, and describe the inset there in one short sentence. Every other panel has "inset":"". On a strong beat the inset may break its frame: the big panel's character overlaps the inset's edge, or the inset's subject (a fist, a face) reaches out of its little frame; then add outside border to that base prompt too.
 `:''}${comicWordsRule(chat)}`;
@@ -3911,7 +3916,7 @@ const comicWordsRule=chat=>`- Words: the "words" of each panel tell the story, b
 const COMIC_WORDS_JSON='"words":"Name: \\"line\\"\\nName (thinks): \\"line\\"\\nnarration"';
 const comicPageJson=chat=>(chat.comic.draw==='page'
   ?`{"caption":"one sentence about the page","panels":[{"size":"big, normal or small","shot":"the camera, in a few words",${COMIC_WORDS_JSON}}],"image":${panelJson()}}`
-  :`{"caption":"one sentence about the page","panels":[${panelJson().replace(/^\{/,`{"size":"big, normal or small","shape":"wide, tall, square or strip",${COMIC_WORDS_JSON},${chat.comic.insets?'"inset":"",':''}`)}]}`)
+  :`{"caption":"one sentence about the page","panels":[${panelJson().replace(/^\{/,`{"size":"big, normal or small","shape":"wide, tall, square or strip","frame":"",${COMIC_WORDS_JSON},${chat.comic.insets?'"inset":"",':''}`)}]}`)
   // a comic panel's "text" is its sound effect (all of the page's, when the page is one picture)
   .replace('"text":"bubble text or \\"\\""',()=>({sfx:`"text":"${chat.comic.draw==='page'?'the sound effects, one per line':'the sound effect word'}, or \\"\\""`,none:'"text":""'})[chat.comic.words||'sfx']||'"text":"bubble text or \\"\\""');
 // the page the AI planned, cleaned; null when it has nothing to draw
@@ -3919,7 +3924,7 @@ function comicPage(j,chat,char){
   const draw=chat.comic.draw==='page'?'page':'panels';
   const panels=arr(j?.panels).filter(x=>x&&typeof x==='object').slice(0,comicMax(chat.comic)).map(x=>{
     const o={size:['big','small'].includes(x.size)?x.size:'normal',words:wordsText(x.words)};
-    if(draw==='panels'){o.shape=comicShape(x.shape);o.p=finishPanel(cleanPanel(x),chat,char);if(chat.comic.insets&&str(x.inset).trim())o.inset=str(x.inset).trim()}else o.shot=str(x.shot).trim();
+    if(draw==='panels'){o.shape=comicShape(x.shape);const f=comicFrame(x.frame);if(f){o.frame=f;if(f==='bleed')o.size='big'}o.p=finishPanel(cleanPanel(x),chat,char);if(chat.comic.insets&&str(x.inset).trim())o.inset=str(x.inset).trim()}else o.shot=str(x.shot).trim();
     return o}).filter(x=>draw==='page'||panelOk(x.p));
   panels.filter(x=>x.inset).forEach((x,k)=>{if(k){delete x.inset;const un=t=>t.split(',').filter(y=>y.trim().toLowerCase()!=='inset').join(',');if(x.p.onebox)x.p.onebox=x.p.onebox.split('|').map(un).join('|');else x.p.base=un(x.p.base);return}x.p.comic=true;
     if(!/\binset\b/i.test(x.p.onebox||x.p.base)){if(x.p.onebox){const [b,...r]=x.p.onebox.split('|');x.p.onebox=[joinTags(b,'inset',x.inset),...r].join(' |')}else x.p.base=joinTags(x.p.base,'inset',x.inset)}});
@@ -3937,10 +3942,17 @@ function comicFields(pg){
   const img=pg.draw==='page'?pg.image:{...clone(pg.panels[0].p),caption:pg.caption||pg.panels[0].p.caption};delete pg.image;
   return {img,story:comicWords(pg),pg};
 }
+// a panel's frame on the page: straight (''), slanted borders, no frame out to the page edges (a big panel only), round,
+// or over the bottom right corner of the panel before it. The AI's words for them are understood too.
+const COMIC_FRAMES={'':'Straight frame',slant:'Slanted borders',bleed:'No frame, to the page edges',round:'Round',over:'Over the panel before'};
+const comicFrame=f=>{const s=String(f||'').toLowerCase();
+  return /slant|diagonal|angle/.test(s)?'slant':/borderless|bleed|no frame|frameless|edge/.test(s)?'bleed':/round|circle|oval/.test(s)?'round':/over/.test(s)?'over':''};
+// the panels laid over another one: panel k over panel k-1, which is not over anything itself
+function comicOvers(panels){const m=new Map();panels.forEach((p,k)=>{if(k&&comicFrame(p.frame)==='over'&&!m.has(k-1))m.set(k,k-1)});return m}
 // rows of a page drawn panel by panel: a big panel on its own row, normal ones two to a row, small ones up to three
 function comicRows(panels){
-  const rows=[];let cur=[];const flush=()=>{if(cur.length)rows.push(cur);cur=[]};
-  panels.forEach((p,k)=>{if(p.size==='big'){flush();rows.push([k]);return}
+  const rows=[],ov=comicOvers(panels);let cur=[];const flush=()=>{if(cur.length)rows.push(cur);cur=[]};
+  panels.forEach((p,k)=>{if(ov.has(k))return;if(p.size==='big'){flush();rows.push([k]);return}
     const cap=[...cur,k].every(j=>panels[j].size==='small')?3:2;if(cur.length>=cap)flush();cur.push(k)});
   flush();return rows;
 }
@@ -4034,14 +4046,44 @@ async function comicCanvas(pg,o={}){
   let imgs=o.imgs;
   if(!imgs){const ids=pg.panels.map(x=>x.pics?.at(-1));if(ids.some(x=>!x))return null;imgs=[];for(const id of ids){const d=await getImgData(id);if(!d)return null;imgs.push(await loadImg(d))}}
   if(pg.letters)await letterFont();
-  const W=1280,M=28,G=14,B=4,maxH=W*.9,boxes=[];
-  const lay=comicRows(pg.panels).map(r=>{const ar=r.map(k=>imgs[k].naturalWidth/imgs[k].naturalHeight),h=Math.min(maxH,(W-G*(r.length-1))/ar.reduce((a,b)=>a+b,0)),ws=ar.map(a=>a*h);
-    return {r,h,ws,x0:(W-ws.reduce((a,b)=>a+b,0)-G*(r.length-1))/2}});
+  const W=1280,M=28,G=14,B=4,maxH=W*.9,boxes=[],P=pg.panels,fr=k=>comicFrame(P[k].frame),ov=comicOvers(P);
+  const lay=comicRows(P).map(r=>{const ar=r.map(k=>imgs[k].naturalWidth/imgs[k].naturalHeight),h=Math.min(maxH,(W-G*(r.length-1))/ar.reduce((a,b)=>a+b,0)),ws=ar.map(a=>a*h);
+    return {r,h,ws,x0:(W-ws.reduce((a,b)=>a+b,0)-G*(r.length-1))/2,bleed:r.length===1&&fr(r[0])==='bleed'}});
   const c=o.canvas||document.createElement('canvas');c.width=W+2*M;c.height=Math.round(lay.reduce((t,l)=>t+l.h,0)+G*(lay.length-1)+2*M);
-  const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);
-  let y=M;for(const l of lay){let cx=M+l.x0;l.r.forEach((k,j)=>{const w=l.ws[j];x.drawImage(imgs[k],cx,y,w,l.h);
-    if(pg.letters){x.save();x.beginPath();x.rect(cx,y,w,l.h);x.clip();for(const b of letterPanel(x,pg.panels[k],cx,y,w,l.h,{small:.85,big:1.2}[pg.lsize]||1))boxes.push({...b,panel:k,rect:{x:cx,y,w,h:l.h}});x.restore()}
-    x.lineWidth=B;x.strokeStyle='#111';x.strokeRect(cx+B/2,y+B/2,w-B,l.h-B);cx+=w+G});y+=l.h+G}
+  const x=c.getContext('2d'),CW=c.width,CX=CW/2;x.fillStyle='#fff';x.fillRect(0,0,CW,c.height);
+  // every panel is a four-sided shape: its sides follow the gutters, which lean on action pages (slanted borders).
+  // Across: y=c+e*(x-CX). Up and down: x=a+b*(y-ym). A corner is where the two meet.
+  const meet=(v,h)=>{const X=(v.a+v.b*(h.c-h.e*CX-v.ym))/(1-v.b*h.e);return [X,h.c+h.e*(X-CX)]};
+  const slanted=l=>l&&l.r.some(k=>fr(k)==='slant');
+  let y=M;const shapes=[];
+  lay.forEach((l,ri)=>{l.y=y;y+=l.h+G});
+  lay.forEach((l,ri)=>{
+    const prev=lay[ri-1],next=lay[ri+1],tilt=i=>(i%2?-1:1)*.035;
+    // the gutter above leans the same way as the row above's bottom side, so it keeps its width
+    const top=!prev?{c:l.bleed?0:M,e:0}:{c:l.y,e:slanted(prev)||slanted(l)?tilt(ri-1):0};
+    const bot=!next?{c:l.bleed?c.height:l.y+l.h,e:0}:{c:l.y+l.h,e:slanted(l)||slanted(next)?tilt(ri):0};
+    const ym=l.y+l.h/2;let cx=M+l.x0;
+    l.r.forEach((k,j)=>{const w=l.ws[j],last=j===l.r.length-1,lean=!last&&(fr(k)==='slant'||fr(l.r[j+1])==='slant')?((j+ri)%2?-1:1)*.12:0;
+      const left=j===0?{a:l.bleed?0:cx,b:0,ym}:shapes.at(-1).nextLeft,right=last?{a:l.bleed?CW:cx+w,b:0,ym}:{a:cx+w,b:lean,ym};
+      const pts=[meet(left,top),meet(right,top),meet(right,bot),meet(left,bot)];
+      shapes.push({k,pts,cell:{x:cx,y:l.y,w,h:l.h},nextLeft:{a:cx+w+G,b:lean,ym},bleed:l.bleed});cx+=w+G})});
+  const box=pts=>{const xs=pts.map(p=>p[0]),ys=pts.map(p=>p[1]),x0=Math.min(...xs),y0=Math.min(...ys);return {x:x0,y:y0,w:Math.max(...xs)-x0,h:Math.max(...ys)-y0}};
+  // a picture fills its shape (cropped a little at the sides, kept near the top where faces are)
+  const fill=(img,r)=>{const s=Math.max(r.w/img.naturalWidth,r.h/img.naturalHeight),iw=img.naturalWidth*s,ih=img.naturalHeight*s;x.drawImage(img,r.x+(r.w-iw)/2,r.y+(r.h-ih)*.3,iw,ih)};
+  const outline=(s,r)=>{x.beginPath();if(s.round)x.ellipse(r.x+r.w/2,r.y+r.h/2,r.w/2,r.h/2,0,0,Math.PI*2);else{x.moveTo(...s.pts[0]);s.pts.slice(1).forEach(p=>x.lineTo(...p));x.closePath()}};
+  const draw=s=>{const k=s.k,r=box(s.pts),sc={small:.85,big:1.2}[pg.lsize]||1;
+    x.save();outline(s,r);x.clip();fill(imgs[k],r);
+    if(pg.letters){const t=s.round?{x:r.x+r.w*.15,y:r.y+r.h*.12,w:r.w*.7,h:r.h*.76}:r;for(const b of letterPanel(x,P[k],t.x,t.y,t.w,t.h,sc))boxes.push({...b,panel:k,rect:t})}
+    x.restore();if(s.bleed)return;
+    if(s.over){outline(s,r);x.lineWidth=B+10;x.strokeStyle='#fff';x.stroke()}
+    outline(s,r);x.lineWidth=B;x.strokeStyle='#111';x.stroke()};
+  // a round panel is the largest oval in its own cell, whatever the gutters around it do
+  for(const s of shapes){if(fr(s.k)==='round'&&!s.bleed){const r=s.cell,d=Math.min(r.w,r.h)*.04;s.pts=[[r.x+d,r.y+d],[r.x+r.w-d,r.y+d],[r.x+r.w-d,r.y+r.h-d],[r.x+d,r.y+r.h-d]];s.round=true}draw(s)}
+  // a panel laid over the bottom right corner of the panel before it
+  for(const [k,host] of ov){const hs=shapes.find(s=>s.k===host);if(!hs)continue;const hr=box(hs.pts),ar=imgs[k].naturalWidth/imgs[k].naturalHeight;
+    let w=hr.w*(hr.w>W*.6?.34:.46),h=w/ar;if(h>hr.h*.55){h=hr.h*.55;w=h*ar}
+    const m=Math.max(22,B*5),x1=Math.min(hr.x+hr.w,CW-M)-m,y1=Math.min(hr.y+hr.h,c.height-M)-m;
+    draw({k,over:true,pts:[[x1-w,y1-h],[x1,y1-h],[x1,y1],[x1-w,y1]]})}
   return {c,imgs,boxes};
 }
 async function buildComicPage(pg){const r=await comicCanvas(pg);return r?r.c.toDataURL('image/jpeg',.9):null}
@@ -4082,7 +4124,7 @@ function comicStoryPrompt(chat,char,history,notes){
   const talk=history.slice(-12).map(m=>m.role==='user'?`USER: ${txt(m)}`:`YOU: ${txt(m)}${comicOf(m)?` [made page: ${comicOf(m).caption}]`:m.imgs?.[m.sw]?` [made image: ${m.imgs[m.sw].caption}]`:''}${m.next?.[m.sw]?` [suggested next: ${m.next[m.sw]}]`:''}`).join('\n');
   const last=pages.at(-1),lp=comicOf(last),words=pages.slice(-3).map(m=>m.story?.[m.sw]).filter(Boolean);
   const plan=lp&&JSON.stringify(lp.draw==='page'?{caption:lp.caption,panels:lp.panels.map(({size,shot,words})=>({size,shot,words})),image:last.imgs[last.sw]}
-    :{caption:lp.caption,panels:lp.panels.map(({size,shape,words,inset,p})=>({size,shape,words,...(inset?{inset}:{}),...p}))});
+    :{caption:lp.caption,panels:lp.panels.map(({size,shape,frame,words,inset,p})=>({size,shape,frame:frame||'',words,...(inset?{inset}:{}),...p}))});
   return `We are making a comic, page by page, that tells a story with ${char.kind==='world'?`characters from ${char.name}`:char.name}. ${su.intro}
 
 STORY OUTLINE: ${chat.storyOutline?.trim()||'(not set yet)'}
