@@ -401,7 +401,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.46.2',HEARTH_DATE='2026-11-03';
+const HEARTH_VERSION='1.47.0',HEARTH_DATE='2026-11-04';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiNoMark:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -517,7 +517,7 @@ async function copyChat(chat,upto){
     const ids=new Set(d.messages.map(m=>m.id).filter(Boolean));d.images=(d.images||[]).filter(e=>!e.msgId||ids.has(e.msgId));
     // the memory and the scene were written after later messages: made again from what the copy keeps
     if((d.memoryAt||0)>d.messages.length){d.memory='';d.memoryAt=0}
-    delete d.scene;delete d.scenePrev;
+    delete d.scene;delete d.scenePrev;delete d.side;
   }
   const done=new Map();
   const fix=async v=>{
@@ -3220,7 +3220,10 @@ ${oneBox?'':`- Position: a short hint for NovelAI's Character Positions canvas, 
 ${o.noCast?'':`
 CHARACTERS (keep their look the same in every image. Each Looks belongs to that character only: never give it to anyone else in the picture. Looks and Usual outfit win over descriptions: when a description mentions other clothes, use the Usual outfit. Only the scene itself, or an "In this scenario" note, can change what they wear):
 ${cast.map(c=>`### ${c.name}\n${c.imageTags?`Looks (copy exactly, in this order, right after girl / boy / other): ${c.imageTags}`:`Description: ${(c.personality||'').slice(0,1500)}`}${c.outfitTags?`\nUsual outfit (use exactly, unless the scene calls for other clothes): ${c.outfitTags}`:''}${castNote(scn,c.id)?`\nIn this scenario (can change their age, clothes or look): ${castNote(scn,c.id)}`:''}`).join('\n\n')}
-${char.kind==='world'?`\nWORLD (other characters may appear too): ${(char.personality||'').slice(0,2500)}\n${worldLinks(char,scn)?worldLinks(char,scn)+'\n':''}`
+${(side=>side.length?`
+SIDE CHARACTERS MET EARLIER IN THIS STORY (when one of them is in a picture again, use the same name in "name" and the same look: hair, eyes, body and clothes, unless the story changed them. Their prompt when last seen):
+${side.map(s=>`- ${s.name}: ${s.look}`).join('\n')}
+`:'')(sideList(chat,castOf(chat,char)))}${char.kind==='world'?`\nWORLD (other characters may appear too): ${(char.personality||'').slice(0,2500)}\n${worldLinks(char,scn)?worldLinks(char,scn)+'\n':''}`
   :cw?`\nWORLD ${char.name} LIVES IN (${cw.name}): ${(cw.personality||'').slice(0,1500)}\n${ownLinks(cw,char).length?`${char.name}'s relationships:\n${ownLinks(cw,char).join('\n')}\n`:''}`:''}`}${loreBlock(o.lore,true)}${o.story?storyPreset(chat,char):''}`;
 }
 // An image story's own prompt preset (chosen for that chat; Automatic adds none): its tone, style and content rules for
@@ -4724,7 +4727,7 @@ function visionApi(){const base=S.settings.apis.find(a=>a.id===S.settings.vision
 // Tags that say who someone is: their character tag, hair color and length, eye color, skin. Used to swap the person in a picture for the user's character.
 const COLOR_RX='silver|white|black|brown|blonde|blond|red|blue|green|purple|pink|orange|grey|gray|golden|gold|aqua|teal|violet|crimson|amber|yellow|lavender|platinum|ash|auburn|ginger|light brown|dark brown|light blue|dark blue|light purple|dark green|multicolored|two-tone|gradient|streaked';
 const idKind=t=>{const n=normTag(t);
-  if(new RegExp(`^(${COLOR_RX}) hair$`).test(n))return 'hair';
+  if(new RegExp(`^((very short|short|medium|long|very long|messy|wavy|curly|straight|spiky) )?(${COLOR_RX}) hair$`).test(n))return 'hair';
   if(/^(very short|short|medium|long|very long|absurdly long) hair$/.test(n))return 'length';
   if(new RegExp(`^(${COLOR_RX}) eyes$`).test(n)||n==='heterochromia')return 'eyes';
   if(/^(dark|pale|tan|tanned|brown|white) skin$|^dark-skinned (female|male)$/.test(n))return 'skin';
@@ -4803,8 +4806,37 @@ function lockLooks(p,cast,single){
     else if(!NO_NAME.test(c.name.trim()))unborrow(c,withLooks)}
   return p;
 }
+// Side characters (named, not one of the cast) are remembered per chat, so one who comes back pages later looks the same:
+// chat.side[key] = {name, look (their prompt from the last picture that showed their hair), ids (hair, eyes, skin, character tag), at}.
+// The AI sees their looks; their hair, eyes, skin and character tag are put back word for word, like the cast's Looks.
+const sideKey=n=>String(n||'').toLowerCase().replace(/^(the|a|an)\s+/,'').replace(/\s+/g,' ').trim();
+const sideLook=s=>String(s).split(',').map(t=>t.replace(/-?\d*\.?\d+::|::/g,'').trim())
+  .filter(t=>t&&!/^(source|target|mutual)#/i.test(t)&&!POSES.some(([re])=>re.test(t.toLowerCase()))).join(', ');
+const sideOf=(c,cast)=>{const n=String(c?.name||'').trim(),first=x=>String(x).toLowerCase().split(/\s+/)[0];
+  return n&&!NO_NAME.test(n)&&!cast.some(m=>m.name.toLowerCase()===n.toLowerCase()||first(m.name)===first(n))?sideKey(n):''};
+function noteSide(chat,c,k,at){
+  const s=chat.side[k],ids=tagsOf(c.prompt).filter(t=>idKind(t)),kinds=new Set(ids.map(idKind));
+  // a later prompt that shows less of them (or forgot their glasses) doesn't replace the fuller look
+  const full=!s?.look||ids.some(t=>idKind(t)==='hair')&&tagsOf(sideLook(c.prompt)).length>=tagsOf(s.look).length*.8;
+  chat.side[k]={name:c.name.trim(),look:full?sideLook(c.prompt):s.look,ids:[...ids,...(s?.ids||[]).filter(t=>!kinds.has(idKind(t)))],at};
+}
+// the side characters met so far; a chat from before this was kept learns them from its earlier prompts
+function sideCast(chat,cast){
+  if(!chat)return {};
+  if(!chat.side){chat.side={};for(const e of chat.images||[])for(const q of e.panels||[])for(const c of q.characters||[]){const k=sideOf(c,cast);if(k)noteSide(chat,c,k,e.at||0)}}
+  return chat.side;
+}
+function keepSide(p,chat,cast){
+  if(!chat||p.onebox||!p.characters?.length)return p;
+  const side=sideCast(chat,cast);
+  for(const c of p.characters){const k=sideOf(c,cast);if(!k)continue;
+    if(side[k]?.ids?.length)c.prompt=asCharacter(c.prompt,{imageTags:side[k].ids.join(', ')},undefined,p.base);
+    noteSide(chat,c,k,Date.now())}
+  return p;
+}
+const sideList=(chat,cast)=>Object.values(sideCast(chat,cast)).sort((a,b)=>b.at-a.at).slice(0,12);
 // the image prompt steps every new prompt goes through
-const finishPanel=(p,chat,char)=>{const cast=castOf(chat,char);return lockPose(fixUndesired(lockLooks(headOut(p),cast,char.kind==='world'?null:char),cast))};
+const finishPanel=(p,chat,char)=>{const cast=castOf(chat,char);return lockPose(fixUndesired(keepSide(lockLooks(headOut(p),cast,char.kind==='world'?null:char),chat,cast),cast))};
 // The pose a prompt states holds from one picture to the next (Generate another, the next image): its pose tag gets a
 // little more weight, and the poses it rules out go in that character's undesired content. Runs again before every
 // request (it changes nothing the second time), so older prompts get it too. Prompts read from a picture file stay as they are.
@@ -5182,7 +5214,7 @@ function chatMenu(chat,char,redraw){
     ${chat.origin?`<button data-act="setup">${I.book} Scene setup (from the world chat)</button><button data-act="srolesc">${I.user} You in this scene: ${SCENE_ROLES[sceneRole(chat)][0]}</button><button data-act="sendback">${I.send} Send back to the world chat${chat.origin.sent?' (sent)':''}</button>`:''}${char.kind==='world'&&chat.mode!=='image'?`<button data-act="wscene">${I.chat} Play a scene with one character</button>${liveScenes(chat).length?`<button data-act="scenes">${I.book} Scenes from this chat (${liveScenes(chat).length})</button>`:''}`:''}<button data-act="memory">${I.brain} Chat memory</button><button data-act="${chat.mode==='image'?'vscene':'scene'}">${I.user} The scene right now</button>${char.kind==='world'?`<button data-act="cguests">${I.user} Guests${guestsOf(chat,char).length?`: ${esc(guestsOf(chat,char).map(g=>g.name).join(', '))}`:''}</button>`:''}${char.kind!=='world'&&S.chars.some(c=>c.kind==='world')?`<button data-act="cworld">${I.book} World for this chat: ${esc(chatWorld(chat,char)?.name||'none')}</button>`:''}<button data-act="persona">${I.user} Persona for this chat</button><button data-act="prompt">${I.edit} Prompt preset</button>
     <button data-act="vars">${I.code} Script variables</button><button data-act="lore">${I.tag} Lore used in last reply</button><button data-act="rename">${I.edit} Rename chat</button><button data-act="dupchat">${I.copy} Duplicate chat</button><button data-act="mvf">${I.folder} Move to folder${folders('chats').find(f=>f.id===chat.folder)?` (now: ${esc(folders('chats').find(f=>f.id===chat.folder).name)})`:''}</button>
     <button data-act="newchat">${I.plus} Start a new chat</button><button data-act="export">${I.exp} Export chat as text</button>
-    ${chat.mode==='image'?`<button data-act="srole">${{observer:I.book,pov:I.img}[storyRole(chat)]||I.user} Your role: ${ROLE_LABEL[storyRole(chat)]}</button><button data-act="comic">${I.copy} Comic pages: ${chat.comic?`on · ${chat.comic.draw==='page'?'whole page at once':`panel by panel${chat.comic.insets?', insets':''}`}`:'off'}</button><button data-act="outline">${I.edit} Story outline</button><button data-act="ihist">${I.copy} All image prompts (${chat.images?.length||0})</button>`
+    ${chat.mode==='image'?`<button data-act="srole">${{observer:I.book,pov:I.img}[storyRole(chat)]||I.user} Your role: ${ROLE_LABEL[storyRole(chat)]}</button><button data-act="comic">${I.copy} Comic pages: ${chat.comic?`on · ${chat.comic.draw==='page'?'whole page at once':`panel by panel${chat.comic.insets?', insets':''}`}`:'off'}</button><button data-act="outline">${I.edit} Story outline</button><button data-act="sidec">${I.user} Side characters (${sideList(chat,castOf(chat,char)).length})</button><button data-act="ihist">${I.copy} All image prompts (${chat.images?.length||0})</button>`
       :`<button data-act="image">${I.img} Image prompt / storyboard</button><button data-act="board">${I.copy} Storyboard the whole chat${boardBusy.has(chat.id)?' (writing…)':''}</button>`}<button data-act="fromimg">${I.img} Prompt from image</button><button data-act="ipreset">${I.img} Image preset: ${esc(imgPreset().name)}</button><button data-act="gallery">${I.img} Gallery${char.gallery?.length?` (${char.gallery.length})`:''}</button>${researchOn()?`<button data-act="lookup">${I.wand} Look something up</button>`:''}${chat.researchNotes||researchOn()?`<button data-act="facts">${I.brain} Looked-up facts</button>`:''}<button data-act="charpage">${I.user} Character page</button><button data-act="editchar">${I.tag} Edit character</button><button class="danger" data-act="del">${I.trash} Delete chat</button></div>`,{
     charpage:()=>go('#/char/'+char.id),
     image:()=>{if(!chat.messages.length)return toast('Start the story first');openImageSheet(chat,char,chat.messages.length-1)},
@@ -5216,6 +5248,18 @@ function chatMenu(chat,char,redraw){
       $('#cm-on',pn).onchange=e=>$('#cm-box',pn).hidden=!e.target.checked;comicOptsWire(pn)},
     outline:()=>openSheet(`<h2>Story outline</h2><p class="hint">What the image story is about. The AI uses it to suggest the next scenes, and updates it when you tell it about the story.</p><textarea id="so" rows="8">${esc(chat.storyOutline||'')}</textarea><br><br><button class="btn block" data-act="ok">Save outline</button>`,{
       ok:async()=>{chat.storyOutline=$('#so').value.trim();await saveChat(chat);closeSheet();toast('Outline saved')}}),
+    sidec:()=>{const all=Object.values(sideCast(chat,castOf(chat,char))).sort((a,b)=>b.at-a.at);
+      const row=s=>`<div class="sd-r" style="margin-bottom:12px"><div class="row"><input class="sd-n" value="${esc(s.name)}" placeholder="Name" style="flex:1"><button type="button" class="btn ghost" data-act="sdx" title="Forget">${I.trash}</button></div><textarea class="sd-l" data-tags="hl" rows="2" autocapitalize="off" placeholder="e.g. boy, short black hair, brown eyes, glasses, waiter uniform">${esc(s.look)}</textarea></div>`;
+      const pn=openSheet(`<h2>Side characters</h2><p class="hint">People in this story who aren't your characters. Hearth remembers how they looked, so when one comes back they look the same: their hair, eyes and skin stay exactly as written here. Fix a look here, or forget someone.</p>
+        <div id="sd-list">${all.map(row).join('')||'<p class="small muted">Nobody yet. Side characters are added when they appear in a picture with a name.</p>'}</div>
+        <button type="button" class="btn ghost block" data-act="sdadd">${I.plus} Add someone</button>
+        <div class="sheet-foot row"><button class="btn ghost" data-act="close" style="flex:1">Cancel</button><button class="btn" data-act="ok" style="flex:2">Save</button></div>`,{
+        sdx:b=>b.closest('.sd-r').remove(),
+        sdadd:()=>{const l=$('#sd-list',pn);if(!$('.sd-r',l))l.innerHTML='';l.insertAdjacentHTML('beforeend',row({name:'',look:''}));$('.sd-r:last-child .sd-n',l).focus()},
+        ok:async()=>{const side={},old=chat.side||{},now=Date.now();
+          $$('.sd-r',pn).forEach((r,k)=>{const name=$('.sd-n',r).value.trim(),look=$('.sd-l',r).value.trim(),key=sideKey(name);if(!key||!look)return;
+            side[key]={name,look,ids:tagsOf(look).filter(t=>idKind(t)),at:old[key]?.look===look?old[key].at:now-k}});
+          chat.side=side;await saveChat(chat);closeSheet();toast('Side characters saved')}},{modal:true})},
     ipreset:()=>openSheet(`<h2>Image preset</h2><div class="list">${S.settings.imgPresets.map(p=>`<div class="li ${p.id===imgPreset().id?'on':''}" data-act="pick" data-id="${p.id}"><div class="lt"><b>${esc(p.name)}</b><span>${esc(joinTags(p.artist,p.footer.replace(/\n/g,' '),p.uc)||'Empty')}</span></div></div>`).join('')}</div><p class="hint">Edit presets in Settings → Image prompts.</p>`,{
       pick:async b=>{S.settings.imgPreset=b.dataset.id;await saveSettings();closeSheet();redraw();toast('Preset: '+imgPreset().name)}}),
     prompt:()=>{const cur=chat.promptId||'',auto=promptFor({...chat,promptId:''}),story=chat.mode==='image';
