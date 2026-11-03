@@ -401,7 +401,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.45.2',HEARTH_DATE='2026-11-03';
+const HEARTH_VERSION='1.45.3',HEARTH_DATE='2026-11-03';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiNoMark:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -4022,13 +4022,16 @@ function letterPanel(x,pan,px,py,pw,ph,scale=1){
         const tries=[want,...placed.filter(b=>!b.low).flatMap(b=>[b.cx+(b.w+it.w)/2+m,b.cx-(b.w+it.w)/2-m])].map(clamp);
         cx=tries.reduce((a,v)=>topAt(v)+Math.abs(v-want)*.35<topAt(a)+Math.abs(a-want)*.35?v:a,tries[0]);
         cy=topAt(cx)+it.h/2}
-      cx=Math.min(pw-it.w/2,Math.max(it.w/2,cx));cy=Math.min(ph-it.h/2,Math.max(it.h/2,cy));
+      // Hearth's own places stay inside the panel; one you dragged stays where you put it, even over another panel
+      if(!own){cx=Math.min(pw-it.w/2,Math.max(it.w/2,cx));cy=Math.min(ph-it.h/2,Math.max(it.h/2,cy))}
+      else{const PW=x.canvas.width,PH=x.canvas.height;cx=Math.min(PW-px-it.w/2-4,Math.max(it.w/2+4-px,cx));cy=Math.min(PH-py-it.h/2-4,Math.max(it.h/2+4-py,cy))}
       placed.push({...it,cx,cy});total+=it.h});
     if(total>ph*.62&&fit<3&&!pan.bub)continue;
     // drawn in order, so later bubbles go over earlier ones
     x.lineJoin='round';
     for(const b of placed){
-      const bx=px+b.cx,by=py+b.cy,tipX=px+(b.sx??b.cx/pw)*pw,tipY=Math.min(py+ph*.62,by+b.h/2+fs*2.4);
+      // the tail points down toward the speaker, but never further than a short way, wherever the bubble was dragged
+      const bx=px+b.cx,by=py+b.cy,out=b.cx<0||b.cx>pw||b.cy<0||b.cy>ph,sx=px+(b.sx??b.cx/pw)*pw,tipX=out?Math.max(bx-b.w*.6,Math.min(bx+b.w*.6,sx)):sx,tipY=Math.max(by+b.h/2+fs*1.4,Math.min(py+ph*.62,by+b.h/2+fs*2.4));
       x.strokeStyle='#111';x.fillStyle=b.kind==='cap'?'#fff6cf':'#fff';
       if(b.kind==='cap'){x.lineWidth=Math.max(2,fs*.12);x.fillRect(bx-b.w/2,by-b.h/2,b.w,b.h);x.strokeRect(bx-b.w/2,by-b.h/2,b.w,b.h)}
       else if(b.kind==='say'){
