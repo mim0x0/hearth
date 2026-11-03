@@ -401,7 +401,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.45.4',HEARTH_DATE='2026-11-03';
+const HEARTH_VERSION='1.46.0',HEARTH_DATE='2026-11-03';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiNoMark:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -2900,6 +2900,7 @@ async function vChat(id){
         <textarea id="cp-ch" rows="2" style="margin-top:8px" placeholder="e.g. a close-up of her face, she smiles, rain starts"></textarea>
         <div class="row" style="margin-top:6px;flex-wrap:wrap">${naiOn()?`<button class="btn sm" data-act="chg" data-d="1">${I.wand} Change and draw</button>`:''}<button class="btn ghost sm" data-act="chg">${I.edit} Change the prompt only</button>
           <select id="cp-sh" style="width:auto;padding:5px 10px" title="Shape of the picture">${Object.entries(COMIC_SHAPES).map(([v,[,,l]])=>`<option value="${v}" ${comicShape(x.shape)===v?'selected':''}>${l}</option>`).join('')}</select></div>
+        <div class="tg" style="margin-top:6px"><div>Rewrite the words to fit<div class="hint">Your AI changes this panel's words along with it. If you typed new words below, yours are used.</div></div><label class="sw"><input type="checkbox" id="cp-rw" checked><span></span></label></div>
         <div class="hint">Your AI changes only what you ask in this panel's prompt; the other panels stay as they are. The pictures you have are kept, so you can go back to one.</div>
         <label class="f">Words of this panel<small>${pg.letters?'lettered in its bubbles':'written under the page'}</small></label><textarea id="cp-w" rows="3" placeholder="Name: &quot;line&quot;&#10;Name (thinks): &quot;line&quot;&#10;narration">${esc(x.words||'')}</textarea>
         <button class="btn ghost sm" data-act="wsave" style="margin-top:6px">${I.check} Save the words</button></div>
@@ -2917,9 +2918,15 @@ async function vChat(id){
             const p=finishPanel(np,chat,char);if(x.p.comic)p.comic=true;if(!p.caption)p.caption=x.p.caption;x.p=p;
             if(k===0&&m.imgs?.[m.sw])m.imgs[m.sw]={...clone(p),caption:pg.caption||p.caption};
             addImage(chat,[p],`Panel ${k+1}: ${change}`,'',r.usage,m.id)}
+          // the words: the ones you typed, or your AI's to fit the change
+          const typed=wordsText($('#cp-w',pn).value);let said='';
+          if(typed!==(x.words||'')){x.words=typed;said=' and your words'}
+          else if(change&&$('#cp-rw',pn).checked){msg.textContent='Rewriting the words…';
+            try{const r=await panelWords(chat,char,pg,k,change);if(r.words){x.words=r.words;said=' and its words'}}catch(e){toast('The words stay as they were: '+e.message,5000)}}
+          if(said){(m.story??=[])[m.sw]=comicWords(pg);if(!draw&&pg.letters)await comicRebuild(m,m.sw)}
           x.shape=shape;await saveChat(chat);updateOne(i);
-          if(draw){const [w2,h2]=COMIC_SHAPES[shape];msg.textContent=`Making panel ${k+1}…`;await add([await naiPicture(x.p,undefined,{w:w2,h:h2})]);toast(`Panel ${k+1} changed`)}
-          else{again();toast(change?'Prompt changed. Tap Generate another to draw it.':'Shape changed')}}
+          if(draw){const [w2,h2]=COMIC_SHAPES[shape];msg.textContent=`Making panel ${k+1}…`;await add([await naiPicture(x.p,undefined,{w:w2,h:h2})]);toast(`Panel ${k+1} changed${said}`)}
+          else{again();toast(change?`Prompt${said} changed. Tap Generate another to draw it.`:`Shape${said} changed`)}}
         catch(e){if(msg.isConnected){msg.className='small err';msg.textContent=e.message}$$('[data-act=chg]',pn).forEach(e=>e.disabled=false)}},
       wsave:async()=>{x.words=wordsText($('#cp-w',pn).value);(m.story??=[])[m.sw]=comicWords(pg);if(pg.letters)await comicRebuild(m,m.sw);await saveChat(chat);updateOne(i);toast('Words saved');again()},
       gen:async b=>{const msg=$('#cp-msg',pn);b.disabled=true;msg.className='small muted';msg.textContent=`Making panel ${k+1}…`;
@@ -3924,6 +3931,24 @@ ${!page&&c.insets?`- Insets: a big panel may have one small inset, a small frame
 const OUTSIDE_BORDER='Breaking the frame: on the strongest beat (a punch, a leap, a shout, a big reveal), now and then let one character, or their fist, weapon or hair, reach out of their panel over the border into the gutter or the next panel. Then add outside border to the base prompt and say it in the sentence for that panel (like "Panel 3, big: she leaps out of the frame toward the reader"). At most once per page and not on every page; calm pages keep everyone inside their frames.';
 // what goes in "words": the story is told by them, mostly by what the characters say and think
 const comicWordsRule=chat=>`- Words: the "words" of each panel tell the story, because they are written under the page instead of in the picture. Mostly they are what the characters say and think: in almost every panel someone speaks or thinks. Write each line on its own line, speech as Name: "line" and thoughts as Name (thinks): "line"; in a fight, battle cries, taunts, gasps, orders and quick thoughts. Add a short narration line (${storyVoice(chat)}), as plain text with no label like Narration:, only now and then: a new place, a time jump, or something nobody says aloud. Narration alone is not enough for a page. Give every panel its words, one to four lines; at most one panel per page may be silent, and only on purpose (a wordless reaction or a big splash).`;
+// one panel's words written again after a change to it, keeping what still fits and leading on to the next panel
+async function panelWords(chat,char,pg,k,change){
+  const un=personaFor(chat)?.name||'You',x=pg.panels[k],cast=castOf(chat,char).map(c=>c.name).filter(Boolean);
+  const list=pg.panels.map((y,n)=>`Panel ${n+1}${n===k?' (the one being changed)':''}:\n${y.words||'(no words)'}`).join('\n\n');
+  const {j,usage}=await aiJson('You write the words of one comic panel: what the characters say and think, and now and then a narration line. Reply with a single JSON object only.',
+`A comic page${char.kind==='world'?` set in ${char.name}`:''} with ${[...new Set([...cast,char.kind==='world'?'':char.name].filter(Boolean))].join(', ')||char.name}. The user is ${un}.
+
+THE PAGE NOW, panel by panel:
+${list}
+
+Panel ${k+1} is being changed. The change: ${change}
+Its new picture: ${promptLine(x.p)}
+
+Write the words of panel ${k+1} again so they fit the change and still lead on to the panel after it. Keep the lines that still fit and change what the change touches; use the same language as the other panels. One to four lines, each on its own line: speech as Name: "line", thoughts as Name (thinks): "line", narration (${storyVoice(chat)}) as plain text with no label.
+Reply as {"words":"the lines, separated by \\n"}`,undefined,600);
+  addExtra(chat,usage);
+  return {words:wordsText(j?.words)};
+}
 // the JSON shape of one planned page
 const COMIC_WORDS_JSON='"words":"Name: \\"line\\"\\nName (thinks): \\"line\\"\\nnarration"';
 const comicPageJson=chat=>(chat.comic.draw==='page'
@@ -3949,7 +3974,7 @@ function comicPage(j,chat,char){
 const wordsText=v=>(Array.isArray(v)?v:[v]).map(l=>l&&typeof l==='object'?((n,t)=>n?`${n}${l.thinks||/thought|think/i.test(str(l.type))?' (thinks)':''}: "${t.replace(/^"|"$/g,'')}"`:t)(str(l.name||l.speaker||l.character).trim(),str(l.line||l.text||l.words||l.say).trim()):str(l).trim()).filter(Boolean).join('\n')
   .split('\n').map(l=>unlabel(l.trim())).filter(l=>l&&!/^(narration|narrator)$/i.test(l)).join('\n'); // narration without its label
 // the words under the page: one paragraph per panel, the speakers in bold
-const comicWords=pg=>pg.panels.map((x,k)=>x.words?`**${k+1}.** ${x.words.replace(/^([^\n:"“*]{1,40}):\s*/gm,'**$1:** ')}`:'').filter(Boolean).join('\n\n');
+const comicWords=pg=>pg.panels.map((x,k)=>x.words?`**${k+1}.** ${x.words.split('\n').map(unlabel).join('\n').replace(/^([^\n:"“*]{1,40}):\s*/gm,'**$1:** ')}`:'').filter(Boolean).join('\n\n');
 // a planned page as its message's fields: the prompt kept as its image (the whole page, or the first panel standing for it) and the words as its story text
 function comicFields(pg){
   const img=pg.draw==='page'?pg.image:{...clone(pg.panels[0].p),caption:pg.caption||pg.panels[0].p.caption};delete pg.image;
