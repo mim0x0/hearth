@@ -406,7 +406,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.52.0',HEARTH_DATE='2026-11-05';
+const HEARTH_VERSION='1.53.0',HEARTH_DATE='2026-11-05';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiNoMark:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgExpr:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -1396,17 +1396,22 @@ function galAlbums(c){
 const galAlbumName=(c,g)=>{const k=galAlbum(c,g);return k==='none'?'Not from a chat':k==='gone'?'From deleted chats':galAlbums(c).find(a=>a.k===k)?.name||''};
 // move gallery pictures to an album you made, a chat's album, or "Not from a chat"; done gets the album key
 function galMove(c,ids,done,back){
+  galPick(c,`Move ${ids.length>1?`${ids.length} pictures`:'the picture'} to`,async k=>{
+    // an album you made keeps the chat, so the picture goes back to its chat if the album is deleted
+    for(const g of c.gallery||[])if(ids.includes(g.id)){if(k.startsWith('f:'))g.folder=k.slice(2);else{g.folder='';g.chatId=k==='none'?'':k.slice(5)}}
+    await saveChars();toast(`Moved ${ids.length>1?`${ids.length} pictures`:'the picture'}`);done(k)},back);
+}
+// pick one of a character's albums, or make a new one; done gets the album key ('f:<id>', 'chat:<id>' or 'none')
+function galPick(c,title,done,back){
   const chats=S.chatIndex.filter(x=>x.charId===c.id).sort((a,b)=>(b.updated||0)-(a.updated||0));
   const li=(k,ic,name,sub)=>`<div class="li" data-act="to" data-k="${k}">${ic}<div class="lt"><b>${esc(name)}</b>${sub?`<span>${esc(sub)}</span>`:''}</div></div>`;
-  openSheet(`<h2>Move ${ids.length>1?`${ids.length} pictures`:'the picture'} to</h2><div class="list">
+  openSheet(`<h2>${esc(title)}</h2><div class="list">
     ${(c.galFolders||[]).map(f=>li('f:'+f.id,I.folder,f.name,'Your album')).join('')}${li('new',I.plus,'New album…','')}
     ${li('none',I.img,'Not from a chat','')}${chats.map(x=>li('chat:'+x.id,I.chat,x.title||'Chat',chatKind(x))).join('')}</div>
     <div class="sheet-foot"><button class="btn ghost block" data-act="back">${I.back} Back</button></div>`,{
     to:async b=>{let k=b.dataset.k;
-      if(k==='new'){const n=prompt('Album name')?.trim();if(!n)return;const f={id:uid(),name:n};(c.galFolders??=[]).push(f);k='f:'+f.id}
-      // an album you made keeps the chat, so the picture goes back to its chat if the album is deleted
-      for(const g of c.gallery||[])if(ids.includes(g.id)){if(k.startsWith('f:'))g.folder=k.slice(2);else{g.folder='';g.chatId=k==='none'?'':k.slice(5)}}
-      await saveChars();toast(`Moved ${ids.length>1?`${ids.length} pictures`:'the picture'}`);done(k)},
+      if(k==='new'){const n=prompt('Album name')?.trim();if(!n)return;const f={id:uid(),name:n};(c.galFolders??=[]).push(f);await saveChars();k='f:'+f.id}
+      done(k)},
     back:()=>back()});
 }
 function openGallery(c,chatId){
@@ -3533,9 +3538,11 @@ async function naiTool(kind,src,o={}){
 async function naiPicture(p,signal,o){const {data,seed}=await naiGenerate(p,signal,o);return putImg(data,{seed,made:true})}
 const inGallery=id=>S.chars.some(c=>c.gallery?.some(g=>g.id===id));
 // a copy goes into the gallery, so deleting one never takes the other with it
-async function saveToGallery(c,id,note,chatId){
+// album (optional): a key from galPick, so the picture goes straight into that album
+async function saveToGallery(c,id,note,chatId,album){
   const rec=await store.get('img:'+id);if(!rec?.data)throw new Error('Picture not found');
-  const gid=await putImg(rec.data);(c.gallery??=[]).push({id:gid,chatId:chatId||'',note:note||'',seed:rec.seed,at:Date.now()});await saveChars();
+  if(album)chatId=album.startsWith('chat:')?album.slice(5):album==='none'?'':chatId;
+  const gid=await putImg(rec.data);(c.gallery??=[]).push({id:gid,chatId:chatId||'',note:note||'',seed:rec.seed,at:Date.now(),...(album?.startsWith('f:')?{folder:album.slice(2)}:{})});await saveChars();
   await store.set('img:'+id,{...rec,saved:[...(rec.saved||[]),c.id]});return gid;
 }
 // a copy goes straight into a character's or world's profile pictures (made smaller, like pictures added there)
@@ -3550,6 +3557,12 @@ async function saveToPool(c,id){
 async function viewMade(id,o={}){
   const rec=await store.get('img:'+id);if(!rec?.data)return toast('Picture not found');
   const c=o.c,saved=c&&((rec.saved||[]).includes(c.id)||c.gallery?.some(g=>g.id===id));
+  // saving to a gallery: from the Images page or to another gallery you pick the album (or make one); from a chat it goes in that chat's album
+  const save=(t,chatId,picked)=>{
+    const put=async k=>{try{await saveToGallery(t,id,o.note,chatId,k);
+      const an=k?.startsWith('f:')?t.galFolders?.find(f=>f.id===k.slice(2))?.name:k?.startsWith('chat:')?S.chatIndex.find(x=>x.id===k.slice(5))?.title||'Chat':k==='none'?'Not from a chat':'';
+      toast(`Saved to ${t.name}'s gallery${an?` · ${an}`:''}`)}catch(e){toast(e.message)}viewMade(id,o)};
+    if(o.images||picked)galPick(t,`Which album in ${t.name}'s gallery?`,put,()=>viewMade(id,o));else put()};
   openSheet(`<img src="${rec.data}" alt="" data-act="zoom" style="width:100%;max-height:60dvh;object-fit:contain;border-radius:12px;background:#000">
     <p class="small muted" style="margin:6px 0 0">${[rec.tool,rec.uploaded?'From your device':'',rec.seed!=null?`Seed ${rec.seed}`:''].filter(Boolean).map(esc).join(' · ')}${rec.saved?.length?` · <span class="okc">Saved to ${[...new Set(rec.saved)].map(x=>x==='lib'?'My pictures':esc(getChar(x)?.name||'?')).join(', ')}</span>`:''}${rec.pool?.length?` · <span class="okc">Profile picture of ${[...new Set(rec.pool)].map(x=>esc(getChar(x)?.name||'?')).join(', ')}</span>`:''}</p>
     <div class="menu" style="margin-top:8px">
@@ -3565,10 +3578,10 @@ async function viewMade(id,o={}){
     </div>
     <div class="sheet-foot row"><button class="btn" data-act="back" style="flex:1">${I.back} ${o.backLabel||'Back'}</button></div>`,{
     back:()=>o.back?o.back():closeSheet(),
-    gsave:async()=>{await saveToGallery(c,id,o.note,o.chatId);toast(`Saved to ${c.name}'s gallery`);viewMade(id,o)},
+    gsave:()=>save(c,o.chatId),
     gother:()=>pickGallery(async t=>{
       if(t==='lib')return pickLibFolder(async fid=>{await saveToLibrary(id,fid,o.note);toast(`Saved to My pictures${fid?` · ${libFolderName(fid)}`:''}`);viewMade(id,o)},()=>viewMade(id,o));
-      await saveToGallery(t,id,o.note,t.id===c?.id?o.chatId:'');toast(`Saved to ${t.name}'s gallery`);viewMade(id,o)},()=>viewMade(id,o)),
+      save(t,t.id===c?.id?o.chatId:'',true)},()=>viewMade(id,o)),
     pool:()=>pickGallery(async t=>{try{await saveToPool(t,id);toast(`Added to ${t.name}'s profile pictures`)}catch(e){toast(e.message)}viewMade(id,o)},()=>viewMade(id,o),{chars:true,title:'Add to profile pictures',first:c?.id}),
     dl:async()=>download(`hearth-${rec.seed??id}.png`,await dataToBlob(rec.data)),
     more:b=>o.more[+b.dataset.k].fn(),
