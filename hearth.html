@@ -81,6 +81,7 @@ label.f small{font-weight:400;color:var(--muted);margin-left:6px}
 .set-ic{width:38px;height:38px;border-radius:50%;background:var(--panel2);display:flex;align-items:center;justify-content:center;flex:none;color:var(--accent)}
 .set-more{margin-top:12px}.set-more>summary{cursor:pointer;color:var(--muted);font-size:14px;padding:4px 0}
 .set-hit{outline:2px solid var(--accent);outline-offset:4px;border-radius:6px}
+.ubars{display:flex;flex-direction:column;gap:10px}.ubar .ub-top{display:flex;gap:8px;align-items:baseline;font-size:14px}.ubar .ub-top b{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}.ubar .ub-top span{flex:none;font-variant-numeric:tabular-nums}.ub-track{height:8px;background:var(--panel2);border-radius:4px;margin:4px 0 2px;overflow:hidden}.ub-track i{display:block;height:100%;background:var(--accent);border-radius:4px}.ub-sub{font-size:12px;color:var(--muted)}.ubar.zero{opacity:.55}
 .sec h3{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 8px}
 .box{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px}
 details.box summary{cursor:pointer;font-weight:600}
@@ -406,7 +407,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.54.0',HEARTH_DATE='2026-11-06';
+const HEARTH_VERSION='1.55.0',HEARTH_DATE='2026-11-06';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiNoMark:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgExpr:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -931,8 +932,9 @@ function usedOf(api,messages,r){
 const addExtra=(chat,u)=>{if(!u)return;const e=chat.extra??={in:0,out:0,est:false};e.in+=u.in||0;e.out+=u.out||0;e.est=e.est||!!u.est;addCost(e,u)};
 async function logUsage(api,messages,r,o){
   const [k,quiet]=useKind(messages,o),u=r.used;
-  const log=await usageList();log.push({t:Date.now(),k,m:api.model||'',i:Math.round(u.in||0),o:Math.round(u.out||0),c:u.cost??null,ce:!!u.costEst,e:!!u.est});
-  if(log.length>5000)log.splice(0,log.length-5000);
+  // ch: the chat open when the request was sent ('' = none; older entries don't have it)
+  const log=await usageList();log.push({t:Date.now(),k,m:api.model||'',i:Math.round(u.in||0),o:Math.round(u.out||0),c:u.cost??null,ce:!!u.costEst,e:!!u.est,ch:o.chatId??curChat?.id??''});
+  if(log.length>20000)log.splice(0,log.length-20000);
   clearTimeout(usageSaveT);usageSaveT=setTimeout(()=>store.set('usage',usageLog),1500);
   if(quiet)return;
   // one note per kind, summed over the requests that come close together (a wizard makes several)
@@ -946,24 +948,76 @@ function usageSum(list){
   t.text=t.n?`${t.cost!=null?`${t.costEst?'≈ ':''}${fmtCost(t.cost)} · `:''}${(t.in+t.out).toLocaleString()} tokens · ${t.n} request${t.n===1?'':'s'}`:'nothing yet';
   return t;
 }
-function openUsage(){
-  let span='day';
+// the usage log grouped: by model, what it was for, day (hour for today) or chat; each group with its totals
+const USE_SPANS=[['day','Today'],['week','7 days'],['month','30 days'],['all','All']];
+const USE_BY=[['model','Model'],['kind','What for'],['day','Day'],['chat','Chat']];
+function usageSpan(log,span){
+  const d=new Date(),day=new Date(d.getFullYear(),d.getMonth(),d.getDate()).getTime();
+  return log.filter(e=>e.t>=({day,week:day-6*864e5,month:day-29*864e5,all:0}[span]));
+}
+const dayKey=t=>{const d=new Date(t);return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`};
+const useChatName=ch=>{if(ch==null)return 'Not recorded (before 1.55)';if(!ch)return 'Outside chats';
+  const x=S.chatIndex.find(y=>y.id===ch);if(!x)return 'A deleted chat';const c=getChar(x.charId);return `${c?.name?c.name+': ':''}${x.title||'Chat'}`};
+function usageGroups(list,by,span){
+  const key={model:e=>e.m||'(no model)',kind:e=>e.k,chat:e=>useChatName(e.ch),
+    day:e=>span==='day'?String(new Date(e.t).getHours()).padStart(2,'0')+':00':dayKey(e.t)}[by];
+  const g=new Map();for(const e of list){const k=key(e);if(!g.has(k))g.set(k,[]);g.get(k).push(e)}
+  // days and hours in time order, with the empty ones too so gaps show; the rest biggest first
+  if(by==='day'){
+    if(span==='day'){const now=new Date().getHours();for(let h=0;h<=now;h++){const k=String(h).padStart(2,'0')+':00';if(!g.has(k))g.set(k,[])}}
+    else if(span!=='all'){const n=span==='week'?7:30;for(let i=0;i<n;i++){const k=dayKey(Date.now()-i*864e5);if(!g.has(k))g.set(k,[])}}
+    return [...g].map(([k,l])=>[k,usageSum(l)]).sort((a,b)=>a[0]<b[0]?1:-1).slice(0,span==='all'?120:48);
+  }
+  return [...g].map(([k,l])=>[k,usageSum(l)]).sort((a,b)=>(b[1].cost??0)-(a[1].cost??0)||(b[1].in+b[1].out)-(a[1].in+a[1].out));
+}
+const dayLabel=k=>/^\d{4}-/.test(k)?new Date(k+'T12:00').toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'}):k;
+const tokShort=n=>n>=1e6?(n/1e6).toFixed(n>=1e7?0:1)+'M':n>=1e3?(n/1e3).toFixed(n>=1e4?0:1)+'k':String(Math.round(n));
+// a short text of the totals, to paste anywhere (or give to an AI to look at)
+function usageReport(log,span){
+  const list=usageSpan(log,span),sum=usageSum(list),name=USE_SPANS.find(s=>s[0]===span)[1];
+  const line=([k,t])=>`- ${by==='day'?dayLabel(k):k}: ${t.cost!=null?`${t.costEst?'~':''}$${t.cost.toFixed(4)}, `:''}${Math.round(t.in).toLocaleString()} in + ${Math.round(t.out).toLocaleString()} out tokens, ${t.n} requests`;
+  let by;const part=(b,title)=>{by=b;const rows=usageGroups(list,b,span).filter(r=>r[1].n);return rows.length?`\n${title}:\n${rows.map(line).join('\n')}`:''};
+  const range=list.length?`${new Date(list[0].t).toLocaleString()} to ${new Date(list.at(-1).t).toLocaleString()}`:'nothing';
+  return `Hearth ${HEARTH_VERSION} usage, ${name} (${range})
+Total: ${sum.cost!=null?`${sum.costEst?'~':''}$${sum.cost.toFixed(4)}, `:''}${Math.round(sum.in).toLocaleString()} in + ${Math.round(sum.out).toLocaleString()} out tokens, ${sum.n} requests${sum.est||sum.costEst?' (~ = partly estimated)':''}
+${part('model','By model')}${part('kind','By what it was for')}${part('day',span==='day'?'By hour':'By day')}${part('chat','By chat')}`;
+}
+const usageCsv=list=>{const q=v=>{const s=String(v??'');return /[",\n]/.test(s)?`"${s.replace(/"/g,'""')}"`:s};
+  return ['time,what_for,model,chat,input_tokens,output_tokens,cost_usd,cost_estimated,tokens_estimated',
+    ...list.map(e=>[new Date(e.t).toISOString(),e.k,e.m,e.ch==null?'':useChatName(e.ch),e.i,e.o,e.c??'',e.ce?1:0,e.e?1:0].map(q).join(','))].join('\n')};
+function openUsage(span0,by0){
+  let span=span0||'week',by=by0||'model';
   const draw=async()=>{
-    const log=await usageList(),d=new Date(),day=new Date(d.getFullYear(),d.getMonth(),d.getDate()).getTime();
-    const from={day,week:day-6*864e5,month:day-29*864e5,all:0}[span],list=log.filter(e=>e.t>=from),sum=usageSum(list);
-    const kinds={};for(const e of list)(kinds[e.k]??=[]).push(e);
-    const rows=Object.entries(kinds).map(([k,l])=>[k,usageSum(l)]).sort((a,b)=>(b[1].cost??0)-(a[1].cost??0)||(b[1].in+b[1].out)-(a[1].in+a[1].out));
+    const log=await usageList(),list=usageSpan(log,span),sum=usageSum(list);
+    const rows=usageGroups(list,by,span),money=list.some(e=>e.c!=null),val=t=>money?(t.cost||0):t.in+t.out;
+    const max=Math.max(0,...rows.map(r=>val(r[1])))||1,tot=money?(sum.cost||0):sum.in+sum.out;
     const when=t=>new Date(t).toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
-    $('#use-body').innerHTML=`<div class="box" style="margin:10px 0"><b style="font-size:17px">${sum.cost!=null?`${sum.costEst?'≈ ':''}${fmtCost(sum.cost)}`:'No cost reported'}</b><div class="small muted">${sum.text}</div></div>
-      ${rows.length?`<label class="f">By what it was for</label><div class="list">${rows.map(([k,t])=>`<div class="li"><div class="lt"><b>${esc(k)}</b><span>${t.text} · ↑ ${Math.round(t.in).toLocaleString()} · ↓ ${Math.round(t.out).toLocaleString()}</span></div></div>`).join('')}</div>
-      <label class="f">Latest requests</label><div class="list">${list.slice(-40).reverse().map(e=>`<div class="li"><div class="lt"><b>${esc(e.k)}</b><span>${when(e.t)} · ${esc(e.m)} · ${e.e?'≈ ':''}↑ ${e.i.toLocaleString()} · ↓ ${e.o.toLocaleString()}${e.c!=null?` · ${e.ce?'≈ ':''}${fmtCost(e.c)}`:''}</span></div></div>`).join('')}</div>`:'<p class="hint">No requests in this time.</p>'}`;
+    $('#use-body').innerHTML=`<div class="box" style="margin:10px 0"><b style="font-size:17px">${sum.cost!=null?`${sum.costEst?'≈ ':''}${fmtCost(sum.cost)}`:'No cost reported'}</b>
+      <div class="small muted">${sum.n?`${tokShort(sum.in+sum.out)} tokens (↑ ${tokShort(sum.in)} sent · ↓ ${tokShort(sum.out)} written) · ${sum.n} request${sum.n===1?'':'s'}`:'Nothing yet'}</div></div>
+      ${list.length?`<div class="row" style="align-items:center;gap:8px;margin:12px 0 6px"><b class="small" style="flex:none">Group by</b><div class="chips" style="margin:0">${USE_BY.map(([v,l])=>`<button class="chip ${v===by?'on':''}" data-act="by" data-v="${v}">${l}</button>`).join('')}</div></div>
+      <p class="hint" style="margin:0 0 6px">Bars show ${money?'cost':'tokens'}${by==='day'?'':', biggest first'}.${by==='chat'?' Requests from before Hearth 1.55 have no chat.':''}</p>
+      <div class="ubars">${rows.map(([k,t])=>{const v=val(t);return `<div class="ubar ${t.n?'':'zero'}"><div class="ub-top"><b>${esc(by==='day'?dayLabel(k):k)}</b><span>${t.n?(money&&t.cost!=null?`${t.costEst?'≈ ':''}${fmtCost(t.cost)}`:tokShort(t.in+t.out)):'–'}</span></div>
+        <div class="ub-track"><i style="width:${t.n?Math.max(1.5,v/max*100):0}%"></i></div>
+        ${t.n?`<div class="ub-sub">${tot?Math.round(v/tot*100):0}% · ↑ ${tokShort(t.in)} · ↓ ${tokShort(t.out)} · ${t.n} request${t.n===1?'':'s'}${money&&t.cost!=null?` · ${tokShort(t.in+t.out)} tokens`:''}</div>`:''}</div>`}).join('')}</div>
+      <details class="box" style="margin-top:12px"><summary>Latest requests</summary><div class="list" style="margin-top:8px">${list.slice(-60).reverse().map(e=>`<div class="li"><div class="lt"><b>${esc(e.k)}</b><span>${when(e.t)} · ${esc(e.m)} · ${e.e?'≈ ':''}↑ ${e.i.toLocaleString()} · ↓ ${e.o.toLocaleString()}${e.c!=null?` · ${e.ce?'≈ ':''}${fmtCost(e.c)}`:''}</span></div></div>`).join('')}</div></details>`:'<p class="hint">No requests in this time.</p>'}`;
   };
-  openSheet(`<h2>Usage and cost</h2><div class="chips">${[['day','Today'],['week','7 days'],['month','30 days'],['all','All']].map(([v,l])=>`<button class="chip ${v===span?'on':''}" data-act="span" data-v="${v}">${l}</button>`).join('')}</div>
+  openSheet(`<h2>Usage and cost</h2><div class="chips">${USE_SPANS.map(([v,l])=>`<button class="chip ${v===span?'on':''}" data-act="span" data-v="${v}">${l}</button>`).join('')}</div>
     <div id="use-body"><p class="hint">Adding up…</p></div>
-    <p class="hint">≈ means estimated: the proxy didn't report it, so Hearth counted the text or used the connection's prices. Costs only show for OpenRouter or connections with prices set.</p>
-    <div class="sheet-foot row"><button class="btn ghost" data-act="clear" style="flex:1">Clear history</button><button class="btn" data-act="close" style="flex:1">Close</button></div>`,{
+    <p class="hint">Every request to your AI is counted: chat replies, scene tracking, memory, image prompts, wizards and tests. NovelAI pictures are not (they use Anlas, not tokens). ≈ means estimated: the proxy didn't report it, so Hearth counted the text or used the connection's prices. Costs only show for OpenRouter or connections with prices set.</p>
+    <div class="sheet-foot row"><button class="btn ghost" data-act="clear" style="flex:1">Clear</button><button class="btn ghost" data-act="exp" style="flex:1">${I.exp} Export</button><button class="btn" data-act="close" style="flex:1">Close</button></div>`,{
     span:b=>{span=b.dataset.v;$$('#sheet [data-act=span]').forEach(x=>x.classList.toggle('on',x===b));draw()},
-    clear:async()=>{if(!confirm('Clear the usage history? Chats keep their own cost lines.'))return;usageLog=[];await store.set('usage',[]);draw()}});
+    by:b=>{by=b.dataset.v;draw()},
+    exp:async()=>{const log=await usageList(),list=usageSpan(log,span),name=USE_SPANS.find(s=>s[0]===span)[1],stamp=dayKey(Date.now());
+      openSheet(`<h2>Export usage</h2><p class="hint" style="margin:-6px 0 10px">${name}: ${list.length} requests. Pick another time on the Usage page to export that instead.</p><div class="menu">
+        <button data-act="copy">${I.copy}<span>Copy a summary<small class="muted" style="display:block;margin-top:2px">Totals by model, use, day and chat as text: paste it to Claude or anyone to look at</small></span></button>
+        <button data-act="csv">${I.exp}<span>Download a spreadsheet (CSV)<small class="muted" style="display:block;margin-top:2px">One row per request: time, use, model, chat, tokens, cost. Opens in Excel or Google Sheets</small></span></button>
+        <button data-act="json">${I.exp}<span>Download as JSON<small class="muted" style="display:block;margin-top:2px">The same rows, for apps and scripts</small></span></button></div>
+        <div class="sheet-foot"><button class="btn ghost block" data-act="back">${I.back} Back</button></div>`,{
+        copy:()=>copyText(usageReport(log,span)),
+        csv:()=>download(`hearth-usage-${span}-${stamp}.csv`,usageCsv(list),'text/csv'),
+        json:()=>download(`hearth-usage-${span}-${stamp}.json`,JSON.stringify(list.map(e=>({time:new Date(e.t).toISOString(),what_for:e.k,model:e.m,chat:e.ch==null?null:useChatName(e.ch),input_tokens:e.i,output_tokens:e.o,cost_usd:e.c,cost_estimated:e.ce,tokens_estimated:e.e})),null,1)),
+        back:()=>openUsage(span,by)})},
+    clear:async()=>{if(!confirm('Clear the usage history? Chats keep their own cost lines. Export it first if you want to keep it.'))return;usageLog=[];await store.set('usage',[]);draw()}});
   draw();
 }
 async function callApi(api,messages,signal,onText,o={}){
@@ -6057,7 +6111,7 @@ function vSettings(){
     <div class="row" style="margin-top:8px"><button class="btn ghost" data-act="backup" style="flex:1">${I.exp} Export backup</button><button class="btn ghost" data-act="restore" style="flex:1">${I.imp} Import backup</button></div>
     <br><button class="btn danger block" data-act="wipe">Delete all data</button></div></div>
   <div class="sec" data-g="data"><h3>Usage and cost</h3><div class="box"><div id="use-sum" class="small">Adding up…</div>
-    <div class="row" style="margin-top:8px"><button class="btn ghost sm" data-act="usage">${I.brain} See everything</button></div>
+    <div class="row" style="margin-top:8px"><button class="btn ghost sm" data-act="usage">${I.brain} See details and export</button></div>
     <div class="hint">Every request Hearth sends is counted here: replies, scene tracking, memory, research, wizards, image prompts, scene setups and tests. Costs with ≈ are estimates from the connection's prices.</div></div></div>
   <div class="sec" data-g="data"><h3>About</h3><div class="box"><b>Hearth ${HEARTH_VERSION}</b> <span class="muted small">· updated ${new Date(HEARTH_DATE+'T12:00').toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'})} · ${store.ls?'localStorage':'IndexedDB'} storage</span>
     <div class="row" style="margin-top:8px"><button class="btn ghost sm" data-act="upd-check">${I.regen} Check for updates</button><span id="upd-msg" class="small muted"></span></div></div></div>
