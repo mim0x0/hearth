@@ -406,7 +406,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.51.0',HEARTH_DATE='2026-11-05';
+const HEARTH_VERSION='1.52.0',HEARTH_DATE='2026-11-05';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiNoMark:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgExpr:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -3538,16 +3538,24 @@ async function saveToGallery(c,id,note,chatId){
   const gid=await putImg(rec.data);(c.gallery??=[]).push({id:gid,chatId:chatId||'',note:note||'',seed:rec.seed,at:Date.now()});await saveChars();
   await store.set('img:'+id,{...rec,saved:[...(rec.saved||[]),c.id]});return gid;
 }
+// a copy goes straight into a character's or world's profile pictures (made smaller, like pictures added there)
+async function saveToPool(c,id){
+  const rec=await store.get('img:'+id);if(!rec?.data)throw new Error('Picture not found');
+  const nid=await putImg(await fileToImage(new File([await dataToBlob(rec.data)],'p',{type:'image/png'}),768));
+  (c.avatarPool??=[]).push(nid);if(S.ui.av)delete S.ui.av[c.id];await saveChars();
+  await store.set('img:'+id,{...rec,pool:[...(rec.pool||[]),c.id]});return nid;
+}
 // A picture NovelAI made, kept with its prompt (or on the Images page) like NovelAI's own history: save it to a gallery
 // if you want it there. o: c (the gallery it belongs with), chatId, note, back (and backLabel), onDelete, more (extra buttons)
 async function viewMade(id,o={}){
   const rec=await store.get('img:'+id);if(!rec?.data)return toast('Picture not found');
   const c=o.c,saved=c&&((rec.saved||[]).includes(c.id)||c.gallery?.some(g=>g.id===id));
   openSheet(`<img src="${rec.data}" alt="" data-act="zoom" style="width:100%;max-height:60dvh;object-fit:contain;border-radius:12px;background:#000">
-    <p class="small muted" style="margin:6px 0 0">${[rec.tool,rec.uploaded?'From your device':'',rec.seed!=null?`Seed ${rec.seed}`:''].filter(Boolean).map(esc).join(' · ')}${rec.saved?.length?` · <span class="okc">Saved to ${[...new Set(rec.saved)].map(x=>x==='lib'?'My pictures':esc(getChar(x)?.name||'?')).join(', ')}</span>`:''}</p>
+    <p class="small muted" style="margin:6px 0 0">${[rec.tool,rec.uploaded?'From your device':'',rec.seed!=null?`Seed ${rec.seed}`:''].filter(Boolean).map(esc).join(' · ')}${rec.saved?.length?` · <span class="okc">Saved to ${[...new Set(rec.saved)].map(x=>x==='lib'?'My pictures':esc(getChar(x)?.name||'?')).join(', ')}</span>`:''}${rec.pool?.length?` · <span class="okc">Profile picture of ${[...new Set(rec.pool)].map(x=>esc(getChar(x)?.name||'?')).join(', ')}</span>`:''}</p>
     <div class="menu" style="margin-top:8px">
       ${c?`<button data-act="gsave" ${saved?'disabled':''}>${saved?`${I.check} Saved to ${esc(c.name)}'s gallery`:`${I.plus} Save to ${esc(c.name)}'s gallery`}</button>`:''}
       <button data-act="gother">${I.folder} Save to ${c?'another':'a'} gallery…</button>
+      <button data-act="pool">${I.user} Add to profile pictures…</button>
       <button data-act="dl">${I.imp} Save to device</button>
       ${naiOn()?`<button data-act="unmark">${I.wand} Remove watermark</button>`:''}${rec?.before?`<button data-act="remark">${I.regen} Undo watermark removal</button>`:''}
       ${(o.more||[]).map((x,k)=>`<button data-act="more" data-k="${k}">${x.label}</button>`).join('')}
@@ -3561,6 +3569,7 @@ async function viewMade(id,o={}){
     gother:()=>pickGallery(async t=>{
       if(t==='lib')return pickLibFolder(async fid=>{await saveToLibrary(id,fid,o.note);toast(`Saved to My pictures${fid?` · ${libFolderName(fid)}`:''}`);viewMade(id,o)},()=>viewMade(id,o));
       await saveToGallery(t,id,o.note,t.id===c?.id?o.chatId:'');toast(`Saved to ${t.name}'s gallery`);viewMade(id,o)},()=>viewMade(id,o)),
+    pool:()=>pickGallery(async t=>{try{await saveToPool(t,id);toast(`Added to ${t.name}'s profile pictures`)}catch(e){toast(e.message)}viewMade(id,o)},()=>viewMade(id,o),{chars:true,title:'Add to profile pictures',first:c?.id}),
     dl:async()=>download(`hearth-${rec.seed??id}.png`,await dataToBlob(rec.data)),
     more:b=>o.more[+b.dataset.k].fn(),
     unmark:()=>openUnmark(id,()=>viewMade(id,o),o.onChange),
@@ -3575,9 +3584,9 @@ async function viewMade(id,o={}){
 // pick a character or world to save a picture to
 // o.chars: only characters and worlds (no My pictures); done gets the character, or 'lib' for My pictures
 function pickGallery(done,back,o={}){
-  const list=[...S.chars].sort((a,b)=>(b.lastUsed||0)-(a.lastUsed||0));
-  openSheet(`<h2>${o.chars?'Give to a character':'Save to a gallery'}</h2>${o.chars?'':`<div class="list" style="margin-bottom:10px"><div class="li" data-act="lib">${I.folder}<div class="lt"><b>My pictures</b><span>No character yet: keep it in a folder and give it to one later</span></div></div></div>`}
-    ${charFilterHTML(list)}<div class="list">${list.map(c=>`<div class="li" data-act="pick" data-id="${c.id}" ${cfAttr(c)}><img src="${esc(avatar(c))}" alt=""><div class="lt"><b>${esc(c.name)}</b><span>${c.kind==='world'?'World':'Character'} · ${c.gallery?.length||0} pictures</span></div></div>`).join('')||'<p class="muted">No characters yet.</p>'}</div>
+  const list=[...S.chars].sort((a,b)=>(b.id===o.first)-(a.id===o.first)||(b.lastUsed||0)-(a.lastUsed||0));
+  openSheet(`<h2>${o.title||(o.chars?'Give to a character':'Save to a gallery')}</h2>${o.chars?'':`<div class="list" style="margin-bottom:10px"><div class="li" data-act="lib">${I.folder}<div class="lt"><b>My pictures</b><span>No character yet: keep it in a folder and give it to one later</span></div></div></div>`}
+    ${charFilterHTML(list)}<div class="list">${list.map(c=>`<div class="li" data-act="pick" data-id="${c.id}" ${cfAttr(c)}><img src="${esc(avatar(c))}" alt=""><div class="lt"><b>${esc(c.name)}</b><span>${c.kind==='world'?'World':'Character'} · ${o.title?`${(c.avatarPool?.length||0)+(c.avatar?1:0)} profile pictures`:`${c.gallery?.length||0} pictures`}</span></div></div>`).join('')||'<p class="muted">No characters yet.</p>'}</div>
     <div class="sheet-foot row"><button class="btn ghost" data-act="back" style="flex:1">${I.back} Back</button></div>`,{
     pick:b=>done(getChar(b.dataset.id)),lib:()=>done('lib'),back:()=>back()});
 }
@@ -3650,6 +3659,7 @@ function viewLibItem(x,back){
       <div class="menu" style="margin-top:8px">
         <button data-act="give">${I.user} Give to a character…</button>
         <button data-act="copy">${I.copy} Copy to a character…</button>
+        <button data-act="pool">${I.user} Add to profile pictures…</button>
         <button data-act="fold">${I.folder} Move to folder…</button>
         <button data-act="img">${I.img} Use on the Images page</button>
         <button data-act="tometa" hidden>${I.edit} Use its prompt on the Images page</button>
@@ -3660,6 +3670,7 @@ function viewLibItem(x,back){
       back:()=>back(),
       give:()=>pickGallery(async c=>{await giveToChar(c,x,false);toast(`Moved to ${c.name}'s gallery`);back()},()=>viewLibItem(x,back),{chars:true}),
       copy:()=>pickGallery(async c=>{await giveToChar(c,x,true);toast(`Copied to ${c.name}'s gallery`);viewLibItem(x,back)},()=>viewLibItem(x,back),{chars:true}),
+      pool:()=>pickGallery(async c=>{try{await saveToPool(c,x.id);toast(`Added to ${c.name}'s profile pictures`)}catch(e){toast(e.message)}viewLibItem(x,back)},()=>viewLibItem(x,back),{chars:true,title:'Add to profile pictures'}),
       fold:()=>pickLibFolder(async f=>{x.folder=f;await saveLib();toast(f?`Moved to ${libFolderName(f)}`:'Not in a folder now');viewLibItem(x,back)},()=>viewLibItem(x,back)),
       img:async()=>{const pg=await imgPageData(),nid=await putImg(d,{seed:x.seed,made:true});pg.hist.unshift({id:nid,at:Date.now(),seed:x.seed,form:null});saveImgPage();closeSheet();go('#/images');toast('Added to the Images page')},
       dl:async()=>download(`hearth-${x.seed??x.id}.png`,await dataToBlob(d)),
