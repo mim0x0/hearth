@@ -406,7 +406,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.53.0',HEARTH_DATE='2026-11-05';
+const HEARTH_VERSION='1.54.0',HEARTH_DATE='2026-11-06';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiNoMark:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgExpr:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -5561,6 +5561,7 @@ async function vImages(){
     ${naiOn()?'':`<div class="box" style="margin-bottom:12px"><b>Add your NovelAI token first</b><div class="small muted" style="margin:4px 0 8px">Settings → NovelAI images. Pictures use your NovelAI subscription, like on NovelAI's site.</div><button class="btn sm" data-act="toset">Open Settings</button></div>`}
     <div class="box" style="margin-bottom:12px"><b>${I.wand} Ask the AI to write it</b>
       <textarea id="ia-d" rows="3" placeholder="Describe the picture, e.g. Fern and Frieren sharing tea under cherry blossoms in the evening, smiling" style="margin-top:8px">${esc(pg.ask||'')}</textarea>
+      <div class="row" style="margin-top:6px;flex-wrap:wrap"><button class="btn ghost sm" data-act="dsave">${I.plus} Save draft</button><button class="btn ghost sm" data-act="dlist">${I.folder} Drafts${pg.drafts?.length?` (${pg.drafts.length})`:''}</button></div>
       <div class="small muted" style="margin:8px 0 4px">Who's in it (so their looks are right)</div>
       ${charFilterHTML(people)}<div class="chips">${S.personas.length?`<button type="button" class="chip ${pg.who.includes('me')?'on':''}" data-act="who" data-id="me">${I.user} Me (${esc(personaFor(null)?.name||'You')})</button>`:''}${people.map(c=>`<button type="button" class="chip mem ${pg.who.includes(c.id)?'on':''}" data-act="who" data-id="${c.id}" ${cfAttr(c)}><img src="${esc(avatar(c))}" alt="">${esc(c.name)}</button>`).join('')}</div>
       <div class="row" style="margin-top:8px"><button class="btn sm" data-act="aiw">${I.wand} Write the prompt</button><button class="btn ghost sm" data-act="aic">${I.edit} Change the prompt</button></div>
@@ -5590,6 +5591,38 @@ async function vImages(){
     <div id="ig-out" style="margin-top:12px"></div></div>`;
   const read=()=>{f.base=$('#ig-b').value;f.uc=$('#ig-u').value;f.usePreset=$('#ig-pr').checked;pg.ask=$('#ia-d').value;
     $$('.ig-c',view).forEach(el=>{const c=f.chars[+el.dataset.k];if(c){c.prompt=$('.ig-cpr',el).value;c.uc=$('.ig-cuc',el).value}});saveImgPage()};
+  const whoName=x=>x==='me'?(personaFor(null)?.name||'You'):getChar(x)?.name||'';
+  // the draft's people become the ones picked now, in order (a full name, or just the first name when the text uses that);
+  // placeholders first, so swapping Fern and Mio both ways doesn't undo itself
+  const swapNames=(text,from,to)=>{
+    const pairs=from.map((a,i)=>[a,to[i]]).filter(([a,b])=>a&&b&&a!==b),first=n=>n.split(/\s+/)[0];
+    const rx=n=>new RegExp(`(^|[^\\p{L}\\p{N}])(${escRx(n)})(?=$|[^\\p{L}\\p{N}])`,'giu');
+    let t=text;
+    pairs.forEach(([a],i)=>{t=t.replace(rx(a),(m,p)=>`${p}\u0001${i}f\u0001`);if(/\s/.test(a.trim())&&first(a).length>2)t=t.replace(rx(first(a)),(m,p)=>`${p}\u0001${i}s\u0001`)});
+    return t.replace(/\u0001(\d+)([fs])\u0001/g,(m,i,k)=>k==='f'?pairs[+i][1]:first(pairs[+i][1]))};
+  const putDraft=t=>{pg.ask=t;saveImgPage();closeSheet();vImages();toast('The draft is in the box. Check it, then tap Write the prompt',4000)};
+  const openDrafts=()=>{const ds=pg.drafts||[];
+    openSheet(`<h2>Drafts</h2><p class="hint" style="margin:-6px 0 10px">Saved descriptions. Pick other people under Who's in it first, and a draft can swap its names for theirs.</p>
+      ${ds.length?`<div class="list">${ds.map(d=>`<div class="li" data-act="dopen" data-id="${d.id}"><div class="lt"><b>${esc(d.name)}</b><span>${d.names?.filter(Boolean).length?`With ${esc(d.names.filter(Boolean).join(', '))} · `:''}${esc(d.text.replace(/\s+/g,' ').slice(0,90))}</span></div></div>`).join('')}</div>`:'<p class="muted">No drafts yet. Write a description, then tap Save draft.</p>'}
+      <div class="sheet-foot"><button class="btn ghost block" data-act="close">Close</button></div>`,{dopen:b=>openDraft(ds.find(d=>d.id===b.dataset.id))})};
+  const openDraft=d=>{
+    const now=pg.who.filter(x=>x==='me'||getChar(x)),nowN=now.map(whoName),own=(d.names||[]).filter(Boolean);
+    const differ=!!(now.length&&own.length&&nowN.join('|')!==own.join('|')),mine=own.length&&(differ||!now.length);
+    const map=own.map((a,i)=>nowN[i]&&nowN[i]!==a?`${a} → ${nowN[i]}`:'').filter(Boolean).join(', ');
+    openSheet(`<h2>${esc(d.name)}</h2><div class="box pre small">${esc(d.text)}</div>
+      ${own.length?`<p class="small muted" style="margin:6px 0 0">Saved with ${esc(own.join(', '))}</p>`:''}
+      <div class="menu" style="margin-top:6px">
+        ${differ&&map?`<button data-act="swap">${I.user}<span>Use it with the people picked now<small class="muted" style="display:block;margin-top:2px">${esc(map)}</small></span></button>`:''}
+        <button data-act="use">${I.edit} ${differ?'Use it as it is':'Use it'}</button>
+        ${mine?`<button data-act="own">${I.copy} Use it with ${esc(own.join(', '))}</button>`:''}
+        <button data-act="ren">${I.edit} Rename</button>
+        <button class="danger" data-act="del">${I.trash} Delete draft</button></div>
+      <div class="sheet-foot"><button class="btn ghost block" data-act="back">${I.back} Drafts</button></div>`,{
+      swap:()=>putDraft(swapNames(d.text,own,nowN)),use:()=>putDraft(d.text),
+      own:()=>{pg.who=(d.who||[]).filter(x=>x==='me'||getChar(x));putDraft(d.text)},
+      ren:()=>{const n=prompt('Draft name',d.name)?.trim();if(!n)return;d.name=n;saveImgPage();openDraft(d)},
+      del:()=>{if(!confirm('Delete this draft?'))return;pg.drafts=pg.drafts.filter(x=>x!==d);saveImgPage();openDrafts()},
+      back:()=>openDrafts()})};
   let posSel=-1; // the character whose dot moves; -1 = none, so the dots stay put
   const drawPos=()=>{if(posSel>=f.chars.length)posSel=-1;$('#ig-pos').innerHTML=posPadHTML(f,posSel)};
   const drawChars=()=>{$('#ig-cs').innerHTML=f.chars.map(charBox).join('');drawPos()};
@@ -5698,6 +5731,13 @@ Return one JSON object only: ${panelJson('sections')}`,undefined,1500);r={panels
   H={toset:()=>go('#/settings/nai'),lib:()=>openLibrary(),
     who:b=>{const id=b.dataset.id,on=!pg.who.includes(id);pg.who=on?[...pg.who,id]:pg.who.filter(x=>x!==id);b.classList.toggle('on',on);saveImgPage()},
     aiw:b=>aiRun(b,false),aic:b=>aiRun(b,true),
+    // drafts: saved descriptions with who was in them, to make the same kind of picture again (with other people too)
+    dsave:()=>{read();const text=pg.ask.trim();if(!text){toast('Write a description first');$('#ia-d').focus();return}
+      const old=(pg.drafts||[]).find(d=>d.text===text),name=prompt('Name this draft',old?.name||text.split('\n')[0].slice(0,40))?.trim();if(name==null||name==='')return;
+      const who=[...pg.who],names=who.map(whoName);
+      if(old)Object.assign(old,{name,who,names,at:Date.now()});else (pg.drafts??=[]).unshift({id:uid(),name,text,who,names,at:Date.now()});
+      saveImgPage();const b=$('[data-act=dlist]',view);if(b)b.innerHTML=`${I.folder} Drafts (${pg.drafts.length})`;toast(old?'Draft updated':'Draft saved')},
+    dlist:()=>{read();openDrafts()},
     // the image preset, edited or copied right here; the page redraws with what you typed kept
     pred:()=>{read();ensureImgPresets();editImgPreset(imgPreset(),false,()=>vImages())},
     prnew:()=>{read();editImgPreset(newImgPreset(),true,()=>vImages())},
