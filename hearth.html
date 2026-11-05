@@ -402,7 +402,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.49.0',HEARTH_DATE='2026-11-05';
+const HEARTH_VERSION='1.50.0',HEARTH_DATE='2026-11-05';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiNoMark:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgExpr:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -1320,9 +1320,12 @@ const pickAv=c=>{const a=avCandidates(c);return a.length?a[Math.floor(Math.rando
 function avFromId(c,id){return id==='main'?(c.avatar||null):imgCache.get(id)||null}
 function sessionPick(c){const a=avCandidates(c);let id=(S.ui.av??={})[c.id];if(!a.includes(id))id=S.ui.av[c.id]=pickAv(c);return id}
 // in a chat the rotation can be per app start, per chat, or per reply (stored on the message)
+// How often a profile picture changes: one setting for every character and world (older per-character choices are used until it is set).
+const avMode=()=>S.settings.avatarMode||S.chars.find(c=>c.avatarMode&&c.avatarMode!=='open')?.avatarMode||'open';
+const AV_MODES=[['open','Each time you open the app'],['chat','Once per chat'],['reply','Every reply']];
 function chatAvatar(chat,c,m){
   if(!c?.avatarPool?.length)return avatar(c);
-  const mode=c.avatarMode||'open';
+  const mode=avMode();
   if(mode==='reply'){const id=m?.av||[...chat.messages].reverse().find(x=>x.av)?.av;if(id)return avFromId(c,id)||avatar(c)}
   if(mode==='chat'){if(!chat.av){chat.av=pickAv(c);saveChat(chat)}return avFromId(c,chat.av)||avatar(c)}
   return avatar(c);
@@ -1659,7 +1662,7 @@ function vChar(id){
   <div class="sec"><h3>Profile pictures</h3>
     <p class="hint" style="margin:-4px 0 8px">${c.avatarPool?.length?'The picture changes at random between these and the main picture (outlined).':'Add pictures here and the profile picture will change at random between them.'}</p>
     ${thumbs([],'',`${c.avatar?`<img class="main" src="${esc(c.avatar)}" data-act="zoom" alt="Main picture">`:''}${(c.avatarPool||[]).map(id=>`<img data-img="${id}" src="${BLANK}" data-act="pview" data-id="${id}" alt="">`).join('')}<button class="thumb-add" data-act="padd" title="Add profile pictures">+</button>`)}
-    ${c.avatarPool?.length?`<label class="f">Change the picture</label><select id="avmode">${[['open','Each time you open the app'],['chat','Once per chat'],['reply','Every reply']].map(([v,l])=>`<option value="${v}" ${(c.avatarMode||'open')===v?'selected':''}>${l}</option>`).join('')}</select>`:''}</div>
+    ${c.avatarPool?.length?`<label class="f">Change the picture<small>for all characters and worlds</small></label><select id="avmode">${AV_MODES.map(([v,l])=>`<option value="${v}" ${avMode()===v?'selected':''}>${l}</option>`).join('')}</select>`:''}</div>
   ${c.creatorNotes?`<div class="sec"><details class="box"><summary>Creator notes</summary><div class="pre small" style="margin-top:8px">${esc(c.creatorNotes)}</div></details></div>`:''}
   <div class="sec"><details class="box"><summary>Definition</summary><div class="small pre" style="margin-top:8px"><b>Personality</b>\n${esc(c.personality||'—')}\n\n<b>Scenarios</b>\n${scenariosOf(c).map(s=>'• '+esc(s.name||'Scenario')).join('\n')}</div>
   <p class="hint">≈ ${est([c.personality,c.scenario,c.exampleDialogs,c.reminder].join(''))} permanent tokens · ${c.refs?.filter(r=>r.on).length||0} reference links · ${c.scripts?.filter(s=>s.enabled).length||0} active scripts · ${c.book?.entries?.length||0} lorebook entries</p></details></div>`;
@@ -1680,7 +1683,7 @@ function vChar(id){
     gall:()=>openGallery(c),
     pview:b=>viewPicture(c,b.dataset.id,'pool',()=>vChar(id)),
     padd:async()=>{await addPictures(c,'pool');S.ui.av&&delete S.ui.av[c.id];vChar(id)}};
-  const am=$('#avmode',view);if(am)am.onchange=async()=>{c.avatarMode=am.value;await saveChars();toast('Saved')};
+  const am=$('#avmode',view);if(am)am.onchange=()=>{S.settings.avatarMode=am.value;saveSettings();toast('Saved for all characters')};
   hydrate(view);
   if(chats.some(x=>x.v!==CHAT_META_V))refreshChatMeta().then(n=>{if(n&&location.hash==='#/char/'+id)vChar(id)});
 }
@@ -2779,7 +2782,7 @@ async function vChat(id){
     if(GEN){toast('Already working on it');return}
     let idx,m;const added=[];
     if(mode==='swipe'){idx=chat.messages.length-1;m=chat.messages[idx];m.swipes.push('');m.sw=m.swipes.length-1}
-    else{m={id:uid(),role:'assistant',swipes:[''],sw:0,time:Date.now(),av:char.avatarMode==='reply'?pickAv(char):undefined};chat.messages.push(m);idx=chat.messages.length-1}
+    else{m={id:uid(),role:'assistant',swipes:[''],sw:0,time:Date.now(),av:avMode()==='reply'?pickAv(char):undefined};chat.messages.push(m);idx=chat.messages.length-1}
     const many=!!chat.comic&&mode!=='swipe'&&pages>1;
     GEN={chatId:chat.id,idx,ctrl:new AbortController(),status:many?`Planning ${pages} pages…`:'Building the prompts…'};renderMsgs(true);updateSend();
     const g=GEN;let failed=null,ok=false;
@@ -2982,7 +2985,7 @@ async function vChat(id){
     const lastM=chat.messages.at(-1);if(mode==='continue'&&!(lastM?.role==='assistant'&&txt(lastM).trim()))mode='new';
     if(mode==='continue'){idx=chat.messages.length-1;m=lastM;base=m.swipes[m.sw];if((chat.memoryAt||0)>idx)chat.memoryAt=idx} // the memory reads the grown reply again
     else if(mode==='swipe'){idx=chat.messages.length-1;m=chat.messages[idx];m.swipes.push('');m.sw=m.swipes.length-1}
-    else{m={id:uid(),role:'assistant',swipes:[''],sw:0,time:Date.now(),av:char.avatarMode==='reply'?pickAv(char):undefined};chat.messages.push(m);idx=chat.messages.length-1}
+    else{m={id:uid(),role:'assistant',swipes:[''],sw:0,time:Date.now(),av:avMode()==='reply'?pickAv(char):undefined};chat.messages.push(m);idx=chat.messages.length-1}
     const {messages,ctx,errs,lore}=buildPrompt(chat,char,personaFor(chat),chat.messages.slice(0,base!=null?idx+1:idx));
     // continue: the cut-off reply is the last message in the history; the model writes the rest, which is joined onto it
     if(mode==='continue')messages.push({role:'system',content:'[Your last message was cut off. Continue it seamlessly from the exact point where it stopped, even mid-sentence. Do not repeat or summarize anything already written, do not restart the scene, and do not add a title or preface.]'});
@@ -5514,10 +5517,10 @@ const saveImgPage=()=>{clearTimeout(imgSaveT);imgSaveT=setTimeout(()=>store.set(
 const formPanel=f=>({form:true,caption:'',base:f.base.split(/\n?Text:/)[0].trim(),undesired:f.uc.trim(),text:(f.base.match(/Text:([\s\S]*)$/)||[,''])[1].trim(),own:!f.usePreset,
   characters:f.chars.filter(c=>c.prompt.trim()).map(c=>({name:'',prompt:c.prompt.trim(),undesired:c.uc.trim(),position:posAIOf(f)?'':posOf(c.pos)||{x:.5,y:.5}}))});
 // the AI writes for a made-up "world" holding the characters you picked, so it knows their looks
-function imgAiCtx(who){
+function imgAiCtx(who,expr){
   const me=who.includes('me'),ids=who.filter(x=>x!=='me'&&getChar(x));
   return {char:{id:'_images',kind:'world',name:'this picture',personality:'Draw only who and what the request asks for.',members:ids},
-    chat:{id:'_images',messages:[],personaId:personaFor(null)?.id,...(me?{}:{origin:{role:'direct'}})}};
+    chat:{id:'_images',messages:[],personaId:personaFor(null)?.id,...(expr?{imgExpr:expr}:{}),...(me?{}:{origin:{role:'direct'}})}};
 }
 async function vImages(){
   const pg=await imgPageData(),f=pg.form,st=S.settings;
@@ -5533,6 +5536,7 @@ async function vImages(){
       <div class="small muted" style="margin:8px 0 4px">Who's in it (so their looks are right)</div>
       ${charFilterHTML(people)}<div class="chips">${S.personas.length?`<button type="button" class="chip ${pg.who.includes('me')?'on':''}" data-act="who" data-id="me">${I.user} Me (${esc(personaFor(null)?.name||'You')})</button>`:''}${people.map(c=>`<button type="button" class="chip mem ${pg.who.includes(c.id)?'on':''}" data-act="who" data-id="${c.id}" ${cfAttr(c)}><img src="${esc(avatar(c))}" alt="">${esc(c.name)}</button>`).join('')}</div>
       <div class="row" style="margin-top:8px"><button class="btn sm" data-act="aiw">${I.wand} Write the prompt</button><button class="btn ghost sm" data-act="aic">${I.edit} Change the prompt</button></div>
+      <div class="tg"><div>Write expressions<div class="hint">Off: the AI leaves out faces (smile, blush, tears…) and NovelAI picks one that fits. A face you ask for is still written. Also used by Guess from a picture and Put my characters in it.</div></div><label class="sw"><input type="checkbox" id="ia-ex" ${exprOn(pg.expr?{imgExpr:pg.expr}:null)?'checked':''}><span></span></label></div>
       <div class="hint">Write the prompt makes a new prompt from your description. Change the prompt keeps the prompt below and changes only what you ask, e.g. "make it night" or "she holds a sword".</div>
       <div class="small" id="ia-msg" style="margin-top:6px"></div></div>
     <div class="row" style="margin-bottom:10px;flex-wrap:wrap"><button class="btn ghost sm" data-act="imp">${I.imp} Import metadata</button><button class="btn ghost sm" data-act="gpic">${I.wand} Guess from a picture</button><button class="btn ghost sm" data-act="swap">${I.user} Put my characters in it</button></div>
@@ -5608,7 +5612,7 @@ async function vImages(){
       go:async b=>{
         const msg=$('#sw-msg',pn),ids=$$('.sw-who',pn).map(x=>x.value),who=ids.map(id=>id==='me'?me:id?getChar(id):null);
         if(!who.some(Boolean)){msg.className='small err';msg.textContent='Pick at least one of your characters.';return}
-        const picked=[...new Set(ids.filter(Boolean))],{chat,char}=imgAiCtx(picked);
+        const picked=[...new Set(ids.filter(Boolean))],{chat,char}=imgAiCtx(picked,pg.expr);
         b.disabled=true;msg.className='small muted';msg.textContent=activeApi()?'Putting them in…':'';
         try{
           const keep=boxes.map(c=>c.pos),pai=f.posAI,panel=formPanel({...f,usePreset:false});
@@ -5646,13 +5650,14 @@ async function vImages(){
     e.preventDefault();moveDot(pad,e);dragPad=pad;pad.setPointerCapture?.(e.pointerId)};
   view.onpointermove=e=>{if(dragPad?.isConnected)moveDot(dragPad,e)};
   view.onpointerup=view.onpointercancel=()=>{dragPad=null};
+  $('#ia-ex',view).onchange=e=>{pg.expr=e.target.checked?'on':'off';saveImgPage()};
   $('.ip-pr',view).onchange=e=>{S.settings.imgPreset=e.target.value;saveSettings()};
   const aiRun=async(b,change)=>{
     read();const msg=$('#ia-msg'),d=pg.ask.trim();
     if(!activeApi()){msg.className='small err';msg.textContent='Add an API / proxy in Settings first.';return}
     if(!d){msg.className='small err';msg.textContent=change?'Say what to change.':'Describe the picture first.';$('#ia-d').focus();return}
     if(change&&!f.base.trim()&&!f.chars.length){msg.className='small err';msg.textContent='There is no prompt to change yet. Tap Write the prompt.';return}
-    const {chat,char}=imgAiCtx(pg.who);b.disabled=true;msg.className='small muted';msg.textContent=change?'Changing the prompt…':'Writing the prompt…';
+    const {chat,char}=imgAiCtx(pg.who,pg.expr);b.disabled=true;msg.className='small muted';msg.textContent=change?'Changing the prompt…':'Writing the prompt…';
     try{
       let r;
       if(change)r=await changeWithFilter(chat,char,formPanel({...f,usePreset:false}),d,msg);
@@ -5724,7 +5729,7 @@ Return one JSON object only: ${panelJson('sections')}`,undefined,1500);r={panels
         imeta:()=>{closeSheet();H.imp(null,null,file)},
         go:async b=>{
           const msg=$('#gp-msg',pn);if(!file){msg.className='small err';msg.textContent='Choose a picture first.';return}
-          const layout=$('#gp-lay',pn).value,{chat,char}=imgAiCtx(pg.who);b.disabled=true;msg.className='small muted';
+          const layout=$('#gp-lay',pn).value,{chat,char}=imgAiCtx(pg.who,pg.expr);b.disabled=true;msg.className='small muted';
           msg.textContent=layout==='split'?`Asking ${visionModelName()} for every panel… (this can take a minute)`:`Asking ${visionModelName()}…`;
           try{
             const r=await guessPrompt(chat,char,file,{fmt:'sections',layout,mine:$('#gp-mine',pn).checked,outfit:$('#gp-outfit',pn).value,note:$('#gp-note',pn).value.trim()});
@@ -5951,7 +5956,7 @@ function vSettings(){
   <div class="list">${S.lorebooks.map(b=>`<div class="li" data-act="book" data-id="${b.id}"><div class="lt"><b>${esc(b.name)}</b><span>${b.entries.length} entr${b.entries.length===1?"y":"ies"}</span></div><label class="sw"><input type="checkbox" class="bk-on" data-id="${b.id}" ${b.enabled?'checked':''}><span></span></label></div>`).join('')||'<p class="muted small">No lorebooks yet.</p>'}</div>
   <br><div class="row"><button class="btn ghost" data-act="book-new" style="flex:1">${I.plus} New</button><button class="btn ghost" data-act="book-import" style="flex:1">${I.imp} Import</button><button class="btn ghost" data-act="book-paste" style="flex:1">${I.copy} Paste</button></div></div>
   <div class="sec"><h3>Global scripts</h3><p class="hint" style="margin:-4px 0 10px">Run in every chat before the character's own scripts.</p><div class="scripts-host" data-global="1">${scriptsHTML(st.globalScripts||[])}</div></div>
-  <div class="sec"><h3>Display</h3><div class="box">${rng('fontSize','Text size',12,22,1)}${tg('enterSends','Enter key sends','On phones Enter adds a new line unless this is on.')}${tg('showTokens','Show token counts','A small line under each message. ↑ is what was sent to the AI, ↓ is what it wrote; ≈ means estimated.')}</div></div>
+  <div class="sec"><h3>Display</h3><div class="box">${rng('fontSize','Text size',12,22,1)}${tg('enterSends','Enter key sends','On phones Enter adds a new line unless this is on.')}<label class="f">Change profile pictures<small>for characters and worlds with more than one profile picture</small></label><select data-k="avatarMode">${AV_MODES.map(([v,l])=>`<option value="${v}" ${avMode()===v?'selected':''}>${l}</option>`).join('')}</select>${tg('showTokens','Show token counts','A small line under each message. ↑ is what was sent to the AI, ↓ is what it wrote; ≈ means estimated.')}</div></div>
   <div class="sec"><h3>Backup</h3><div class="box"><p class="small muted" style="margin-top:0">Everything is stored only in this browser on this device. Keep backups, especially before clearing browser data or moving the app file.</p>
     <div class="small" id="stor-info" style="margin-bottom:10px">Checking storage…</div>
     <label class="f" style="margin-top:0">Auto backup</label><select data-k="autoBackup">${[[0,'Off'],[1,'Every day'],[3,'Every 3 days'],[7,'Every week']].map(([v,l])=>`<option value="${v}" ${+st.autoBackup===v?'selected':''}>${l}</option>`).join('')}</select>
