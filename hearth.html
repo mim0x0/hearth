@@ -407,7 +407,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.58.1',HEARTH_DATE='2026-11-06';
+const HEARTH_VERSION='1.58.2',HEARTH_DATE='2026-11-06';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiNoMark:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgExpr:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -1780,7 +1780,7 @@ function vChar(id){
     ${scenariosOf(c).length>1?`<div class="small muted" style="margin-top:8px">${scenariosOf(c).length} scenarios to choose from</div>`:''}</div>
   ${chats.length?`<div class="sec"><h3>Chats</h3><div class="list">${chats.map(x=>chatRow(x,false)).join('')}</div></div>`:''}
   <div class="sec"><h3>Gallery${c.gallery?.length?` (${c.gallery.length})`:''}</h3>
-    ${thumbs((c.gallery||[]).slice(-11).reverse().map(g=>g.id),'gview',`<button class="thumb-add" data-act="gadd" title="Add pictures">+</button>`)}
+    ${thumbs((c.gallery||[]).filter(g=>!isProfileAlbum(c,g.folder)).slice(-11).reverse().map(g=>g.id),'gview',`<button class="thumb-add" data-act="gadd" title="Add pictures">+</button>`)}
     ${c.gallery?.length?`<button class="btn ghost sm" data-act="gall" style="margin-top:8px">${I.folder} Albums · all ${c.gallery.length} pictures</button>`:''}</div>
   <div class="sec"><h3>Profile pictures</h3>
     <p class="hint" style="margin:-4px 0 8px">${c.avatarPool?.length?'The picture changes at random between these and the main picture (outlined).':'Add pictures here and the profile picture will change at random between them.'}</p>
