@@ -407,7 +407,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.58.0',HEARTH_DATE='2026-11-06';
+const HEARTH_VERSION='1.58.1',HEARTH_DATE='2026-11-06';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiNoMark:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgExpr:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -1397,18 +1397,50 @@ const PROFILE_ALBUM=/^\s*(profiles?|pfps?)(\s+(pictures?|pics?|images?|photos?))
 const isProfileAlbum=(c,fid)=>!!fid&&!!c.galFolders?.some(f=>f.id===fid&&PROFILE_ALBUM.test(f.name));
 // new characters and worlds start with an empty Profile album
 const withProfileAlbum=c=>{if(!(c.galFolders||[]).some(f=>PROFILE_ALBUM.test(f.name)))(c.galFolders??=[]).unshift({id:uid(),name:'Profile'});return c};
+// a tiny 16×16 color print of a picture, to spot the same picture saved twice (re-saving changes it only slightly)
+const picPrints=new Map();
+// asPool: print it as its profile-picture copy would be (made smaller the same way), so an original matches its copy
+async function picPrint(id,asPool){
+  const key=asPool?id+":pool":id;if(picPrints.has(key))return picPrints.get(key);let d=await getImgData(id);if(!d)return null;
+  if(asPool)try{d=await fileToImage(new File([await dataToBlob(d)],"p",{type:"image/png"}),768)}catch{return null}
+  const p=await new Promise(r=>{const i=new Image();i.onload=()=>{try{const cv=document.createElement('canvas');cv.width=cv.height=16;const x=cv.getContext('2d');x.drawImage(i,0,0,16,16);
+    const px=x.getImageData(0,0,16,16).data,g=new Uint8Array(768);for(let k=0;k<256;k++){g[k*3]=px[k*4];g[k*3+1]=px[k*4+1];g[k*3+2]=px[k*4+2]}r({g,ar:i.naturalWidth/i.naturalHeight})}catch{r(null)}};
+    i.onerror=()=>r(null);i.src=d;setTimeout(()=>r(null),8000)});
+  picPrints.set(key,p);return p;
+}
+// how different two prints are (0 = the same; a re-saved copy is about 1–2, another picture far more), or null
+const printDiff=(a,b)=>a&&b&&Math.abs(a.ar-b.ar)<0.02?a.g.reduce((s,v,k)=>s+Math.abs(v-b.g[k]),0)/a.g.length:null;
+// a profile picture of c that is this picture already, if any
+async function poolMatch(c,id,skip){
+  const p=await picPrint(id,!(c.avatarPool||[]).includes(id));if(!p)return null;
+  for(const pid of c.avatarPool||[]){if(pid===skip||pid===id)continue;const d=printDiff(p,await picPrint(pid));if(d!=null&&d<3)return pid}
+  return null;
+}
+// once: the Profile album copy of 1.57–1.58 doubled profile pictures added by hand before; drop the extra copy
+async function dedupeProfiles(){
+  let n=0;
+  for(const c of S.chars)for(const g of c.gallery||[]){
+    if(!g.pool||!c.avatarPool?.includes(g.pool))continue;
+    const twin=await poolMatch(c,g.pool,g.pool);if(!twin||(c.gallery||[]).some(x=>x!==g&&x.pool===twin))continue;
+    c.avatarPool=c.avatarPool.filter(x=>x!==g.pool);await delImg(g.pool);g.pool=twin;n++;if(S.ui.av)delete S.ui.av[c.id];
+  }
+  S.settings.profDedupe=1;saveSettings();
+  if(n){await store.set('chars',S.chars);toast(`Removed ${n} doubled profile picture${n>1?'s':''}`,4000)}
+  return n;
+}
 let profSyncing=false;
 async function syncProfiles(){
-  if(profSyncing)return 0;profSyncing=true;let n=0;
+  if(profSyncing)return 0;profSyncing=true;let n=0,added=0;
   try{
     for(const c of S.chars)for(const g of c.gallery||[]){
       if(g.pool||!isProfileAlbum(c,g.folder))continue;
       const d=await getImgData(g.id);if(!d)continue;
+      const have=await poolMatch(c,g.id);if(have){g.pool=have;n++;continue} // added by hand already: just link it
       try{const b=await dataToBlob(d),nid=await putImg(await fileToImage(new File([b],'p',{type:b.type||'image/png'}),768));
-        (c.avatarPool??=[]).push(nid);g.pool=nid;n++;if(S.ui.av)delete S.ui.av[c.id]}catch(e){console.warn('Profile copy failed:',e)}
+        (c.avatarPool??=[]).push(nid);g.pool=nid;n++;added++;if(S.ui.av)delete S.ui.av[c.id]}catch(e){console.warn('Profile copy failed:',e)}
     }
-    if(n){await store.set('chars',S.chars);toast(`${n} picture${n>1?'s':''} from a Profile album added to profile pictures`,3500);
-      if(location.hash.startsWith('#/char/')&&!$('#sheet.on'))vChar(location.hash.split('/')[2])}
+    if(n){await store.set('chars',S.chars);if(added)toast(`${added} picture${added>1?'s':''} from a Profile album added to profile pictures`,3500);
+      if(added&&location.hash.startsWith('#/char/')&&!$('#sheet.on'))vChar(location.hash.split('/')[2])}
   }finally{profSyncing=false}
   return n;
 }
@@ -1446,7 +1478,10 @@ async function viewPicture(c,id,kind,after){
     galmv:()=>galMove(c,[id],()=>viewPicture(c,id,kind,after),()=>viewPicture(c,id,kind,after)),
     dl:async()=>{const b=await dataToBlob(d);download(`${safeName(c.name)}-${id}.${(b.type.split('/')[1]||'png').replace('jpeg','jpg')}`,b)},
     main:async()=>{c.avatar=await fileToImage(new File([await dataToBlob(d)],'p',{type:'image/png'}),768);await saveChars();closeSheet();toast('Main picture changed');after?.()},
-    pool:async()=>{const nid=await putImg(await fileToImage(new File([await dataToBlob(d)],'p',{type:'image/png'}),768));(c.avatarPool??=[]).push(nid);await saveChars();closeSheet();toast('Added to profile pictures');after?.()},
+    pool:async()=>{
+      const have=g?.pool&&c.avatarPool?.includes(g.pool)?g.pool:await poolMatch(c,id);
+      if(have){if(g)g.pool=have;await saveChars();return toast('It is already one of the profile pictures')}
+      const nid=await putImg(await fileToImage(new File([await dataToBlob(d)],'p',{type:'image/png'}),768));(c.avatarPool??=[]).push(nid);if(g)g.pool=nid;await saveChars();closeSheet();toast('Added to profile pictures');after?.()},
     del:async()=>{if(!confirm(kind==='pool'?'Remove this profile picture?':'Delete this picture?'))return;
       if(kind==='pool')c.avatarPool=c.avatarPool.filter(x=>x!==id);else c.gallery=c.gallery.filter(x=>x.id!==id);
       await delImg(id);await saveChars();closeSheet();after?.()},
@@ -3628,6 +3663,7 @@ async function saveToGallery(c,id,note,chatId,album){
 // a copy goes straight into a character's or world's profile pictures (made smaller, like pictures added there)
 async function saveToPool(c,id){
   const rec=await store.get('img:'+id);if(!rec?.data)throw new Error('Picture not found');
+  if(await poolMatch(c,id))throw new Error(`It is already one of ${c.name}'s profile pictures`);
   const nid=await putImg(await fileToImage(new File([await dataToBlob(rec.data)],'p',{type:'image/png'}),768));
   (c.avatarPool??=[]).push(nid);if(S.ui.av)delete S.ui.av[c.id];await saveChars();
   await store.set('img:'+id,{...rec,pool:[...(rec.pool||[]),c.id]});return nid;
@@ -6474,7 +6510,7 @@ setInterval(()=>$$('textarea[data-tagged]').forEach(el=>el._paint?.()),400);
   S.settings={...DEFAULTS,...(await store.get('settings')||{})};
   S.chatIndex=await store.get('chatIndex')||[];
   S.lorebooks=await store.get('lorebooks')||[];
-  await syncProfiles();await preloadAvatars();
+  await syncProfiles();if(!S.settings.profDedupe)await dedupeProfiles();await preloadAvatars();
   if(ensurePrompts()|ensureImgPresets())await saveSettings();
   if(migrateChars())await saveChars();
   applyFont();
