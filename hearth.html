@@ -407,7 +407,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.57.0',HEARTH_DATE='2026-11-06';
+const HEARTH_VERSION='1.58.0',HEARTH_DATE='2026-11-06';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiNoMark:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgExpr:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -714,12 +714,12 @@ async function importFiles(){
     try{
       if(/\.png$/i.test(f.name)||f.type==='image/png'){
         const t=readPngText(await readAs(f,'readAsArrayBuffer'));const raw=t.ccv3||t.chara;if(!raw)throw new Error('no character data in this PNG');
-        const c=fromCard(JSON.parse(b64ToUtf8(raw)));c.avatar=await fileToImage(f);S.chars.push(c);n++;
+        const c=fromCard(JSON.parse(b64ToUtf8(raw)));c.avatar=await fileToImage(f);S.chars.push(withProfileAlbum(c));n++;
       }else{
         const j=JSON.parse(await readAs(f,'readAsText'));
         if(j.hearthBackup){await importBackup(j);return}
         if(isWorldInfo(j)){const b=bookFromAny(j,f.name.replace(/.json$/i,''));S.lorebooks.push(b);await saveBooks();toast(`Lorebook “${b.name}” added (${b.entries.length} entr${b.entries.length===1?"y":"ies"}). Find it in Settings → Lorebooks.`,5000);continue}
-        S.chars.push(fromCard(j));n++;
+        S.chars.push(withProfileAlbum(fromCard(j)));n++;
       }
     }catch(e){toast(`${f.name}: ${e.message}`,5000)}
   }
@@ -1395,6 +1395,8 @@ function chatAvatar(chat,c,m){
 // gallery one leaves it, and it is removed under Profile pictures like any other.
 const PROFILE_ALBUM=/^\s*(profiles?|pfps?)(\s+(pictures?|pics?|images?|photos?))?\s*$/i;
 const isProfileAlbum=(c,fid)=>!!fid&&!!c.galFolders?.some(f=>f.id===fid&&PROFILE_ALBUM.test(f.name));
+// new characters and worlds start with an empty Profile album
+const withProfileAlbum=c=>{if(!(c.galFolders||[]).some(f=>PROFILE_ALBUM.test(f.name)))(c.galFolders??=[]).unshift({id:uid(),name:'Profile'});return c};
 let profSyncing=false;
 async function syncProfiles(){
   if(profSyncing)return 0;profSyncing=true;let n=0;
@@ -2715,7 +2717,7 @@ Return one JSON object only: {"notes":{"Character name":"..."},"relationship_cha
     save:async()=>{const c=readEditorChar();if(!c.name){toast('Give your character a name');$('[name=name]').focus();return}
       c.updated=Date.now();const i=S.chars.findIndex(x=>x.id===c.id);
       // a new character goes into the folder the Characters page is showing
-      if(i<0){const f=curFolder('chars');if(f&&f!=='none'&&!c.folder)c.folder=f;S.chars.push(c)}else S.chars[i]=c;await saveChars();dirty=false;toast('Saved');
+      if(i<0){const f=curFolder('chars');if(f&&f!=='none'&&!c.folder)c.folder=f;S.chars.push(withProfileAlbum(c))}else S.chars[i]=c;await saveChars();dirty=false;toast('Saved');
       if(ex)goBack('#/char/'+c.id);else replaceTo('#/char/'+c.id)}
   };
   if(wiz)dirty=true; // a wizard draft isn't saved until the user taps Save
