@@ -407,11 +407,11 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.56.0',HEARTH_DATE='2026-11-06';
+const HEARTH_VERSION='1.57.0',HEARTH_DATE='2026-11-06';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiNoMark:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgExpr:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
-const saveChars=()=>store.set('chars',S.chars);
+const saveChars=()=>{clearTimeout(profSyncT);profSyncT=setTimeout(syncProfiles,400);return store.set('chars',S.chars)};let profSyncT=0;
 const savePersonas=()=>store.set('personas',S.personas);
 const saveSettings=()=>store.set('settings',S.settings);
 const saveIndex=()=>store.set('chatIndex',S.chatIndex);
@@ -1390,6 +1390,26 @@ function chatAvatar(chat,c,m){
   if(mode==='chat'){if(!chat.av){chat.av=pickAv(c);saveChat(chat)}return avFromId(c,chat.av)||avatar(c)}
   return avatar(c);
 }
+// Gallery albums named "Profile" (or Profile pictures / pics / images, PFP): each picture put there is copied into the
+// profile pictures by itself, once (g.pool keeps the copy's id). The copy is its own picture: moving or deleting the
+// gallery one leaves it, and it is removed under Profile pictures like any other.
+const PROFILE_ALBUM=/^\s*(profiles?|pfps?)(\s+(pictures?|pics?|images?|photos?))?\s*$/i;
+const isProfileAlbum=(c,fid)=>!!fid&&!!c.galFolders?.some(f=>f.id===fid&&PROFILE_ALBUM.test(f.name));
+let profSyncing=false;
+async function syncProfiles(){
+  if(profSyncing)return 0;profSyncing=true;let n=0;
+  try{
+    for(const c of S.chars)for(const g of c.gallery||[]){
+      if(g.pool||!isProfileAlbum(c,g.folder))continue;
+      const d=await getImgData(g.id);if(!d)continue;
+      try{const b=await dataToBlob(d),nid=await putImg(await fileToImage(new File([b],'p',{type:b.type||'image/png'}),768));
+        (c.avatarPool??=[]).push(nid);g.pool=nid;n++;if(S.ui.av)delete S.ui.av[c.id]}catch(e){console.warn('Profile copy failed:',e)}
+    }
+    if(n){await store.set('chars',S.chars);toast(`${n} picture${n>1?'s':''} from a Profile album added to profile pictures`,3500);
+      if(location.hash.startsWith('#/char/')&&!$('#sheet.on'))vChar(location.hash.split('/')[2])}
+  }finally{profSyncing=false}
+  return n;
+}
 async function preloadAvatars(){for(const c of S.chars)for(const id of c.avatarPool||[])await getImgData(id)}
 async function addPictures(c,where,chatId){
   const files=await pickFiles('image/*',true);if(!files.length)return [];
@@ -1445,7 +1465,7 @@ function galAlbums(c){
   const by=new Map();for(const g of c.gallery||[]){const k=galAlbum(c,g);if(!by.has(k))by.set(k,[]);by.get(k).push(g)}
   const last=k=>Math.max(0,...by.get(k).map(g=>g.at||0));
   const chats=[...by.keys()].filter(k=>k.startsWith('chat:')).sort((a,b)=>last(b)-last(a));
-  return [...(c.galFolders||[]).map(f=>({k:'f:'+f.id,id:f.id,name:f.name,sub:'Your album',own:true})),{k:'none',name:'Not from a chat'},
+  return [...(c.galFolders||[]).map(f=>({k:'f:'+f.id,id:f.id,name:f.name,sub:PROFILE_ALBUM.test(f.name)?'Goes to profile pictures':'Your album',own:true,prof:PROFILE_ALBUM.test(f.name)})),{k:'none',name:'Not from a chat'},
     ...chats.map(k=>{const x=S.chatIndex.find(y=>y.id===k.slice(5));return {k,name:x?.title||'Chat',sub:chatKind(x)}}),{k:'gone',name:'From deleted chats'}]
     .map(a=>({...a,list:by.get(a.k)||[]})).filter(a=>a.own||a.list.length);
 }
@@ -1462,7 +1482,7 @@ function galPick(c,title,done,back){
   const chats=S.chatIndex.filter(x=>x.charId===c.id).sort((a,b)=>(b.updated||0)-(a.updated||0));
   const li=(k,ic,name,sub)=>`<div class="li" data-act="to" data-k="${k}">${ic}<div class="lt"><b>${esc(name)}</b>${sub?`<span>${esc(sub)}</span>`:''}</div></div>`;
   openSheet(`<h2>${esc(title)}</h2><div class="list">
-    ${(c.galFolders||[]).map(f=>li('f:'+f.id,I.folder,f.name,'Your album')).join('')}${li('new',I.plus,'New album…','')}
+    ${(c.galFolders||[]).map(f=>li('f:'+f.id,I.folder,f.name,PROFILE_ALBUM.test(f.name)?'Also copied to profile pictures':'Your album')).join('')}${li('new',I.plus,'New album…','')}
     ${li('none',I.img,'Not from a chat','')}${chats.map(x=>li('chat:'+x.id,I.chat,x.title||'Chat',chatKind(x))).join('')}</div>
     <div class="sheet-foot"><button class="btn ghost block" data-act="back">${I.back} Back</button></div>`,{
     to:async b=>{let k=b.dataset.k;
@@ -1484,7 +1504,7 @@ function openGallery(c,chatId){
     const pn=!a?openSheet(`<h2>${esc(c.name)} · Gallery</h2>
       ${gal.length?'':'<p class="muted small">No pictures yet.</p>'}
       <div class="albums">${gal.length?card('all','All pictures','',gal):''}${al.map(x=>card(x.k,x.name,x.sub,x.list)).join('')}<button type="button" class="album add" data-act="anew">${I.plus} New album</button></div>
-      <p class="hint">Pictures from a chat go in that chat's album by themselves. Make your own albums for the rest, then move pictures there: open a picture, or tap Select in an album.</p>`,{
+      <p class="hint">Pictures from a chat go in that chat's album by themselves. Make your own albums for the rest, then move pictures there: open a picture, or tap Select in an album. An album named Profile also copies its pictures to the profile pictures.</p>`,{
       aopen:b=>{cur=b.dataset.k;draw()},
       anew:async()=>{const n=prompt('Album name')?.trim();if(!n)return;const f={id:uid(),name:n};(c.galFolders??=[]).push(f);await saveChars();cur='f:'+f.id;draw()}
     }):openSheet(`<div class="row" style="margin-bottom:6px"><button class="btn ghost sm" data-act="aback">${I.back} Albums</button><span style="flex:1"></span>
@@ -1492,6 +1512,7 @@ function openGallery(c,chatId){
       <h2 style="margin-bottom:2px">${esc(a.name)}</h2><div class="small muted" style="margin-bottom:10px">${esc(c.name)} · ${list.length} picture${list.length===1?'':'s'}${a.sub?' · '+esc(a.sub):''}</div>
       ${a.own||a.k.startsWith('chat:')?`<div class="row" style="margin-bottom:10px;flex-wrap:wrap">${a.own?`<button class="btn ghost sm" data-act="aren">${I.edit} Rename</button><button class="btn ghost sm" data-act="adel">${I.trash} Delete album</button>`
         :`<button class="btn ghost sm" data-act="achat">${I.chat} Open the chat</button>`}</div>`:''}
+      ${a.prof?`<p class="hint" style="margin-top:0">Pictures put in this album are copied to ${esc(c.name)}'s profile pictures by themselves. Remove one from there under Profile pictures on the character page.</p>`:''}
       ${sel?'<p class="hint" style="margin-top:0">Tap the pictures to move.</p>':''}
       ${thumbs(list.map(g=>g.id),'gview',sel||!canAdd?'':`<button class="thumb-add" data-act="gadd" title="Add pictures">+</button>`).replace(/data-act="gview" data-id="([^"]+)"/g,(m,id)=>sel?.has(id)?m+' class="picked"':m)}
       ${list.length||!canAdd?'':'<p class="muted small">No pictures here yet. Tap + to add some.</p>'}
@@ -6451,7 +6472,7 @@ setInterval(()=>$$('textarea[data-tagged]').forEach(el=>el._paint?.()),400);
   S.settings={...DEFAULTS,...(await store.get('settings')||{})};
   S.chatIndex=await store.get('chatIndex')||[];
   S.lorebooks=await store.get('lorebooks')||[];
-  await preloadAvatars();
+  await syncProfiles();await preloadAvatars();
   if(ensurePrompts()|ensureImgPresets())await saveSettings();
   if(migrateChars())await saveChars();
   applyFont();
