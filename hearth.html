@@ -407,7 +407,7 @@ const BUILTIN_PROMPTS=[
 - {{user}} can write (OOC: ...) to instruct you outside the story.`},
 ];
 // Raised with every published update (shown in Settings; the app compares it with the web address to spot a newer one)
-const HEARTH_VERSION='1.55.0',HEARTH_DATE='2026-11-06';
+const HEARTH_VERSION='1.56.0',HEARTH_DATE='2026-11-06';
 const DEFAULTS={naiToken:'',naiSize:'portrait',naiSteps:23,naiSampler:'k_euler_ancestral',naiQuality:true,naiNoMark:true,naiUc:'heavy',apis:[],activeApi:null,temperature:0.9,maxTokens:600,autoContinue:2,thinkEffort:'',thinkRoom:4000,contextSize:16000,topP:1,stream:true,hideThink:true,prompts:null,defaultPrompt:'p-roleplay',activePersona:null,globalScripts:[],fontSize:15,enterSends:false,showTokens:true,imgModel:'v5',imgOutput:'sections',imgFormat:'mixed',imgMotion:true,imgFx:true,imgExpr:true,imgComic:'auto',imgText:'ask',imgStoryText:'short',tagSuggest:true,tagHighlight:true,visionModel:'',visionApi:'',imgStyle:'',imgUC:'',autoMemory:true,trackScene:true,sceneModel:'',memoryEvery:20,memoryWords:300,
   webSearch:false,researchMode:'chat',researchApi:'',researchModel:'',researchWhen:'new',wizardResearchModel:'',readerProxy:true,wikiLang:'en',webMaxChars:5000,webRounds:3,autoBackup:0,backupKeys:false,lastBackup:0};
 const S={chars:[],personas:[],lorebooks:[],settings:{...DEFAULTS},chatIndex:[],ui:{q:''}};
@@ -476,6 +476,8 @@ async function updateMemory(chat,char,manual){
 // each reply from the latest messages, and sent near the end of every request so characters only do what the scene allows.
 // A regenerated reply is applied to the state from before the reply it replaces (chat.scenePrev).
 const sceneBusy=new Set();
+// image prompts, image stories and comic turns can use their own (cheaper) model on the chat connection
+const imgApi=()=>{const a=activeApi(),m=S.settings.imgPromptModel?.trim();return a&&m?{...a,model:m}:a};
 const sceneApi=()=>{const a=activeApi();return a&&S.settings.sceneModel?.trim()?{...a,model:S.settings.sceneModel.trim()}:a};
 async function updateScene(chat,char,o={}){
   if(sceneBusy.has(chat.id)){if(o.manual)throw new Error('Already updating, wait a moment');return null}
@@ -911,7 +913,7 @@ const fmtCost=c=>c==null?'':c<0.0001?'<$0.0001':'$'+(c<0.01?c.toFixed(4):c<1?c.t
 const USE_KINDS=[[/physical state of a roleplay scene/,'Scene tracking',1],[/long-term memory of an ongoing roleplay/,'Chat memory'],
   [/research assistant for a roleplay/,'Research for replies',1],[/You research anime/,'Wizard research'],[/reference pages into compact/,'Reading reference pages'],
   [/expert character writer|expert worldbuilder/,'Character and world wizard'],[/opening scenes for AI roleplay/,'Opening messages'],
-  [/continuity editor/,'Check characters'],[/expert editor of AI roleplay/,'Fix characters'],[/relationships between roleplay characters/,'World relationships'],
+  [/continuity editor/,'Check characters'],[/expert editor of AI roleplay/,'Change with AI (editor)'],[/relationships between roleplay characters/,'World relationships'],
   [/roleplay character notes/,'Character notes'],[/storyboard partner/,'Image stories',1],[/illustrated novel/,'Image story text',1],
   [/Danbooru-style appearance tags/,'Looks tags'],[/NovelAI Diffusion prompt writer/,'Image prompts',1],[/new one-on-one roleplay scene/,'Scene setup'],
   [/sum up a side scene/,'Scene summaries'],[/plan the pictures that illustrate/,'Storyboard plans'],[/^(Reply with just the word OK|What color is this square)/,'Connection tests']];
@@ -2841,7 +2843,7 @@ async function vChat(id){
   // notes: {want, avoid} from "Redo with notes"
   // pages: a comic turn spread over that many pages, each in its own message (m.part = [page, of pages])
   async function storyGenerate(mode,notes,tries=0,pages=1){
-    const api=activeApi();if(!api){toast('Add an API / proxy in Settings first',4000);return}
+    const api=imgApi();if(!api){toast('Add an API / proxy in Settings first',4000);return}
     if(GEN){toast('Already working on it');return}
     let idx,m;const added=[];
     if(mode==='swipe'){idx=chat.messages.length-1;m=chat.messages[idx];m.swipes.push('');m.sw=m.swipes.length-1}
@@ -3377,7 +3379,8 @@ function cleanPanels(j){
 }
 // returns the parsed JSON and the tokens used (estimated when the proxy doesn't report them)
 async function aiJson(sys,prompt,signal,maxTokens){
-  const r=await callJson(activeApi(),[{role:'system',content:sys},{role:'user',content:prompt}],signal,{maxTokens});
+  const img=sys===SYS_NAI||sys===SYS_STORY||sys.startsWith('You write the story text of an illustrated novel');
+  const r=await callJson(img?imgApi():activeApi(),[{role:'system',content:sys},{role:'user',content:prompt}],signal,{maxTokens});
   return {j:r.j,usage:r.usage};
 }
 const usageText=u=>u?`${u.est?'≈ ':''}↑ ${Math.round(u.in).toLocaleString()} · ↓ ${Math.round(u.out).toLocaleString()} tokens${u.cost!=null?` · ${u.costEst?'≈ ':''}${fmtCost(u.cost)}`:''}`:'';
@@ -5972,6 +5975,7 @@ function editPersona(p,isNew,after=()=>vProfile()){
 // falls back to another model (fallback) that the test then checks instead.
 const MODEL_FIELDS={
   sceneModel:{conn:()=>activeApi(),fallback:()=>''},
+  imgPromptModel:{conn:()=>activeApi(),fallback:()=>''},
   visionModel:{conn:()=>S.settings.apis.find(a=>a.id===S.settings.visionApi)||activeApi(),fallback:()=>'',vision:true},
   researchModel:{conn:()=>S.settings.apis.find(a=>a.id===S.settings.researchApi)||activeApi(),fallback:()=>''},
   wizardResearchModel:{conn:()=>S.settings.apis.find(a=>a.id===S.settings.researchApi)||activeApi(),fallback:()=>S.settings.researchModel||''}
@@ -6025,7 +6029,10 @@ function vSettings(){
     <div><label class="f">Max length<small>words</small></label><input type="number" data-k="memoryWords" min="100" max="1500" step="50" value="${st.memoryWords}"></div></div>
   </div></div>
   <div class="sec" data-g="img"><h3>Model and format</h3><div class="box">
-    <label class="f" style="margin-top:0">Model</label><select data-k="imgModel"><option value="v5" ${st.imgModel!=='v45'?'selected':''}>NovelAI Diffusion V5</option><option value="v45" ${st.imgModel==='v45'?'selected':''}>NovelAI Diffusion V4.5</option></select>
+    <label class="f" style="margin-top:0">AI model that writes image prompts<small>optional</small></label><input data-k="imgPromptModel" id="ipm" list="dl-imgPromptModel" value="${esc(st.imgPromptModel||'')}" placeholder="empty = your chat model" autocapitalize="off">
+    <div class="chips"><span class="chip" data-act="ipm" data-m="deepseek/deepseek-v4.1-flash">deepseek-v4.1-flash (cheap)</span><span class="chip" data-act="ipm" data-m="">same as chat</span></div>${modelTools('imgPromptModel')}
+    <div class="hint">Used for image prompts, image stories and comics (their story text too), on your chat connection. A cheaper model can cost much less; if prompts or stories get worse, clear it. Usage and cost shows the difference by model.</div>
+    <label class="f">NovelAI model</label><select data-k="imgModel"><option value="v5" ${st.imgModel!=='v45'?'selected':''}>NovelAI Diffusion V5</option><option value="v45" ${st.imgModel==='v45'?'selected':''}>NovelAI Diffusion V4.5</option></select>
     <label class="f">Output</label><select data-k="imgOutput"><option value="sections" ${st.imgOutput!=='onebox'?'selected':''}>Separate sections (character boxes)</option><option value="onebox" ${st.imgOutput==='onebox'?'selected':''}>All in one box (fewer tokens)</option></select>
     <div class="hint">All in one box: the AI writes one “base | character | character” prompt plus undesired, with no per-character undesired or positions.</div>
     <label class="f">Prompt style</label><select data-k="imgFormat">${[['mixed','Tags + one short sentence'],['few','Tags + a few sentences'],['tags','Tags only'],['natural','Natural sentences']].map(([v,l])=>`<option value="${v}" ${st.imgFormat===v?'selected':''}>${l}</option>`).join('')}</select>
@@ -6186,6 +6193,7 @@ function vSettings(){
         }
       }catch(e){r.innerHTML=`<span class="err">${esc(model)}: ${esc(e.message)}</span>`}
       finally{b.disabled=false}},
+    ipm:b=>{const i=$('#ipm');i.value=b.dataset.m;i.dispatchEvent(new Event('input',{bubbles:true}))},
     vsm:b=>{const i=$('#vs-m');i.value=b.dataset.m;i.dispatchEvent(new Event('input',{bubbles:true}))},
     rsw:b=>{const i=$('#rs-w');i.value=b.dataset.m;i.dispatchEvent(new Event('input',{bubbles:true}))},
     rsm:b=>{const i=$('#rs-m'),m=b.dataset.m;i.value=m===':online'?(i.value.trim()?i.value.trim().replace(/:online$/,'')+':online':'openai/gpt-4o-mini:online'):m;i.dispatchEvent(new Event('input',{bubbles:true}))},
